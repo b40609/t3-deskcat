@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { renderAvatar } from "./themeRenderer";
 import type {
   AccountPref,
   AccountQuota,
@@ -15,13 +14,6 @@ import type {
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const shell = $("app");
-const miniCanvas = $<HTMLCanvasElement>("mini-cat");
-const miniCtx = miniCanvas.getContext("2d")!;
-const moodBadge = $("mood-badge");
-const heroScoreEl = $("hero-score");
-const scoreHintEl = $("score-hint");
-const ringsEl = $("rings");
-const legendEl = $("legend");
 const picksSection = $("picks-section");
 const accountsSection = $("accounts-section");
 const lastUpdatedEl = $("last-updated");
@@ -83,7 +75,6 @@ let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
 let showingSettings = false;
 let pinned = false;
-let miniTick = 0;
 let historyById: Record<string, [number, number][]> = {};
 let historyFetchedAt = 0;
 let historyForSnap = -1;
@@ -156,19 +147,6 @@ function visibleAccounts(accounts: AccountQuota[]): AccountQuota[] {
   return orderedAccounts(accounts).filter((a) => !prefOf(a.id).hidden);
 }
 
-// Header avatar: animated, but only while the panel is visible
-function miniFrame() {
-  requestAnimationFrame(miniFrame);
-  if (document.hidden) return;
-  miniTick = (miniTick + 1) % 10000;
-  const mood: CatMood = currentSnapshot?.mood ?? "working";
-  const settings = currentSettings ?? fallbackSettings;
-  const theme = settings.petTheme ?? "hud_gauge";
-  const score = currentSnapshot?.overallScore ?? 100;
-  renderAvatar(miniCtx, miniCanvas.width, theme, score, mood, miniTick, settings);
-}
-requestAnimationFrame(miniFrame);
-
 // ------------------------------------------------------------------ helpers
 
 const PROVIDERS: { kind: ProviderKind; label: string; color: string }[] = [
@@ -185,12 +163,6 @@ function providerGlyph(p: ProviderKind): string {
   if (p === "claude") return "C";
   if (p === "antigravity") return "A";
   return "G";
-}
-
-function moodLabel(m: CatMood): string {
-  if (m === "working") return "元氣工作中";
-  if (m === "sweating") return "緊張趕工中";
-  return "額度見底，趴睡中";
 }
 
 function escapeHtml(text: string): string {
@@ -274,41 +246,7 @@ function ageLabel(ts: number): string {
   return `${Math.floor(mins / 60)} 小時前`;
 }
 
-function bestByProvider(accounts: AccountQuota[]) {
-  return PROVIDERS.map((p) => {
-    const accs = accounts.filter((a) => a.provider === p.kind);
-    const ok = accs.filter((a) => a.status === "ok" || a.status === "stale");
-    const best = ok.length ? Math.max(...ok.map((a) => a.effectiveRemaining)) : null;
-    return { ...p, best, count: accs.length };
-  }).filter((p) => p.count > 0);
-}
-
 // ------------------------------------------------------------------ rendering
-
-function renderRings(accounts: AccountQuota[]) {
-  const data = bestByProvider(accounts);
-  const width = 11;
-  const gap = 2.5;
-  let html = "";
-  data.forEach((p, i) => {
-    const r = 60 - width / 2 - 1 - i * (width + gap);
-    const c = 2 * Math.PI * r;
-    const pct = Math.max(0, Math.min(100, p.best ?? 0));
-    const off = pct <= 0 ? c : c * (1 - pct / 100);
-    html += `<circle class="track" cx="60" cy="60" r="${r}" stroke="${p.color}" stroke-width="${width}" />`;
-    html += `<circle class="arc" cx="60" cy="60" r="${r}" stroke="${p.color}" stroke-width="${width}" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${off}" />`;
-  });
-  ringsEl.innerHTML = html;
-  legendEl.innerHTML = data
-    .map(
-      (p) => `
-      <div class="legend-item">
-        <span class="legend-name"><i style="background:${p.color}"></i>${p.label}</span>
-        <span class="legend-val">${p.best ?? "—"}${p.best !== null ? "<small>%</small>" : ""}</span>
-      </div>`,
-    )
-    .join("");
-}
 
 function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
   const isStale = acc.status === "stale";
@@ -406,13 +344,6 @@ function renderDashboard(snap: DashboardSnapshot) {
   currentSnapshot = snap;
   currentSettings = snap.settings;
   syncSettingsForm(snap.settings);
-
-  moodBadge.textContent = moodLabel(snap.mood);
-  moodBadge.className = `mood-pill ${snap.mood}`;
-  heroScoreEl.textContent = String(snap.overallScore);
-  const modeHint = snap.settings.scoreMode === "max_avg" ? "各家最高平均" : "全部帳號平均";
-  scoreHintEl.textContent = `總體剩餘 · ${modeHint}`;
-  renderRings(visibleAccounts(snap.accounts).filter((a) => !prefOf(a.id).excludeScore));
 
   const secPicks = $("sec-picks");
   secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
@@ -914,9 +845,6 @@ $("btn-test-notify").addEventListener("click", () => {
   invoke("test_notification").catch(() => {});
 });
 
-$("btn-quit").addEventListener("click", () => {
-  invoke("quit_app").catch(() => {});
-});
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;

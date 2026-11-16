@@ -24,13 +24,6 @@
         <!-- ============ Dashboard ============ -->
         <section id="view-dashboard" class="view">
           <header class="nav-large" data-tauri-drag-region>
-            <div class="nav-title-group" data-tauri-drag-region>
-              <div class="avatar"><canvas id="mini-cat" width="88" height="88"></canvas></div>
-              <div data-tauri-drag-region>
-                <div class="nav-eyebrow" data-tauri-drag-region>T3 DESKCAT</div>
-                <h1 class="large-title" data-tauri-drag-region>額度</h1>
-              </div>
-            </div>
             <div class="nav-actions">
               <button id="btn-refresh" class="circle-btn" title="立即刷新"><svg><use href="#i-refresh" /></svg></button>
               <button id="btn-pin" class="circle-btn" title="釘選面板"><svg><use href="#i-pin" /></svg></button>
@@ -39,16 +32,6 @@
           </header>
 
           <div class="scroll">
-            <div class="card hero" id="hero">
-              <svg class="rings" id="rings" viewBox="0 0 120 120"></svg>
-              <div class="hero-info">
-                <span id="mood-badge" class="mood-pill working">載入中</span>
-                <div class="hero-score"><span id="hero-score">--</span><small>%</small></div>
-                <div class="hero-sub" id="score-hint">總體剩餘額度</div>
-              </div>
-              <div class="legend" id="legend"></div>
-            </div>
-
             <section id="sec-picks" class="group">
               <div class="group-header">推薦使用</div>
               <div class="list" id="picks-section"></div>
@@ -204,7 +187,7 @@
                   <input id="inp-show-history" class="switch" type="checkbox" checked />
                 </label>
               </div>
-              <div class="group-footer">「已使用」與 Claude 官方用量頁一致；圓環與心情仍以剩餘額度計算。</div>
+              <div class="group-footer">「已使用」與 Claude 官方用量頁一致；桌寵心情仍以剩餘額度計算。</div>
             </section>
 
             <section class="group">
@@ -315,11 +298,6 @@
               <div class="group-footer">Claude 間隔越長，越不容易被 Anthropic 限流（429）。</div>
             </section>
 
-            <section class="group">
-              <div class="list">
-                <button id="btn-quit" class="row row-button destructive">結束 T3 DeskCat</button>
-              </div>
-            </section>
             <div class="footnote">T3 DeskCat · v0.1.0</div>
           </div>
         </section>

@@ -1443,3 +1443,7 @@ label.row:active {
   cursor: grabbing !important;
   user-select: none;
 }
+
+.nav-large .nav-actions {
+  margin-left: auto;
+}
