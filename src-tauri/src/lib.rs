@@ -1,6 +1,7 @@
 mod discovery;
 mod forecast;
 mod history;
+mod mobile;
 mod models;
 mod notify_state;
 mod providers;
@@ -48,6 +49,67 @@ struct InnerState {
     hotkey_error: Option<String>,
     /// What the tray icon currently shows, to skip redundant redraws.
     tray_icon_key: String,
+    /// Phone page: URL while serving, or why it isn't.
+    mobile_status: MobileStatus,
+}
+
+#[derive(Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MobileStatus {
+    url: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn mobile_status(state: tauri::State<SharedState>) -> MobileStatus {
+    state.0.lock().map(|g| g.mobile_status.clone()).unwrap_or_default()
+}
+
+/// Keep the phone page server matching the settings and the Tailscale address
+/// (Tailscale may start after DeskCat, or its address may change).
+fn spawn_mobile_supervisor(state: SharedState) {
+    tauri::async_runtime::spawn(async move {
+        let mut running: Option<(std::net::SocketAddr, tauri::async_runtime::JoinHandle<()>)> = None;
+        loop {
+            let (enabled, port) = state
+                .0
+                .lock()
+                .map(|g| (g.settings.mobile_enabled, g.settings.mobile_port))
+                .unwrap_or((false, 8765));
+            let ip = if enabled { mobile::tailscale_ip() } else { None };
+            let want = ip.map(|ip| std::net::SocketAddr::from((ip, port)));
+            let finished = running.as_ref().is_some_and(|(_, h)| h.inner().is_finished());
+            if running.as_ref().map(|(a, _)| *a) != want || finished {
+                if let Some((_, h)) = running.take() {
+                    h.abort();
+                }
+                let mut status = MobileStatus::default();
+                if let Some(addr) = want {
+                    let st = state.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let handle = tauri::async_runtime::spawn(async move {
+                        let snap = move || st.0.lock().ok().and_then(|g| g.snapshot.clone());
+                        let res = mobile::serve(addr, snap).await;
+                        let _ = tx.send(res.err().map(|e| e.to_string()));
+                    });
+                    // Give bind a moment so a port clash is reported right away.
+                    match tokio::time::timeout(Duration::from_millis(500), rx).await {
+                        Ok(Ok(Some(err))) => status.error = Some(format!("無法開啟連接埠 {port}：{err}")),
+                        _ => {
+                            status.url = Some(format!("http://{addr}"));
+                            running = Some((addr, handle));
+                        }
+                    }
+                } else if enabled {
+                    status.error = Some("找不到 Tailscale：請在這台電腦開啟 Tailscale".to_string());
+                }
+                if let Ok(mut g) = state.0.lock() {
+                    g.mobile_status = status;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(if want.is_some() { 30 } else { 10 })).await;
+        }
+    });
 }
 
 #[derive(Clone)]
@@ -1032,6 +1094,7 @@ pub fn run() {
         history: History::load(),
         hotkey_error: None,
         tray_icon_key: String::new(),
+        mobile_status: MobileStatus::default(),
     })));
 
     tauri::Builder::default()
@@ -1065,6 +1128,7 @@ pub fn run() {
             quit_app,
             hotkey_status,
             get_history,
+            mobile_status,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1159,6 +1223,8 @@ pub fn run() {
                 });
 
             let _ = tray_builder.build(app)?;
+
+            spawn_mobile_supervisor(shared.clone());
 
             // Background polling loop
             let poll_app = handle.clone();

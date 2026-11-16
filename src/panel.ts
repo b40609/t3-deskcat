@@ -63,6 +63,10 @@ const inpShowHistory = $<HTMLInputElement>("inp-show-history");
 const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
 const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
 const offlineNote = $("offline-note");
+const inpMobile = $<HTMLInputElement>("inp-mobile");
+const btnMobileUrl = $<HTMLButtonElement>("btn-mobile-url");
+const mobileHint = $("mobile-hint");
+const MOBILE_HINT = "在 iPhone 開啟 Tailscale，用 Safari 打開上面的網址，再按「分享 → 加入主畫面」。";
 const selPanelPos = $<HTMLSelectElement>("sel-panel-pos");
 const btnHotkey = $<HTMLButtonElement>("btn-hotkey");
 const btnHotkeyClear = $<HTMLButtonElement>("btn-hotkey-clear");
@@ -493,6 +497,7 @@ function syncSettingsForm(s: AppSettings) {
   inpShowHistory.checked = s.showHistory !== false;
   inpShowForecast.checked = s.showForecast !== false;
   inpShowUsage.checked = s.showUsageStats !== false;
+  inpMobile.checked = s.mobileEnabled !== false;
   if (document.activeElement !== selPanelPos) selPanelPos.value = s.panelPosition ?? "pet";
   if (!recordingHotkey) btnHotkey.innerHTML = hotkeyLabel(s.hotkey ?? "");
   btnHotkeyClear.classList.toggle("hidden", !s.hotkey);
@@ -641,7 +646,10 @@ function commitSettings(patch: Partial<AppSettings>, immediate = false) {
 function setSettingsVisible(show: boolean) {
   showingSettings = show;
   shell.classList.toggle("show-settings", show);
-  if (show) void showHotkeyStatus();
+  if (show) {
+    void showHotkeyStatus();
+    void showMobileStatus();
+  }
   else if (recordingHotkey) stopRecording();
 }
 btnSettings.addEventListener("click", () => setSettingsVisible(!showingSettings));
@@ -747,6 +755,40 @@ inpShowUsage.addEventListener("change", () => {
 selPanelPos.addEventListener("change", () =>
   commitSettings({ panelPosition: selPanelPos.value as PanelPosition }, true),
 );
+
+// ---- phone page
+async function showMobileStatus() {
+  let st: { url: string | null; error: string | null } = { url: null, error: null };
+  try {
+    st = await invoke("mobile_status");
+  } catch {
+    // preview
+  }
+  const on = cfg().mobileEnabled !== false;
+  btnMobileUrl.classList.toggle("hidden", !on || !st.url);
+  btnMobileUrl.textContent = st.url ? `${st.url}　點一下複製` : "";
+  btnMobileUrl.dataset.url = st.url ?? "";
+  mobileHint.textContent = !on ? "已關閉。" : st.error ?? (st.url ? MOBILE_HINT : "啟動中…");
+  mobileHint.classList.toggle("error", on && !!st.error);
+}
+inpMobile.addEventListener("change", () => {
+  commitSettings({ mobileEnabled: inpMobile.checked }, true);
+  mobileHint.textContent = inpMobile.checked ? "啟動中…" : "已關閉。";
+  btnMobileUrl.classList.add("hidden");
+  // The server reacts within ~10 s.
+  window.setTimeout(() => void showMobileStatus(), 1500);
+  window.setTimeout(() => void showMobileStatus(), 11000);
+});
+btnMobileUrl.addEventListener("click", async () => {
+  const url = btnMobileUrl.dataset.url;
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    btnMobileUrl.textContent = `${url}　已複製`;
+  } catch {
+    btnMobileUrl.textContent = url;
+  }
+});
 
 // ---- hotkey recorder
 async function showHotkeyStatus() {

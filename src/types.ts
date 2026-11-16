@@ -115,6 +115,9 @@ export interface AppSettings {
   showForecast?: boolean;
   showUsageStats?: boolean;
   trayStyle?: TrayStyle;
+  // phone
+  mobileEnabled?: boolean;
+  mobilePort?: number;
 }
 
 export interface DashboardSnapshot {

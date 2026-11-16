@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="額度" />
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<title>T3 DeskCat 額度</title>
+<style>
+:root {
+  --bg: #f2f2f7; --card: #ffffff; --sep: rgba(60, 60, 67, 0.14);
+  --label: #000; --label-2: rgba(60, 60, 67, 0.62); --label-3: rgba(60, 60, 67, 0.36);
+  --fill: rgba(120, 120, 128, 0.14);
+  --blue: #007aff; --green: #34c759; --orange: #ff9500; --red: #ff3b30;
+  --claude: #d97757; --ag: #0a84ff; --codex: #30b06e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000; --card: #1c1c1e; --sep: rgba(84, 84, 88, 0.5);
+    --label: #fff; --label-2: rgba(235, 235, 245, 0.6); --label-3: rgba(235, 235, 245, 0.3);
+    --fill: rgba(120, 120, 128, 0.32);
+    --blue: #0a84ff; --green: #30d158; --orange: #ff9f0a; --red: #ff453a;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg); color: var(--label);
+  font: 15px/1.35 -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica Neue", sans-serif;
+  padding: calc(env(safe-area-inset-top) + 8px) max(16px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 24px) max(16px, env(safe-area-inset-left));
+  -webkit-tap-highlight-color: transparent;
+}
+header { display: flex; align-items: flex-end; justify-content: space-between; margin: 8px 4px 14px; }
+h1 { font-size: 30px; font-weight: 700; letter-spacing: 0.2px; }
+#summary { font-size: 13px; color: var(--label-2); text-align: right; font-variant-numeric: tabular-nums; }
+.group-header { font-size: 13px; color: var(--label-2); margin: 18px 16px 6px; display: flex; justify-content: space-between; }
+.list { background: var(--card); border-radius: 12px; overflow: hidden; }
+.row { display: flex; gap: 12px; padding: 12px 16px; align-items: flex-start; position: relative; }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 60px; right: 0; height: 0.5px; background: var(--sep); }
+.icon { flex: 0 0 32px; height: 32px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 15px; display: grid; place-items: center; }
+.icon.claude { background: var(--claude); } .icon.antigravity { background: var(--ag); } .icon.codex { background: var(--codex); }
+.main { flex: 1; min-width: 0; }
+.title { display: flex; align-items: center; gap: 6px; min-height: 32px; }
+.name { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: var(--fill); color: var(--label-2); }
+.note { margin-left: auto; font-size: 12px; color: var(--label-3); white-space: nowrap; }
+.note.warn { color: var(--orange); }
+.sub { font-size: 13px; color: var(--label-2); }
+.sub.soon { color: var(--orange); }
+.pct { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; align-self: center; }
+.pct small { font-size: 13px; }
+.pct .cap { font-size: 11px; color: var(--label-2); margin-right: 3px; font-weight: 400; }
+.tone-good { color: var(--green); } .tone-warn { color: var(--orange); } .tone-bad { color: var(--red); }
+.win { margin-top: 8px; }
+.win-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.win-name { font-weight: 500; }
+.win-meta { color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.win-meta b { color: var(--label); font-weight: 600; margin-left: 8px; }
+.bar { height: 6px; border-radius: 3px; background: var(--fill); margin-top: 5px; overflow: hidden; }
+.bar span { display: block; height: 100%; border-radius: 3px; }
+.bar .good { background: var(--green); } .bar .warn { background: var(--orange); } .bar .bad { background: var(--red); }
+.bar .used-good { background: var(--blue); } .bar .used-warn { background: var(--blue); } .bar .used-bad { background: var(--red); }
+.last-known .win { opacity: 0.5; }
+.line { margin-top: 6px; font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.line.warn { color: var(--orange); font-weight: 500; }
+.status { margin-top: 4px; font-size: 13px; color: var(--red); }
+.status.cool { color: var(--orange); }
+.notice { margin: 0 0 4px; padding: 10px 14px; border-radius: 12px; font-size: 14px; background: color-mix(in srgb, var(--orange) 16%, transparent); }
+.foot { text-align: center; font-size: 12px; color: var(--label-3); margin-top: 18px; line-height: 1.6; }
+.empty { padding: 28px 16px; text-align: center; color: var(--label-2); }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>額度</h1>
+  <div id="summary"></div>
+</header>
+<div id="notice" class="notice hidden"></div>
+<section id="sec-picks" class="hidden">
+  <div class="group-header"><span>推薦使用</span></div>
+  <div class="list" id="picks"></div>
+</section>
+<section>
+  <div class="group-header"><span>所有帳號</span><span id="count"></span></div>
+  <div class="list" id="accounts"><div class="empty">載入中…</div></div>
+</section>
+<div class="foot" id="foot"></div>
+<script>
+"use strict";
+let data = null;
+let fetchedAt = 0;
+let lastError = null;
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const nowSec = () => Date.now() / 1000;
+const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
+const GLYPH = { claude: "C", antigravity: "A", codex: "G" };
+const PROVIDER = { claude: "Claude", antigravity: "Antigravity", codex: "ChatGPT" };
+
+function tone(pct) { const w = data?.workingThreshold ?? 70, s = data?.sleepingThreshold ?? 20; return pct > w ? "good" : pct >= s ? "warn" : "bad"; }
+function timeOf(d) { return d.toLocaleTimeString("zh-TW", { hour: "numeric", minute: "2-digit", hour12: true }); }
+function when(ts) {
+  const d = new Date(ts * 1000), now = new Date();
+  if (d.toDateString() === now.toDateString()) return timeOf(d);
+  const t = new Date(now); t.setDate(now.getDate() + 1);
+  if (d.toDateString() === t.toDateString()) return `明天${timeOf(d)}`;
+  return `${WEEKDAYS[d.getDay()]}${timeOf(d)}`;
+}
+function resetText(resetAt) {
+  if (!resetAt) return "";
+  const diff = resetAt - nowSec();
+  if (diff <= 0) return "即將重設";
+  if (data.resetFormat === "relative") {
+    const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+    if (h >= 24) return `${Math.floor(h / 24)} 天 ${h % 24} 小時後重設`;
+    if (h > 0) return `${h} 小時 ${m} 分後重設`;
+    return `${Math.max(1, m)} 分鐘後重設`;
+  }
+  const d = new Date(resetAt * 1000), now = new Date();
+  if (d.toDateString() === now.toDateString()) return `於 ${timeOf(d)} 重設`;
+  if (diff < 6.5 * 86400) return `${when(resetAt)} 重設`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${timeOf(d)} 重設`;
+}
+function windowName(label, provider) {
+  const [base, ...rest] = label.split(" ");
+  const pool = rest.join(" ");
+  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
+  const span = { "5h": "5 小時限制", Wk: "每週", "週": "每週", Mo: "每月" };
+  let name = span[base] ?? (/^\d+h$/.test(base) ? `${base.slice(0, -1)} 小時限制` : /^\d+d$/.test(base) ? `${base.slice(0, -1)} 天限制` : base);
+  if (name === "每週" || name === "每月") name += pool ? ` · ${pool}` : provider === "claude" ? " · 所有模型" : "限制";
+  return name;
+}
+function age(ts) {
+  const m = Math.max(0, Math.round((nowSec() - ts) / 60));
+  return m < 1 ? "剛剛" : m < 60 ? `${m} 分鐘前` : `${Math.floor(m / 60)} 小時前`;
+}
+function tokens(n) {
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
+}
+function usd(v) { return `US$${v < 10 ? v.toFixed(2) : v.toFixed(1)}`; }
+
+function windowHtml(w, provider) {
+  const used = data.usageDisplay === "used";
+  const rem = Math.max(0, Math.min(100, w.remainingPercent));
+  const val = used ? 100 - rem : rem;
+  const t = tone(rem);
+  return `<div class="win"><div class="win-line"><span class="win-name">${esc(windowName(w.label, provider))}</span>
+    <span class="win-meta">${resetText(w.resetAt)}<b>${val}%</b></span></div>
+    <div class="bar"><span class="${used ? "used-" + t : t}" style="width:${val}%"></span></div></div>`;
+}
+
+function accountHtml(a) {
+  const lastKnown = a.status === "expired" && a.windows.length > 0;
+  const plan = a.plan ? `<span class="plan">${esc(a.plan)}</span>` : "";
+  let note = "", body = "";
+  if (a.status === "expired" && !lastKnown) {
+    body = `<div class="status">${esc(a.error || "授權已過期，請在 T3 重新登入")}</div>`;
+  } else if (a.status === "cooldown") {
+    body = `<div class="status cool">${esc(a.error || "查詢受限，稍後自動重試")}</div>`;
+  } else if (a.status !== "ok" && a.status !== "stale" && !lastKnown) {
+    body = `<div class="status">${esc(a.error || "讀取失敗")}</div>`;
+  } else {
+    body = a.windows.length ? a.windows.map((w) => windowHtml(w, a.provider)).join("") : `<div class="sub">沒有用量資料</div>`;
+    if (lastKnown) note = `<span class="note warn">憑證過期 · ${age(a.updatedAt)}</span>`;
+    else if (a.status === "stale") note = `<span class="note">${age(a.updatedAt)}</span>`;
+  }
+  const f = a.forecast;
+  if (f && f.exhaustAt > nowSec()) {
+    const mins = Math.round((f.exhaustAt - nowSec()) / 60);
+    const n = esc(windowName(f.label, a.provider));
+    body += `<div class="line warn">${mins < 60 ? `照目前速度，${Math.max(1, mins)} 分鐘後就會用完 ${n}` : `照目前速度，約 ${when(f.exhaustAt)} 用完 ${n}`}</div>`;
+  }
+  const u = a.usage;
+  if (u && u.requests > 0) {
+    const parts = [`今日 ${tokens(u.totalTokens)} tokens`, `${u.requests} 次`];
+    if (u.costUsd != null) parts.push(`約 ${usd(u.costUsd)}`);
+    body += `<div class="line">${parts.join(" · ")}</div>`;
+  }
+  return `<div class="row ${lastKnown ? "last-known" : ""}"><span class="icon ${a.provider}">${GLYPH[a.provider] || "?"}</span>
+    <div class="main"><div class="title"><span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}</div></div>`;
+}
+
+function render() {
+  if (!data) return;
+  const n = $("notice");
+  const stale = lastError && nowSec() - fetchedAt > 90;
+  if (stale) { n.textContent = `連不到電腦（${lastError}）。請確認電腦開著、iPhone 的 Tailscale 已連線。`; n.classList.remove("hidden"); }
+  else if (data.offline) { n.textContent = "電腦暫時抓不到最新額度，下面是最後一次成功取得的數字。"; n.classList.remove("hidden"); }
+  else n.classList.add("hidden");
+
+  $("summary").innerHTML = `總剩餘 <b class="tone-${tone(data.overallScore)}">${data.overallScore}%</b>` +
+    (data.totalCostUsd >= 0.01 ? `<br>今日約 ${usd(data.totalCostUsd)}` : "");
+
+  $("sec-picks").classList.toggle("hidden", !data.picks.length);
+  $("picks").innerHTML = data.picks.map((p) => `
+    <div class="row"><span class="icon ${p.provider}">${GLYPH[p.provider] || "?"}</span>
+      <div class="main"><div class="title"><span class="name">${esc(p.accountName)}</span></div>
+        <div class="sub ${p.useBeforeReset ? "soon" : ""}">${PROVIDER[p.provider] || ""} · ${esc(p.reason)}</div>
+        ${p.note ? `<div class="sub">${esc(p.note)}</div>` : ""}</div>
+      <span class="pct tone-${tone(p.effectiveRemaining)}"><span class="cap">剩餘</span>${p.effectiveRemaining}<small>%</small></span></div>`).join("");
+
+  const live = data.accounts.filter((a) => a.status === "ok" || a.status === "stale").length;
+  $("count").textContent = `${live}/${data.accounts.length} 在線` + (data.hidden ? ` · 隱藏 ${data.hidden}` : "");
+  $("accounts").innerHTML = data.accounts.length ? data.accounts.map(accountHtml).join("") : `<div class="empty">電腦上沒有找到帳號</div>`;
+  const t = new Date(data.updatedAt * 1000).toLocaleTimeString("zh-TW", { hour12: false, hour: "2-digit", minute: "2-digit" });
+  $("foot").innerHTML = `電腦更新於 ${t} · 每 ${data.refreshIntervalSecs} 秒<br>切回這個 App 時會立即重新整理`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/snapshot", { cache: "no-store" });
+    if (r.status === 503) { lastError = "電腦剛啟動，額度載入中"; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+    fetchedAt = nowSec();
+    lastError = null;
+  } catch (e) {
+    lastError = e.message === "Load failed" || e.message === "Failed to fetch" ? "網路錯誤" : e.message;
+    if (!data) $("accounts").innerHTML = `<div class="empty">連不到電腦（${esc(lastError)}）<br>請確認電腦開著、iPhone 的 Tailscale 已連線。</div>`;
+  } finally {
+    render();
+  }
+}
+
+load();
+setInterval(load, 30000);
+setInterval(render, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+window.addEventListener("pageshow", load);
+</script>
+</body>
+</html>

@@ -65,6 +65,9 @@ pub fn sanitize(s: &mut AppSettings) {
     }
     s.hotkey = s.hotkey.trim().to_string();
     s.claude_min_interval_secs = s.claude_min_interval_secs.clamp(60, 1800);
+    if s.mobile_port < 1024 {
+        s.mobile_port = 8765;
+    }
     if !matches!(s.tray_style.as_str(), "number" | "ring" | "icon") {
         s.tray_style = "number".to_string();
     }

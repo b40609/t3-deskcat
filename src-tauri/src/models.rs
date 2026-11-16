@@ -226,6 +226,17 @@ pub struct AppSettings {
     /// System tray icon: "number" | "ring" | "icon"
     #[serde(default = "default_tray_style")]
     pub tray_style: String,
+
+    // ---- Phone
+    /// Serve the read-only quota page on this PC's Tailscale address.
+    #[serde(default = "default_true")]
+    pub mobile_enabled: bool,
+    #[serde(default = "default_mobile_port")]
+    pub mobile_port: u16,
+}
+
+fn default_mobile_port() -> u16 {
+    8765
 }
 
 fn default_tray_style() -> String {
@@ -316,6 +327,8 @@ impl Default for AppSettings {
             show_forecast: true,
             show_usage_stats: true,
             tray_style: default_tray_style(),
+            mobile_enabled: true,
+            mobile_port: default_mobile_port(),
         }
     }
 }
