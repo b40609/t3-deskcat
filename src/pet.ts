@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { renderAvatar } from "./themeRenderer";
+import { getAnimator } from "./museAnimator";
 import type { AppSettings, CatMood, DashboardSnapshot } from "./types";
 
 const canvas = document.getElementById("pet-canvas") as HTMLCanvasElement;
@@ -49,8 +50,12 @@ function applySnapshot(snap: DashboardSnapshot) {
   syncCanvasSize(snap.settings.petSize || 64);
 }
 
-// Animation loop (~30 fps: silky smooth Rive physics, zero CPU impact)
-setInterval(() => {
+// Animation loop: requestAnimationFrame, capped at ~50 fps to stay light on CPU
+let lastFrame = 0;
+function frame(now: number) {
+  requestAnimationFrame(frame);
+  if (now - lastFrame < 19) return;
+  lastFrame = now;
   tick = (tick + 1) % 10000;
   const effectiveMood = previewMoodOverride ?? currentMood;
   const settings = currentSnapshot?.settings ?? defaultSettings;
@@ -58,7 +63,17 @@ setInterval(() => {
   const score = currentSnapshot?.overallScore ?? 100;
 
   renderAvatar(ctx, canvas.width, theme, score, effectiveMood, tick, settings);
-}, 33);
+}
+requestAnimationFrame(frame);
+
+// Hover: the cat notices you and hops
+let lastHover = 0;
+canvas.addEventListener("pointerenter", () => {
+  const now = performance.now();
+  if (now - lastHover < 2500) return;
+  lastHover = now;
+  getAnimator(ctx).poke("hop");
+});
 
 // Distinguish click (toggle panel) vs drag (>4px native window move)
 let downX = 0;
@@ -103,6 +118,7 @@ canvas.addEventListener("pointerup", (e) => {
   pointerActive = false;
   dragging = false;
   if (wasClick) {
+    getAnimator(ctx).poke("squish");
     invoke("toggle_panel").catch(() => {});
   }
 });

@@ -7,187 +7,191 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
+    <svg width="0" height="0" style="position: absolute">
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z" /><path d="M12 13v8" /></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7" /></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></symbol>
+    </svg>
+
     <div id="app" class="shell">
-      <header class="topbar" data-tauri-drag-region>
-        <div class="brand" data-tauri-drag-region>
-          <canvas id="mini-cat" width="24" height="24"></canvas>
-          <div class="brand-text" data-tauri-drag-region>
-            <span class="title">T3 DeskCat</span>
-            <span id="mood-badge" class="mood-badge working">載入中</span>
-          </div>
-        </div>
-        <div class="actions">
-          <button id="btn-refresh" class="icon-btn" title="立即刷新額度">↻</button>
-          <button id="btn-pin" class="icon-btn" title="釘選面板（不自動收合）">📌</button>
-          <button id="btn-settings" class="icon-btn" title="設定">⚙</button>
-        </div>
-      </header>
+      <div class="views">
+        <!-- ============ Dashboard ============ -->
+        <section id="view-dashboard" class="view">
+          <header class="nav-large" data-tauri-drag-region>
+            <div class="nav-title-group" data-tauri-drag-region>
+              <div class="avatar"><canvas id="mini-cat" width="88" height="88"></canvas></div>
+              <div data-tauri-drag-region>
+                <div class="nav-eyebrow" data-tauri-drag-region>T3 DESKCAT</div>
+                <h1 class="large-title" data-tauri-drag-region>額度</h1>
+              </div>
+            </div>
+            <div class="nav-actions">
+              <button id="btn-refresh" class="circle-btn" title="立即刷新"><svg><use href="#i-refresh" /></svg></button>
+              <button id="btn-pin" class="circle-btn" title="釘選面板"><svg><use href="#i-pin" /></svg></button>
+              <button id="btn-settings" class="circle-btn" title="設定"><svg><use href="#i-gear" /></svg></button>
+            </div>
+          </header>
 
-      <main id="view-dashboard" class="content">
-        <section id="kpi-strip" class="kpi-strip"></section>
-        <section class="section-container" id="sec-picks">
-          <div class="section-header">
-            <span class="section-title">⚡ 最佳推薦</span>
+          <div class="scroll">
+            <div class="card hero" id="hero">
+              <svg class="rings" id="rings" viewBox="0 0 120 120"></svg>
+              <div class="hero-info">
+                <span id="mood-badge" class="mood-pill working">載入中</span>
+                <div class="hero-score"><span id="hero-score">--</span><small>%</small></div>
+                <div class="hero-sub" id="score-hint">總體剩餘額度</div>
+              </div>
+              <div class="legend" id="legend"></div>
+            </div>
+
+            <section id="sec-picks" class="group">
+              <div class="group-header">推薦使用</div>
+              <div class="list" id="picks-section"></div>
+            </section>
+
+            <section id="sec-accounts" class="group">
+              <div class="group-header">
+                <span>所有帳號</span><span id="accounts-count" class="group-header-aside"></span>
+              </div>
+              <div class="list" id="accounts-section"></div>
+            </section>
+
+            <div class="footnote" id="last-updated">尚未更新</div>
           </div>
-          <div id="picks-section" class="picks-grid"></div>
         </section>
-        <section class="section-container" id="sec-accounts">
-          <div class="section-header">
-            <span class="section-title">📊 帳號配額池</span>
-            <span id="accounts-count" class="section-count"></span>
+
+        <!-- ============ Settings ============ -->
+        <section id="view-settings" class="view view-push">
+          <header class="nav-bar" data-tauri-drag-region>
+            <button id="btn-back" class="back-btn"><svg><use href="#i-back" /></svg>額度</button>
+            <div class="nav-bar-title" data-tauri-drag-region>設定</div>
+            <span class="nav-bar-spacer"></span>
+          </header>
+
+          <div class="scroll">
+            <section class="group">
+              <div class="group-header">桌寵外觀</div>
+              <div class="theme-picker" id="theme-selector">
+                <button data-theme="desk_cat" class="theme-btn">
+                  <span class="theme-thumb cat">🐱</span>
+                  <span class="theme-name">Muse 貓</span>
+                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                </button>
+                <button data-theme="hud_gauge" class="theme-btn">
+                  <span class="theme-thumb gauge"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" /><path d="M20 6a14 14 0 1 1-13.3 18.3" /></svg></span>
+                  <span class="theme-name">圓環儀表</span>
+                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                </button>
+                <button data-theme="custom" class="theme-btn">
+                  <span class="theme-thumb custom">🖼️</span>
+                  <span class="theme-name">自訂圖片</span>
+                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                </button>
+              </div>
+
+              <div id="custom-images-card" class="list hidden" style="margin-top: 10px">
+                <div class="custom-slots">
+                  <label class="custom-slot">
+                    <span class="slot-preview" id="prev-slot-working">💻</span>
+                    <span class="slot-name">充沛</span>
+                    <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
+                  </label>
+                  <label class="custom-slot">
+                    <span class="slot-preview" id="prev-slot-sweating">💦</span>
+                    <span class="slot-name">趕工</span>
+                    <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
+                  </label>
+                  <label class="custom-slot">
+                    <span class="slot-preview" id="prev-slot-sleeping">😴</span>
+                    <span class="slot-name">見底</span>
+                    <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
+                  </label>
+                </div>
+                <button id="btn-clear-custom" class="row row-button destructive">清除自訂圖片</button>
+              </div>
+
+              <div class="list" style="margin-top: 10px">
+                <div class="row row-slider">
+                  <div class="row-line"><span>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
+                  <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
+                </div>
+                <div class="row row-stack">
+                  <span class="row-caption">預覽動畫</span>
+                  <div class="chips">
+                    <button class="chip" data-preview="working">💻 上班</button>
+                    <button class="chip" data-preview="sweating">💦 趕工</button>
+                    <button class="chip" data-preview="sleeping">😴 趴睡</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-header">心情門檻</div>
+              <div class="list">
+                <div class="row row-slider">
+                  <div class="row-line"><span><i class="dot green"></i>元氣工作（高於）</span><span class="value" id="val-work-th">70%</span></div>
+                  <input id="inp-work-th" class="slider" type="range" min="30" max="95" step="5" value="70" />
+                </div>
+                <div class="row row-slider">
+                  <div class="row-line"><span><i class="dot gray"></i>趴睡休息（低於）</span><span class="value" id="val-sleep-th">20%</span></div>
+                  <input id="inp-sleep-th" class="slider" type="range" min="5" max="60" step="5" value="20" />
+                </div>
+                <div class="row">
+                  <span>計算方式</span>
+                  <div class="segmented" id="seg-score-mode">
+                    <button data-mode="max_avg" class="seg-btn active">各家最高</button>
+                    <button data-mode="all_avg" class="seg-btn">全部平均</button>
+                  </div>
+                </div>
+              </div>
+              <div class="group-footer" id="val-sweat-range">介於 20% ~ 70% 時貓會冒汗趕工。</div>
+            </section>
+
+            <section class="group">
+              <div class="group-header">通知</div>
+              <div class="list">
+                <label class="row">
+                  <span>低額度與重置通知</span>
+                  <input id="inp-notify" class="switch" type="checkbox" checked />
+                </label>
+                <div class="row row-slider">
+                  <div class="row-line"><span>警戒線</span><span class="value" id="val-notify-th">20%</span></div>
+                  <input id="inp-notify-th" class="slider" type="range" min="5" max="50" step="5" value="20" />
+                </div>
+                <button id="btn-test-notify" class="row row-button">傳送測試通知</button>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="group-header">一般</div>
+              <div class="list">
+                <div class="row row-slider">
+                  <div class="row-line"><span>自動刷新</span><span class="value" id="val-refresh-sec">120 秒</span></div>
+                  <input id="inp-refresh-sec" class="slider" type="range" min="30" max="600" step="30" value="120" />
+                </div>
+                <label class="row">
+                  <span>顯示 Antigravity 次要池</span>
+                  <input id="inp-ag-extra" class="switch" type="checkbox" />
+                </label>
+                <label class="row">
+                  <span>開機時啟動</span>
+                  <input id="inp-autostart" class="switch" type="checkbox" />
+                </label>
+              </div>
+            </section>
+
+            <section class="group">
+              <div class="list">
+                <button id="btn-quit" class="row row-button destructive">結束 T3 DeskCat</button>
+              </div>
+            </section>
+            <div class="footnote">T3 DeskCat · v0.1.0</div>
           </div>
-          <div id="accounts-section" class="accounts-list"></div>
         </section>
-        <footer class="footbar">
-          <span id="last-updated">尚未更新</span>
-          <span id="score-hint"></span>
-        </footer>
-      </main>
-
-      <main id="view-settings" class="content hidden">
-        <div class="settings-card">
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>桌面外觀風格 / 虛擬寵物</span>
-            </div>
-            <div class="theme-selector" id="theme-selector">
-              <button data-theme="hud_gauge" class="theme-btn active">
-                <span class="theme-btn-icon">🧭</span>
-                <span class="theme-btn-title">專業 HUD 儀表</span>
-                <span class="theme-btn-desc">極簡科技·免打擾</span>
-              </button>
-              <button data-theme="desk_cat" class="theme-btn">
-                <span class="theme-btn-icon">🐱</span>
-                <span class="theme-btn-title">Muse 月薪貓</span>
-                <span class="theme-btn-desc">耳機筆電·專注工作</span>
-              </button>
-              <button data-theme="custom" class="theme-btn">
-                <span class="theme-btn-icon">🖼️</span>
-                <span class="theme-btn-title">自訂虛擬寵物</span>
-                <span class="theme-btn-desc">自選圖片/動態 GIF</span>
-              </button>
-            </div>
-          </div>
-
-          <div id="custom-images-card" class="custom-card hidden">
-            <div class="custom-card-header">
-              <span>自訂三態圖片（支援 PNG / JPG / GIF）</span>
-            </div>
-            <div class="custom-slots-grid">
-              <div class="custom-slot" data-slot="working">
-                <div class="slot-preview" id="prev-slot-working">💻</div>
-                <div class="slot-name">充沛 (&gt;70%)</div>
-                <label class="slot-upload-label">
-                  上傳圖片
-                  <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
-                </label>
-              </div>
-              <div class="custom-slot" data-slot="sweating">
-                <div class="slot-preview" id="prev-slot-sweating">💦</div>
-                <div class="slot-name">趕工 (20~70%)</div>
-                <label class="slot-upload-label">
-                  上傳圖片
-                  <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
-                </label>
-              </div>
-              <div class="custom-slot" data-slot="sleeping">
-                <div class="slot-preview" id="prev-slot-sleeping">😴</div>
-                <div class="slot-name">見底 (&lt;20%)</div>
-                <label class="slot-upload-label">
-                  上傳圖片
-                  <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
-                </label>
-              </div>
-            </div>
-            <div class="custom-card-hint">
-              <span>* 僅需 1 張即可通用，亦可為三種狀態設定專屬圖片。</span>
-              <button id="btn-clear-custom" class="link-btn">清除自訂圖片</button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>顯示圖示尺寸</span>
-              <strong id="val-pet-size">64 px</strong>
-            </div>
-            <input id="inp-pet-size" type="range" min="48" max="128" step="2" value="64" />
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>總體額度計算方式</span>
-            </div>
-            <div class="segmented" id="seg-score-mode">
-              <button data-mode="max_avg" class="seg-btn active">各家最高平均</button>
-              <button data-mode="all_avg" class="seg-btn">全部帳號平均</button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>元氣上班門檻（大於此值）</span>
-              <strong id="val-work-th">70%</strong>
-            </div>
-            <input id="inp-work-th" type="range" min="30" max="95" step="5" value="70" />
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>見底趴睡門檻（小於此值）</span>
-              <strong id="val-sleep-th">20%</strong>
-            </div>
-            <input id="inp-sleep-th" type="range" min="5" max="60" step="5" value="20" />
-            <div class="subhint" id="val-sweat-range">趕工冒汗區間：20% ~ 70%</div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>即時預覽桌寵動畫（3 秒）</span>
-            </div>
-            <div class="preview-btns">
-              <button class="pill-btn" data-preview="working">💻 上班</button>
-              <button class="pill-btn" data-preview="sweating">💦 冒汗</button>
-              <button class="pill-btn" data-preview="sleeping">😴 趴睡</button>
-            </div>
-          </div>
-
-          <div class="setting-row toggle-row">
-            <span>Windows 系統通知（低額度 / 重置）</span>
-            <input id="inp-notify" type="checkbox" checked />
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>低額度通知警戒線</span>
-              <strong id="val-notify-th">20%</strong>
-            </div>
-            <input id="inp-notify-th" type="range" min="5" max="50" step="5" value="20" />
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span>自動刷新週期</span>
-              <strong id="val-refresh-sec">120 秒</strong>
-            </div>
-            <input id="inp-refresh-sec" type="range" min="30" max="600" step="30" value="120" />
-          </div>
-
-          <div class="setting-row toggle-row">
-            <span>顯示 Antigravity 次要池 (Argon / 3P)</span>
-            <input id="inp-ag-extra" type="checkbox" />
-          </div>
-
-          <div class="setting-row toggle-row">
-            <span>開機自動啟動</span>
-            <input id="inp-autostart" type="checkbox" />
-          </div>
-
-          <div class="settings-footer">
-            <button id="btn-test-notify" class="secondary-btn">測試通知</button>
-            <button id="btn-quit" class="danger-btn">結束程式</button>
-          </div>
-        </div>
-      </main>
+      </div>
     </div>
     <script type="module" src="/src/panel.ts"></script>
   </body>
