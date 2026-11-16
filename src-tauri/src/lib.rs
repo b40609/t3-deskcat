@@ -664,6 +664,11 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             position_pet_initial(&handle, &loaded_settings);
+            if let Some(ref panel) = app.get_webview_window("panel") {
+                position_panel_near_pet(&handle, panel);
+                let _ = panel.show();
+                let _ = panel.set_focus();
+            }
 
             // Auto-hide panel when it loses focus (unless pinned)
             if let Some(panel) = app.get_webview_window("panel") {
