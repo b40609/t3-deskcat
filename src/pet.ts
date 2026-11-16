@@ -49,7 +49,7 @@ function applySnapshot(snap: DashboardSnapshot) {
   syncCanvasSize(snap.settings.petSize || 64);
 }
 
-// Animation loop (~12 fps: silky smooth HUD rotation, crisp sprite, negligible CPU)
+// Animation loop (~30 fps: silky smooth Rive physics, zero CPU impact)
 setInterval(() => {
   tick = (tick + 1) % 10000;
   const effectiveMood = previewMoodOverride ?? currentMood;
@@ -58,7 +58,7 @@ setInterval(() => {
   const score = currentSnapshot?.overallScore ?? 100;
 
   renderAvatar(ctx, canvas.width, theme, score, effectiveMood, tick, settings);
-}, 80);
+}, 33);
 
 // Distinguish click (toggle panel) vs drag (>4px native window move)
 let downX = 0;

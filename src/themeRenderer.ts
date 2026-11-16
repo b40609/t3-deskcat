@@ -26,9 +26,18 @@ export function getMuseImage(mood: CatMood): HTMLImageElement | null {
   return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
+let currentMuseMood: CatMood = "working";
+let prevMuseMood: CatMood = "working";
+let moodTransitionStart = 0;
+const CROSSFADE_MS = 300;
+
 /**
- * High-definition Muse (月薪貓) Avatar Renderer
- * Uses authentic illustrated Muse with headphones and laptop, plus animated alive state.
+ * Official Muse (月薪貓) Rive-Spec Avatar Renderer
+ * Faithfully reproduces the Rive State Machine from scene.rml:
+ * - Working (quota >= 50): Up/down subtle bounce (±6px on 512px, 500ms cycle).
+ * - Sweating (quota 20-49): Calm, still sweating state.
+ * - Sleeping (quota < 20): Breathing scale 1.00 -> 1.05 (3.0s cycle) + floating "Z" text.
+ * - 300ms smooth cross-fade between states.
  */
 export function drawMuseCat(
   ctx: CanvasRenderingContext2D,
@@ -39,32 +48,30 @@ export function drawMuseCat(
   ctx.clearRect(0, 0, size, size);
   ctx.imageSmoothingEnabled = true;
 
-  const img = getMuseImage(mood);
-  if (!img) return;
+  const now = performance.now();
+  if (mood !== currentMuseMood) {
+    prevMuseMood = currentMuseMood;
+    currentMuseMood = mood;
+    moodTransitionStart = now;
+  }
+
+  const elapsed = now - moodTransitionStart;
+  const progress = Math.min(1.0, elapsed / CROSSFADE_MS);
+
+  const imgCurrent = getMuseImage(currentMuseMood);
+  const imgPrev = getMuseImage(prevMuseMood);
+  if (!imgCurrent) return;
 
   ctx.save();
 
-  let offsetY = 0;
-  let offsetX = 0;
-  let glowColor = "rgba(56, 189, 248, 0.25)";
-
-  if (mood === "working") {
-    // Rhythmic typing/breathing bob (smooth sine wave)
-    offsetY = Math.sin(((tick % 30) / 30) * Math.PI * 2) * (size * 0.025);
-    glowColor = "rgba(52, 211, 153, 0.22)";
-  } else if (mood === "sweating") {
-    // Fast energetic typing tremor
-    offsetX = Math.sin(tick * 2.2) * (size * 0.03);
-    glowColor = "rgba(251, 191, 36, 0.35)";
-  } else if (mood === "sleeping") {
-    // Peaceful sleeping heave
-    offsetY =
-      Math.sin(((tick % 50) / 50) * Math.PI * 2) * (size * 0.015) + size * 0.025;
-    ctx.globalAlpha = 0.88;
-    glowColor = "rgba(148, 163, 184, 0.18)";
+  // Subtle circular ambient backlight glow for workbench depth
+  let glowColor = "rgba(52, 211, 153, 0.2)";
+  if (currentMuseMood === "sweating") {
+    glowColor = "rgba(245, 158, 11, 0.28)";
+  } else if (currentMuseMood === "sleeping") {
+    glowColor = "rgba(148, 163, 184, 0.16)";
   }
 
-  // Subtle circular ambient backlight glow for workbench depth
   const center = size / 2;
   const radius = size * 0.46;
   const grad = ctx.createRadialGradient(
@@ -82,11 +89,83 @@ export function drawMuseCat(
   ctx.arc(center, center, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Draw Muse avatar (crisp transparent illustration)
-  const drawSize = size * 0.94;
-  const pos = (size - drawSize) / 2;
-  ctx.drawImage(img, pos + offsetX, pos + offsetY, drawSize, drawSize);
+  // Draw previous mood if cross-fading
+  if (progress < 1.0 && imgPrev && imgPrev !== imgCurrent) {
+    ctx.save();
+    ctx.globalAlpha = 1.0 - progress;
+    renderMuseFrame(ctx, imgPrev, prevMuseMood, size, now);
+    ctx.restore();
+  }
 
+  // Draw current mood
+  ctx.save();
+  ctx.globalAlpha = progress;
+  renderMuseFrame(ctx, imgCurrent, currentMuseMood, size, now);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function renderMuseFrame(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  mood: CatMood,
+  size: number,
+  timeMs: number,
+) {
+  ctx.save();
+  const center = size / 2;
+  const baseDrawSize = size * 0.94;
+
+  let offsetY = 0;
+  let scale = 1.0;
+
+  if (mood === "working") {
+    // Rive "Typing" animation: 30 frames (500ms cycle), bounce between 256 and 250 (-6px on 512)
+    const phase = (timeMs % 500) / 500;
+    offsetY = -Math.sin(phase * Math.PI) * (size * (6 / 512));
+  } else if (mood === "sweating") {
+    // Rive "Sweating" animation: still (no jitter)
+    offsetY = 0;
+  } else if (mood === "sleeping") {
+    // Rive "Sleeping" animation: 180 frames (3000ms cycle)
+    // Scale 1.00 -> 1.05 and position Y shift 256 -> 251 (-5px on 512)
+    const phase = (timeMs % 3000) / 3000;
+    const sinPhase = Math.sin(phase * Math.PI);
+    scale = 1.0 + 0.05 * sinPhase;
+    offsetY = -sinPhase * (size * (5 / 512));
+
+    // Floating "Z" text: drifting upwards from Y 150 -> 70 on 512, with opacity keyframes
+    const zPhase = (timeMs % 3000) / 3000;
+    let zOpacity = 0;
+    if (zPhase < 0.25) {
+      zOpacity = zPhase / 0.25;
+    } else if (zPhase < 0.75) {
+      zOpacity = 1.0;
+    } else {
+      zOpacity = 1.0 - (zPhase - 0.75) / 0.25;
+    }
+
+    if (zOpacity > 0.01) {
+      ctx.save();
+      const zX = size * 0.76;
+      const zY = size * (0.32 - zPhase * 0.16);
+      ctx.font = `bold ${Math.max(10, Math.round(size * 0.15))}px "Montserrat", -apple-system, sans-serif`;
+      ctx.fillStyle = `rgba(74, 44, 26, ${zOpacity * 0.9})`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Z", zX, zY);
+      ctx.restore();
+    }
+  }
+
+  // Draw image centered with scale and offset
+  const drawW = baseDrawSize * scale;
+  const drawH = baseDrawSize * scale;
+  const posX = center - drawW / 2;
+  const posY = center - drawH / 2 + offsetY;
+
+  ctx.drawImage(img, posX, posY, drawW, drawH);
   ctx.restore();
 }
 
