@@ -142,10 +142,17 @@ function formatResetAt(resetAt: number | null): string {
   return `${mins}分後重置`;
 }
 
+function ageLabel(ts: number): string {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  if (mins < 1) return "剛剛";
+  if (mins < 60) return `${mins} 分鐘前`;
+  return `${Math.floor(mins / 60)} 小時前`;
+}
+
 function bestByProvider(accounts: AccountQuota[]) {
   return PROVIDERS.map((p) => {
     const accs = accounts.filter((a) => a.provider === p.kind);
-    const ok = accs.filter((a) => a.status === "ok" || a.status === "cooldown");
+    const ok = accs.filter((a) => a.status === "ok" || a.status === "stale");
     const best = ok.length ? Math.max(...ok.map((a) => a.effectiveRemaining)) : null;
     return { ...p, best, count: accs.length };
   }).filter((p) => p.count > 0);
@@ -179,9 +186,10 @@ function renderRings(accounts: AccountQuota[]) {
 }
 
 function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
+  const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  const isErr = acc.status !== "ok" && !isCooldown;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown;
   const tone = isErr ? "bad" : isCooldown ? "warn" : getTone(acc.effectiveRemaining);
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
 
@@ -201,11 +209,15 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
       showExtra && acc.extraWindows.length
         ? acc.extraWindows.map((w) => `<span>${escapeHtml(w.label)} <b>${w.remainingPercent}%</b></span>`).join("")
         : "";
-    const cd = isCooldown ? `<span class="status cooldown">請求過於頻繁，冷卻中</span>` : "";
+    const cd = isStale
+      ? `<span class="status stale">${ageLabel(acc.updatedAt)}的資料${acc.error ? ` · ${escapeHtml(acc.error)}` : ""}</span>`
+      : isCooldown
+        ? `<span class="status cooldown">${escapeHtml(acc.error ?? "查詢受限，稍後自動重試")}</span>`
+        : "";
     detail = `<div class="windows">${wins}${extra}${cd}</div>`;
   }
 
-  const bar = isErr
+  const bar = isErr || isCooldown
     ? ""
     : `<div class="bar"><span class="${tone}" style="width:${Math.max(0, Math.min(100, acc.effectiveRemaining))}%"></span></div>`;
 
@@ -217,7 +229,7 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
         ${bar}
         ${detail}
       </div>
-      <span class="pct tone-${tone}">${isErr ? "—" : `${acc.effectiveRemaining}<small>%</small>`}</span>
+      <span class="pct tone-${tone}">${isErr || isCooldown ? "—" : `${acc.effectiveRemaining}<small>%</small>`}</span>
     </div>`;
 }
 
@@ -249,7 +261,7 @@ function renderDashboard(snap: DashboardSnapshot) {
     )
     .join("");
 
-  const okCount = snap.accounts.filter((a) => a.status === "ok").length;
+  const okCount = snap.accounts.filter((a) => a.status === "ok" || a.status === "stale").length;
   $("accounts-count").textContent = `${okCount}/${snap.accounts.length} 在線`;
 
   accountsSection.innerHTML =

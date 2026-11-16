@@ -960,3 +960,8 @@ label.row:active {
 .seg-btn.active {
   font-weight: 600;
 }
+
+.status.stale {
+  color: var(--label-3);
+  font-weight: 400;
+}

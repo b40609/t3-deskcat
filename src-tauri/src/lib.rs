@@ -1,6 +1,7 @@
 mod discovery;
 mod models;
 mod providers;
+mod quota_cache;
 mod settings;
 
 use crate::discovery::{discover_accounts, DiscoveredAccount};
@@ -23,6 +24,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
+use quota_cache::{QuotaCache, CLAUDE_MIN_INTERVAL_SECS};
 
 struct InnerState {
     settings: AppSettings,
@@ -33,6 +35,7 @@ struct InnerState {
     panel_pinned: bool,
     last_toggle: Instant,
     tray_id: String,
+    cache: QuotaCache,
 }
 
 #[derive(Clone)]
@@ -276,20 +279,55 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         }));
     }
 
-    // Sequence Claude calls with 350ms delay to avoid Anthropic OAuth 429
+    // Claude: sequential, spaced out, and gated by per-account backoff so a
+    // 429 is never retried while the server-side limit is still active.
     let mut claude_results = Vec::with_capacity(claude_accounts.len());
-    for (idx, acc) in claude_accounts.into_iter().enumerate() {
-        if idx > 0 {
-            tokio::time::sleep(Duration::from_millis(350)).await;
-        }
-        if let DiscoveredAccount::Claude {
+    let mut fetched_any = false;
+    for acc in claude_accounts {
+        let DiscoveredAccount::Claude {
             id,
             name,
             credentials_path,
         } = acc
-        {
-            claude_results.push(fetch_claude_quota(&client, id, name, &credentials_path).await);
+        else {
+            continue;
+        };
+        let now = Utc::now().timestamp();
+        let allowed = state
+            .0
+            .lock()
+            .map(|g| g.cache.may_fetch(&id, now, CLAUDE_MIN_INTERVAL_SECS))
+            .unwrap_or(true);
+        if !allowed {
+            let placeholder = AccountQuota {
+                id: id.clone(),
+                provider: ProviderKind::Claude,
+                name,
+                plan: None,
+                effective_remaining: 0,
+                primary_windows: Vec::new(),
+                extra_windows: Vec::new(),
+                status: "cooldown".to_string(),
+                error: Some("Anthropic 暫時限制查詢，稍後自動重試".to_string()),
+                updated_at: now,
+            };
+            let shown = state
+                .0
+                .lock()
+                .map(|g| g.cache.skipped(&id, placeholder.clone(), now))
+                .unwrap_or(placeholder);
+            claude_results.push(shown);
+            continue;
         }
+        if fetched_any {
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+        }
+        fetched_any = true;
+        if let Ok(mut g) = state.0.lock() {
+            g.cache.note_attempt(&id, now);
+        }
+        let fresh = fetch_claude_quota(&client, id, name, &credentials_path).await;
+        claude_results.push(fresh);
     }
 
     let mut accounts = Vec::with_capacity(handles.len() + claude_results.len());
@@ -300,23 +338,21 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
     }
     accounts.extend(claude_results);
 
-    // If any account hit cooldown (429), preserve previous quota if available
-    if let Ok(guard) = state.0.lock() {
-        if let Some(prev_snap) = &guard.snapshot {
-            for acc in &mut accounts {
-                if acc.status == "cooldown" {
-                    if let Some(prev) = prev_snap
-                        .accounts
-                        .iter()
-                        .find(|p| p.id == acc.id && p.status == "ok")
-                    {
-                        acc.effective_remaining = prev.effective_remaining;
-                        acc.primary_windows = prev.primary_windows.clone();
-                        acc.extra_windows = prev.extra_windows.clone();
-                    }
+    // Never let a transient failure (429 / network / 5xx) wipe an account to 0%:
+    // fall back to the last good data (persisted across restarts).
+    if let Ok(mut guard) = state.0.lock() {
+        let now = Utc::now().timestamp();
+        accounts = accounts
+            .into_iter()
+            .map(|acc| {
+                if acc.status == "stale" {
+                    acc // already resolved from cache (skipped fetch)
+                } else {
+                    guard.cache.reconcile(acc, now)
                 }
-            }
-        }
+            })
+            .collect();
+        guard.cache.save();
     }
 
     let now = Utc::now().timestamp();
@@ -340,7 +376,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         if cfg.notify_enabled {
             for acc in &snap.accounts {
                 if acc.status != "ok" {
-                    continue;
+                    continue; // notifications only on fresh data
                 }
                 let rem = acc.effective_remaining;
                 let prev = guard.prev_effective.get(&acc.id).copied();
@@ -417,12 +453,17 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
     snap.settings = settings.clone();
 }
 
+/// Fresh data, or last-known-good data served from the cache.
+fn is_usable(a: &AccountQuota) -> bool {
+    a.status == "ok" || a.status == "stale"
+}
+
 fn compute_picks(accounts: &[AccountQuota]) -> Vec<SmartPick> {
     let mut picks = Vec::new();
     for provider in [ProviderKind::Claude, ProviderKind::Antigravity] {
         let candidates: Vec<&AccountQuota> = accounts
             .iter()
-            .filter(|a| a.provider == provider && a.status == "ok" && a.effective_remaining > 0)
+            .filter(|a| a.provider == provider && is_usable(a) && a.effective_remaining > 0)
             .collect();
         if candidates.is_empty() {
             continue;
@@ -493,7 +534,7 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
     if parts.is_empty() {
         if let Some(codex) = accounts
             .iter()
-            .find(|a| a.provider == ProviderKind::Codex && a.status == "ok")
+            .find(|a| a.provider == ProviderKind::Codex && is_usable(a))
         {
             parts.push(format!("ChatGPT: {}%", codex.effective_remaining));
         } else {
@@ -505,7 +546,7 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
 
 fn compute_overall_score(accounts: &[AccountQuota], mode: ScoreMode) -> i32 {
     let ok_accounts: Vec<&AccountQuota> =
-        accounts.iter().filter(|a| a.status == "ok").collect();
+        accounts.iter().filter(|a| is_usable(a)).collect();
     if ok_accounts.is_empty() {
         return 100; // Default awake while loading or offline
     }
@@ -638,6 +679,7 @@ pub fn run() {
         panel_pinned: false,
         last_toggle: Instant::now() - Duration::from_secs(5),
         tray_id: "main-tray".to_string(),
+        cache: QuotaCache::load(),
     })));
 
     tauri::Builder::default()
