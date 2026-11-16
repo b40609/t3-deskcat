@@ -1447,3 +1447,52 @@ label.row:active {
 .nav-large .nav-actions {
   margin-left: auto;
 }
+
+/* ---------------------------------------------------------------- forecast / usage / offline */
+
+.acc-line {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acc-line.warn {
+  color: var(--orange);
+  font-weight: 500;
+}
+
+.acc.last-known .win,
+.acc.last-known .spark-wrap {
+  opacity: 0.5;
+}
+
+.acc-note.warn {
+  color: var(--orange);
+}
+
+.row-sub.muted {
+  color: var(--label-3);
+  font-size: 11px;
+}
+
+.pick-soon .row-sub:first-of-type {
+  color: var(--orange);
+}
+
+.notice {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--label);
+  background: color-mix(in srgb, var(--orange) 14%, transparent);
+}
+
+.notice.hidden {
+  display: none;
+}

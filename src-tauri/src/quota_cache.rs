@@ -87,8 +87,18 @@ impl QuotaCache {
                 self.last_good.insert(fresh.id.clone(), fresh.clone());
                 fresh
             }
-            // Real auth problem: show it, don't mask it with old numbers.
-            "expired" => fresh,
+            // Auth problem: keep showing the last-known numbers (marked as such)
+            // instead of an empty row; the status stays "expired".
+            "expired" => {
+                let note = fresh.error.clone();
+                match self.stale_view(&fresh, now, note) {
+                    Some(mut last) => {
+                        last.status = "expired".to_string();
+                        last
+                    }
+                    None => fresh,
+                }
+            }
             status => {
                 if status == "cooldown" {
                     let b = self.backoff.entry(fresh.id.clone()).or_default();
@@ -211,10 +221,22 @@ mod tests {
     }
 
     #[test]
-    fn expired_is_not_masked() {
+    fn expired_keeps_last_known_numbers() {
         let mut c = QuotaCache::default();
-        c.reconcile(acc("ok", 80, None), 1000);
-        let e = c.reconcile(acc("expired", 0, None), 1100);
+        c.reconcile(acc("ok", 80, Some(5000)), 1000);
+        let mut fresh = acc("expired", 0, None);
+        fresh.primary_windows.clear();
+        fresh.error = Some("憑證已過期".into());
+        let e = c.reconcile(fresh.clone(), 1100);
         assert_eq!(e.status, "expired");
+        assert_eq!(e.effective_remaining, 80);
+        assert_eq!(e.updated_at, 1000);
+        assert_eq!(e.error.as_deref(), Some("憑證已過期"));
+        // Its window reset while the token was expired -> shown as full.
+        assert_eq!(c.reconcile(fresh.clone(), 6000).effective_remaining, 100);
+        // Never fetched successfully: nothing to fall back to.
+        let mut other = fresh;
+        other.id = "claude:b".into();
+        assert!(c.reconcile(other, 1100).primary_windows.is_empty());
     }
 }

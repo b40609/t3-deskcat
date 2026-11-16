@@ -32,6 +32,8 @@
           </header>
 
           <div class="scroll">
+            <div id="offline-note" class="notice hidden">暫時抓不到最新額度，下面是最後一次成功取得的數字。</div>
+
             <section id="sec-picks" class="group">
               <div class="group-header">推薦使用</div>
               <div class="list" id="picks-section"></div>
@@ -186,6 +188,22 @@
                   <span>24 小時趨勢圖</span>
                   <input id="inp-show-history" class="switch" type="checkbox" checked />
                 </label>
+                <label class="row">
+                  <span>用完預測<small class="row-hint">照目前速度會在重設前用完時提醒</small></span>
+                  <input id="inp-show-forecast" class="switch" type="checkbox" checked />
+                </label>
+                <label class="row">
+                  <span>今日用量與花費<small class="row-hint">讀本機紀錄；花費以 API 牌價估算</small></span>
+                  <input id="inp-show-usage" class="switch" type="checkbox" checked />
+                </label>
+                <div class="row">
+                  <span>系統匣圖示</span>
+                  <div class="segmented" data-key="trayStyle">
+                    <button data-value="number" class="seg-btn">數字</button>
+                    <button data-value="ring" class="seg-btn">圓環</button>
+                    <button data-value="icon" class="seg-btn">原圖示</button>
+                  </div>
+                </div>
               </div>
               <div class="group-footer">「已使用」與 Claude 官方用量頁一致；桌寵心情仍以剩餘額度計算。</div>
             </section>

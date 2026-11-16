@@ -65,6 +65,9 @@ pub fn sanitize(s: &mut AppSettings) {
     }
     s.hotkey = s.hotkey.trim().to_string();
     s.claude_min_interval_secs = s.claude_min_interval_secs.clamp(60, 1800);
+    if !matches!(s.tray_style.as_str(), "number" | "ring" | "icon") {
+        s.tray_style = "number".to_string();
+    }
     for p in s.account_prefs.values_mut() {
         if let Some(a) = p.alias.as_mut() {
             *a = a.trim().chars().take(40).collect();

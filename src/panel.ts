@@ -6,9 +6,11 @@ import type {
   AppSettings,
   CatMood,
   DashboardSnapshot,
+  Forecast,
   PanelPosition,
   PetTheme,
   ProviderKind,
+  UsageToday,
 } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -58,6 +60,9 @@ const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
 const inpPetSnap = $<HTMLInputElement>("inp-pet-snap");
 const inpCompact = $<HTMLInputElement>("inp-compact");
 const inpShowHistory = $<HTMLInputElement>("inp-show-history");
+const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
+const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
+const offlineNote = $("offline-note");
 const selPanelPos = $<HTMLSelectElement>("sel-panel-pos");
 const btnHotkey = $<HTMLButtonElement>("btn-hotkey");
 const btnHotkeyClear = $<HTMLButtonElement>("btn-hotkey-clear");
@@ -118,6 +123,9 @@ const fallbackSettings: AppSettings = {
   compactAccounts: false,
   showHistory: true,
   claudeMinIntervalSecs: 90,
+  showForecast: true,
+  showUsageStats: true,
+  trayStyle: "number",
 };
 
 const cfg = () => currentSettings ?? fallbackSettings;
@@ -239,6 +247,52 @@ function renderWindow(w: { label: string; remainingPercent: number; resetAt: num
     </div>`;
 }
 
+/** "下午4:40" today, "明天上午9:10", "週四上午10:00" later. */
+function formatWhen(ts: number): string {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const time = d.toLocaleTimeString("zh-TW", { hour: "numeric", minute: "2-digit", hour12: true });
+  if (d.toDateString() === now.toDateString()) return time;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === tomorrow.toDateString()) return `明天${time}`;
+  return `${WEEKDAYS[d.getDay()]}${time}`;
+}
+
+function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
+  if (!f || cfg().showForecast === false) return "";
+  const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
+  if (mins < 0) return "";
+  const name = escapeHtml(windowName(f.label, provider));
+  const text =
+    mins < 60
+      ? `照目前速度，${Math.max(1, mins)} 分鐘後就會用完 ${name}`
+      : `照目前速度，約 ${formatWhen(f.exhaustAt)} 用完 ${name}`;
+  const tip = `每小時約用 ${f.ratePerHour}%` + (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "");
+  return `<div class="acc-line warn" title="${escapeHtml(tip)}">${text}</div>`;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+}
+
+function usageHtml(u: UsageToday | undefined): string {
+  if (!u || cfg().showUsageStats === false || u.requests === 0) return "";
+  const parts = [`今日 ${fmtTokens(u.totalTokens)} tokens`, `${u.requests} 次`];
+  if (u.costUsd != null) parts.push(`約 US$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
+  const tip = [
+    `輸入 ${fmtTokens(u.inputTokens)}`,
+    `輸出 ${fmtTokens(u.outputTokens)}`,
+    `快取讀取 ${fmtTokens(u.cacheReadTokens)}`,
+    `快取寫入 ${fmtTokens(u.cacheWriteTokens)}`,
+  ].join(" · ");
+  const note = u.costUsd != null ? "\n花費是換算成 API 牌價的估計，訂閱方案不會另外收費。" : "";
+  return `<div class="acc-line" title="${escapeHtml(tip + note)}">${parts.join(" · ")}</div>`;
+}
+
 function ageLabel(ts: number): string {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
   if (mins < 1) return "剛剛";
@@ -248,17 +302,21 @@ function ageLabel(ts: number): string {
 
 // ------------------------------------------------------------------ rendering
 
-function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
+function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
+  const showExtra = snap.settings.showAntigravityExtra;
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown;
+  // Expired but with last-known numbers: show them, marked.
+  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
+  const extras = forecastHtml(snap.forecasts?.[acc.id], acc.provider) + usageHtml(snap.usageToday?.[acc.id]);
 
   let body: string;
   let note = "";
-  if (isExpired) {
-    body = `<span class="status expired">授權已過期，請在 T3 重新登入</span>`;
+  if (isExpired && !isLastKnown) {
+    body = `<span class="status expired">${escapeHtml(acc.error ?? "授權已過期，請在 T3 重新登入")}</span>`;
   } else if (isErr) {
     body = `<span class="status error">${escapeHtml(acc.error ?? "讀取失敗")}</span>`;
   } else if (isCooldown) {
@@ -272,13 +330,16 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
     body = wins.length
       ? wins.map((w) => renderWindow(w, acc.provider)).join("") + sparkHtml(acc.id)
       : `<span class="status stale">沒有用量資料</span>`;
-    if (isStale) {
+    if (isLastKnown) {
+      note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
+    } else if (isStale) {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
     }
   }
+  body += extras;
 
   return `
-    <div class="row acc ${isErr ? "dim" : ""}">
+    <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}">
       <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
       <div class="row-main">
         <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${note}</div>
@@ -337,7 +398,7 @@ function renderAccounts(snap: DashboardSnapshot) {
       ? `<div class="empty">尚未找到 Claude / Antigravity / ChatGPT 的登入憑證</div>`
       : visible.length === 0
         ? `<div class="empty">所有帳號都已隱藏，可在設定 → 帳號中開啟</div>`
-        : visible.map((acc) => renderAccountRow(acc, snap.settings.showAntigravityExtra)).join("");
+        : visible.map((acc) => renderAccountRow(acc, snap)).join("");
 }
 
 function renderDashboard(snap: DashboardSnapshot) {
@@ -345,20 +406,25 @@ function renderDashboard(snap: DashboardSnapshot) {
   currentSettings = snap.settings;
   syncSettingsForm(snap.settings);
 
+  offlineNote.classList.toggle("hidden", !snap.offline);
   const secPicks = $("sec-picks");
   secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
   picksSection.innerHTML = snap.picks
-    .map(
-      (pick) => `
-      <div class="row">
+    .map((pick) => {
+      const reset = pick.resetAt ? `
+${formatResetAt(pick.resetAt)}` : "";
+      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(pick.reason)}`;
+      return `
+      <div class="row ${pick.useBeforeReset ? "pick-soon" : ""}">
         <span class="p-icon ${pick.provider}">${providerGlyph(pick.provider)}</span>
         <div class="row-main">
           <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
-          <span class="row-sub">${providerLabel(pick.provider)} · ${escapeHtml(pick.reason)}</span>
+          <span class="row-sub" title="${escapeHtml(pick.reason + reset)}">${sub}</span>
+          ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
         </div>
         <span class="pct tone-${getTone(pick.effectiveRemaining)}"><small class="pct-cap">剩餘</small>${pick.effectiveRemaining}<small>%</small></span>
-      </div>`,
-    )
+      </div>`;
+    })
     .join("");
 
   renderAccounts(snap);
@@ -425,6 +491,8 @@ function syncSettingsForm(s: AppSettings) {
   inpPetSnap.checked = s.petSnapEdge !== false;
   inpCompact.checked = !!s.compactAccounts;
   inpShowHistory.checked = s.showHistory !== false;
+  inpShowForecast.checked = s.showForecast !== false;
+  inpShowUsage.checked = s.showUsageStats !== false;
   if (document.activeElement !== selPanelPos) selPanelPos.value = s.panelPosition ?? "pet";
   if (!recordingHotkey) btnHotkey.innerHTML = hotkeyLabel(s.hotkey ?? "");
   btnHotkeyClear.classList.toggle("hidden", !s.hotkey);
@@ -669,6 +737,12 @@ inpCompact.addEventListener("change", () => commitSettings({ compactAccounts: in
 inpShowHistory.addEventListener("change", () => {
   commitSettings({ showHistory: inpShowHistory.checked }, true);
   if (inpShowHistory.checked) void refreshHistory(true);
+});
+inpShowForecast.addEventListener("change", () => commitSettings({ showForecast: inpShowForecast.checked }, true));
+inpShowUsage.addEventListener("change", () => {
+  commitSettings({ showUsageStats: inpShowUsage.checked }, true);
+  // Stats are only scanned while enabled: fetch them now instead of at the next poll.
+  if (inpShowUsage.checked) window.setTimeout(() => invoke("refresh_now").catch(() => {}), 300);
 });
 selPanelPos.addEventListener("change", () =>
   commitSettings({ panelPosition: selPanelPos.value as PanelPosition }, true),

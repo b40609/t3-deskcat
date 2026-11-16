@@ -1,13 +1,18 @@
 mod discovery;
+mod forecast;
 mod history;
 mod models;
+mod notify_state;
 mod providers;
 mod quota_cache;
 mod settings;
+mod tray_icon;
+mod usage_stats;
 
 use crate::discovery::{discover_accounts, DiscoveredAccount};
 use crate::models::{
-    AccountQuota, AppSettings, CatMood, DashboardSnapshot, ProviderKind, ScoreMode, SmartPick,
+    AccountQuota, AppSettings, CatMood, DashboardSnapshot, ProviderKind, QuotaWindow, ScoreMode,
+    SmartPick,
 };
 use crate::providers::{
     antigravity::fetch_antigravity_quota, claude::fetch_claude_quota, codex::fetch_codex_quota,
@@ -26,23 +31,23 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
 use history::History;
+use notify_state::NotifyState;
 use quota_cache::QuotaCache;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct InnerState {
     settings: AppSettings,
     snapshot: Option<DashboardSnapshot>,
-    low_notified: HashMap<String, bool>,
-    zero_notified: HashMap<String, bool>,
-    prev_effective: HashMap<String, i32>,
+    /// Alert bookkeeping, persisted across restarts.
+    notify: NotifyState,
     panel_pinned: bool,
     last_toggle: Instant,
     tray_id: String,
     cache: QuotaCache,
     history: History,
-    /// Used-up windows waiting for their reset: key "id|label" -> reset_at.
-    pending_resets: HashMap<String, (i64, String, String)>,
     hotkey_error: Option<String>,
+    /// What the tray icon currently shows, to skip redundant redraws.
+    tray_icon_key: String,
 }
 
 #[derive(Clone)]
@@ -144,7 +149,7 @@ fn update_settings(
     }
 
     if let Some(snap) = updated_snapshot {
-        sync_tray_tooltip(&app, &state, &snap.tooltip_text);
+        sync_tray(&app, &state, &snap);
         let _ = app.emit("snapshot-updated", &snap);
         return Ok(snap);
     }
@@ -205,7 +210,15 @@ fn get_history(state: tauri::State<SharedState>) -> HashMap<String, Vec<(i64, i3
     state
         .0
         .lock()
-        .map(|g| g.history.samples.clone())
+        .map(|g| {
+            // Sparklines only need the per-account series.
+            g.history
+                .samples
+                .iter()
+                .filter(|(k, _)| !k.contains('|'))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -309,6 +322,31 @@ fn quit_app(app: AppHandle) {
 
 async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot {
     let discovered = discover_accounts();
+
+    // Today's tokens from the local CLI logs, scanned on a blocking thread while
+    // the network fetches run.
+    let usage_sources: Vec<usage_stats::Source> = discovered
+        .iter()
+        .filter_map(|a| match a {
+            DiscoveredAccount::Claude { id, credentials_path, .. } => {
+                credentials_path.parent().map(|d| usage_stats::Source::Claude {
+                    account_id: id.clone(),
+                    config_dir: d.to_path_buf(),
+                })
+            }
+            DiscoveredAccount::Codex { id, auth_path, .. } => {
+                auth_path.parent().map(|d| usage_stats::Source::Codex {
+                    account_id: id.clone(),
+                    codex_home: d.to_path_buf(),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    let want_usage = state.0.lock().map(|g| g.settings.show_usage_stats).unwrap_or(true);
+    let usage_task = want_usage
+        .then(|| tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources)));
+
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
@@ -409,8 +447,22 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
     }
     accounts.extend(claude_results);
 
+    let usage_today: HashMap<String, usage_stats::UsageToday> = match usage_task {
+        Some(task) => task
+            .await
+            .map(|list| {
+                list.into_iter()
+                    .filter(|u| u.requests > 0)
+                    .map(|u| (u.account_id.clone(), u))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => HashMap::new(),
+    };
+
     // Never let a transient failure (429 / network / 5xx) wipe an account to 0%:
     // fall back to the last good data (persisted across restarts).
+    let mut forecasts = HashMap::new();
     if let Ok(mut guard) = state.0.lock() {
         let now = Utc::now().timestamp();
         accounts = accounts
@@ -427,9 +479,22 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
 
         for acc in accounts.iter().filter(|a| a.status == "ok") {
             guard.history.record(&acc.id, now, acc.effective_remaining);
+            // Per-window series for the depletion forecast.
+            for w in acc.primary_windows.iter().filter(|w| !w.label.contains(' ')) {
+                guard.history.record(&forecast::window_key(&acc.id, &w.label), now, w.remaining_percent);
+            }
         }
         guard.history.prune(now);
         guard.history.save();
+
+        for acc in &accounts {
+            let samples = &guard.history.samples;
+            let series =
+                |label: &str| samples.get(&forecast::window_key(&acc.id, label)).map(Vec::as_slice);
+            if let Some(f) = forecast::forecast(acc, series, now) {
+                forecasts.insert(acc.id.clone(), f);
+            }
+        }
     }
 
     let now = Utc::now().timestamp();
@@ -447,9 +512,13 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
             tooltip_text: String::new(),
             last_refreshed_at: now,
             settings: cfg.clone(),
+            offline: false,
+            forecasts,
+            usage_today,
         };
         recompute_snapshot_metrics(&mut snap, &cfg);
 
+        let mut n = std::mem::take(&mut guard.notify);
         if cfg.notify_enabled {
             for acc in snap.accounts.iter().filter(|a| !cfg.is_hidden(&a.id)) {
                 let name = cfg.display_name(acc);
@@ -460,9 +529,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                 if cfg.notify_on_reset && is_usable(acc) {
                     for w in &acc.primary_windows {
                         if let (Some(r), true) = (w.reset_at, w.remaining_percent < 50) {
-                            guard
-                                .pending_resets
-                                .insert(format!("{}|{}", acc.id, w.label), (r, acc.id.clone(), w.label.clone()));
+                            n.pending_resets.insert(format!("{}|{}", acc.id, w.label), (r, acc.id.clone(), w.label.clone()));
                         }
                     }
                 }
@@ -471,7 +538,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     continue; // threshold alerts only on fresh data
                 }
                 let rem = acc.effective_remaining;
-                let prev = guard.prev_effective.get(&acc.id).copied();
+                let prev = n.prev_effective.get(&acc.id).copied();
                 let has_reset_times = acc.primary_windows.iter().any(|w| w.reset_at.is_some());
 
                 // Fallback reset detection for providers without reset timestamps
@@ -485,13 +552,13 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                         }
                     }
                 }
-                guard.prev_effective.insert(acc.id.clone(), rem);
+                n.prev_effective.insert(acc.id.clone(), rem);
 
                 let low = cfg.low_threshold_for(&acc.id);
                 if rem == 0 {
-                    if !guard.zero_notified.get(&acc.id).copied().unwrap_or(false) {
-                        guard.zero_notified.insert(acc.id.clone(), true);
-                        guard.low_notified.insert(acc.id.clone(), true);
+                    if !n.zero_notified.get(&acc.id).copied().unwrap_or(false) {
+                        n.zero_notified.insert(acc.id.clone(), true);
+                        n.low_notified.insert(acc.id.clone(), true);
                         notifications.push((
                             format!("😴 {who} 額度已見底"),
                             "剩餘 0%，請切換推薦帳號或等待重設。".to_string(),
@@ -499,31 +566,31 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     }
                 } else {
                     if rem > 10 {
-                        guard.zero_notified.insert(acc.id.clone(), false);
+                        n.zero_notified.insert(acc.id.clone(), false);
                     }
                     if rem <= low {
-                        if !guard.low_notified.get(&acc.id).copied().unwrap_or(false) {
-                            guard.low_notified.insert(acc.id.clone(), true);
+                        if !n.low_notified.get(&acc.id).copied().unwrap_or(false) {
+                            n.low_notified.insert(acc.id.clone(), true);
                             notifications.push((
                                 format!("⚠️ {who} 額度偏低"),
                                 format!("目前僅剩 {rem}%（警戒線 {low}%）。"),
                             ));
                         }
                     } else if rem >= low + 10 {
-                        guard.low_notified.insert(acc.id.clone(), false);
+                        n.low_notified.insert(acc.id.clone(), false);
                     }
                 }
             }
 
             // Announce windows whose reset time has passed.
-            let due: Vec<String> = guard
+            let due: Vec<String> = n
                 .pending_resets
                 .iter()
                 .filter(|(_, (r, _, _))| *r <= now)
                 .map(|(k, _)| k.clone())
                 .collect();
             for key in due {
-                if let Some((_, id, label)) = guard.pending_resets.remove(&key) {
+                if let Some((_, id, label)) = n.pending_resets.remove(&key) {
                     if !cfg.notify_on_reset || cfg.is_hidden(&id) {
                         continue;
                     }
@@ -536,14 +603,19 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                 }
             }
         } else {
-            guard.pending_resets.clear();
+            n.pending_resets.clear();
+            n.quiet_backlog.clear();
         }
 
-        // Do-not-disturb: drop (not queue) alerts inside quiet hours.
+        // Do-not-disturb: hold alerts, then send one summary when the window ends.
         let local = Local::now();
         if cfg.in_quiet_hours(local.hour() * 60 + local.minute()) {
-            notifications.clear();
+            n.defer(std::mem::take(&mut notifications));
+        } else if let Some(summary) = n.take_backlog_summary() {
+            notifications.insert(0, summary);
         }
+        n.save();
+        guard.notify = n;
 
         guard.snapshot = Some(snap.clone());
         snap
@@ -553,7 +625,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         let _ = app.notification().builder().title(&title).body(&body).show();
     }
 
-    sync_tray_tooltip(app, state, &snapshot.tooltip_text);
+    sync_tray(app, state, &snapshot);
     let _ = app.emit("snapshot-updated", &snapshot);
     snapshot
 }
@@ -575,10 +647,17 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
         .filter(|a| settings.counts_in_score(&a.id))
         .cloned()
         .collect();
-    let picks = compute_picks(&visible);
-    let tooltip = format_tooltip(&picks, &visible);
-    let score = compute_overall_score(&scored, settings.score_mode);
-    let mood = if score == 0 || score < settings.sleeping_threshold {
+    let offline = !visible.is_empty() && !visible.iter().any(is_live);
+    let picks = compute_picks(&visible, Utc::now().timestamp());
+    let mut tooltip = format_tooltip(&picks, &visible);
+    if offline {
+        tooltip = format!("暫時抓不到最新額度｜{tooltip}");
+    }
+    // Excluding every account from the score falls back to all visible ones.
+    let score_opt = compute_overall_score(&scored, settings.score_mode)
+        .or_else(|| compute_overall_score(&visible, settings.score_mode));
+    let score = score_opt.unwrap_or(0);
+    let mood = if score_opt.is_none() || score == 0 || score < settings.sleeping_threshold {
         CatMood::Sleeping
     } else if score <= settings.working_threshold {
         CatMood::Sweating
@@ -590,15 +669,44 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
     snap.tooltip_text = tooltip;
     snap.overall_score = score;
     snap.mood = mood;
+    snap.offline = offline;
     snap.settings = settings.clone();
 }
 
-/// Fresh data, or last-known-good data served from the cache.
+/// Has numbers to show: fresh, cached after a failure, or last-known before the
+/// token expired (an idle account's quota only changes when its windows reset,
+/// which the cache already accounts for).
 fn is_usable(a: &AccountQuota) -> bool {
-    a.status == "ok" || a.status == "stale"
+    a.status == "ok"
+        || a.status == "stale"
+        || (a.status == "expired" && !a.primary_windows.is_empty())
 }
 
-fn compute_picks(accounts: &[AccountQuota]) -> Vec<SmartPick> {
+/// Fresh this round, or deliberately not re-fetched yet (min interval, no error).
+fn is_live(a: &AccountQuota) -> bool {
+    a.status == "ok" || (a.status == "stale" && a.error.is_none())
+}
+
+/// A limit that resets within this long, with at least this much left, is
+/// recommended first: whatever is left would be lost at the reset anyway.
+const RESET_SOON_SECS: i64 = 30 * 60;
+const RESET_SOON_MIN_LEFT: i32 = 10;
+
+/// The limit currently capping the account (model-specific windows excluded).
+fn binding_window(acc: &AccountQuota) -> Option<&QuotaWindow> {
+    acc.primary_windows
+        .iter()
+        .filter(|w| !w.label.contains(' '))
+        .min_by_key(|w| w.remaining_percent)
+}
+
+fn resets_soon(acc: &AccountQuota, now: i64) -> Option<i64> {
+    let r = binding_window(acc)?.reset_at?;
+    (r > now && r - now <= RESET_SOON_SECS && acc.effective_remaining >= RESET_SOON_MIN_LEFT)
+        .then_some(r)
+}
+
+fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
     let mut picks = Vec::new();
     for provider in [ProviderKind::Claude, ProviderKind::Antigravity] {
         let candidates: Vec<&AccountQuota> = accounts
@@ -609,18 +717,36 @@ fn compute_picks(accounts: &[AccountQuota]) -> Vec<SmartPick> {
             continue;
         }
 
-        let best = candidates
-            .into_iter()
-            .max_by(|a, b| compare_accounts(a, b))
-            .unwrap();
+        let soon = candidates
+            .iter()
+            .filter_map(|a| resets_soon(a, now).map(|r| (*a, r)))
+            .max_by(|(a, _), (b, _)| compare_accounts(a, b));
+        let (best, use_before_reset) = match soon {
+            Some((a, _)) => (a, true),
+            None => (
+                candidates.iter().copied().max_by(|a, b| compare_accounts(a, b)).unwrap(),
+                false,
+            ),
+        };
 
-        let reason = build_pick_reason(best);
+        let reset_at = binding_window(best).and_then(|w| w.reset_at).filter(|r| *r > now);
+        let reason = if use_before_reset {
+            let mins = ((reset_at.unwrap_or(now) - now) + 59) / 60;
+            format!("{} 分鐘後重設，先用它", mins.max(1))
+        } else {
+            build_pick_reason(best)
+        };
+        let note = (best.status == "expired")
+            .then(|| "最後已知額度（憑證過期，切換過去用一次就會更新）".to_string());
         picks.push(SmartPick {
             provider,
             account_id: best.id.clone(),
             account_name: best.name.clone(),
             effective_remaining: best.effective_remaining,
             reason,
+            reset_at,
+            use_before_reset,
+            note,
         });
     }
     picks
@@ -665,10 +791,11 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
     let mut parts = Vec::new();
     for pick in picks {
         parts.push(format!(
-            "{}: {} {}%",
+            "{}: {} {}%{}",
             pick.provider.short_label(),
             pick.account_name,
-            pick.effective_remaining
+            pick.effective_remaining,
+            if pick.use_before_reset { "（即將重設）" } else { "" }
         ));
     }
     if parts.is_empty() {
@@ -684,14 +811,15 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
     parts.join("｜")
 }
 
-fn compute_overall_score(accounts: &[AccountQuota], mode: ScoreMode) -> i32 {
+/// None when no account has numbers (nothing found / all failing).
+fn compute_overall_score(accounts: &[AccountQuota], mode: ScoreMode) -> Option<i32> {
     let ok_accounts: Vec<&AccountQuota> =
         accounts.iter().filter(|a| is_usable(a)).collect();
     if ok_accounts.is_empty() {
-        return 100; // Default awake while loading or offline
+        return None;
     }
 
-    match mode {
+    Some(match mode {
         ScoreMode::AllAvg => {
             let sum: i32 = ok_accounts.iter().map(|a| a.effective_remaining).sum();
             (sum as f64 / ok_accounts.len() as f64).round() as i32
@@ -712,13 +840,10 @@ fn compute_overall_score(accounts: &[AccountQuota], mode: ScoreMode) -> i32 {
                     best_per_provider.push(max_val);
                 }
             }
-            if best_per_provider.is_empty() {
-                return 0;
-            }
             let sum: i32 = best_per_provider.iter().sum();
-            (sum as f64 / best_per_provider.len() as f64).round() as i32
+            (sum as f64 / best_per_provider.len().max(1) as f64).round() as i32
         }
-    }
+    })
 }
 
 fn window_label_zh(label: &str) -> String {
@@ -739,14 +864,49 @@ fn window_label_zh(label: &str) -> String {
     }
 }
 
-fn sync_tray_tooltip(app: &AppHandle, state: &SharedState, text: &str) {
-    let tray_id = state
-        .0
-        .lock()
-        .map(|g| g.tray_id.clone())
-        .unwrap_or_else(|_| "main-tray".to_string());
-    if let Some(tray) = app.tray_by_id(&tray_id) {
-        let _ = tray.set_tooltip(Some(text));
+/// Tray tooltip (best picks + overall + today's cost) and the live number / ring icon.
+fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
+    let cfg = &snap.settings;
+    let mut tip = format!("{}\n總剩餘 {}%", snap.tooltip_text, snap.overall_score);
+    let cost: f64 = snap
+        .usage_today
+        .iter()
+        .filter(|(id, _)| !cfg.is_hidden(id))
+        .filter_map(|(_, u)| u.cost_usd)
+        .sum();
+    if cfg.show_usage_stats && cost >= 0.01 {
+        tip.push_str(&format!(" · 今日約 US${cost:.2}"));
+    }
+    // Windows caps tray tooltips at 127 UTF-16 units.
+    if tip.encode_utf16().count() > 127 {
+        tip = tip.chars().take(120).collect::<String>() + "…";
+    }
+
+    let has_data = snap.accounts.iter().any(|a| !cfg.is_hidden(&a.id) && is_usable(a));
+    let level = tray_icon::level_for(
+        snap.overall_score,
+        snap.offline || !has_data,
+        cfg.working_threshold,
+        cfg.sleeping_threshold,
+    );
+    let key = format!("{}|{}|{:?}", cfg.tray_style, snap.overall_score, level);
+
+    let (tray_id, redraw) = match state.0.lock() {
+        Ok(mut g) => {
+            let redraw = g.tray_icon_key != key;
+            g.tray_icon_key = key;
+            (g.tray_id.clone(), redraw)
+        }
+        Err(_) => ("main-tray".to_string(), true),
+    };
+    let Some(tray) = app.tray_by_id(&tray_id) else { return };
+    let _ = tray.set_tooltip(Some(&tip));
+    if redraw {
+        let icon = match tray_icon::render(&cfg.tray_style, Some(snap.overall_score), level) {
+            Some(rgba) => Some(tauri::image::Image::new_owned(rgba, tray_icon::SIZE, tray_icon::SIZE)),
+            None => app.default_window_icon().cloned(),
+        };
+        let _ = tray.set_icon(icon);
     }
 }
 
@@ -864,16 +1024,14 @@ pub fn run() {
     let shared = SharedState(Arc::new(Mutex::new(InnerState {
         settings: loaded_settings.clone(),
         snapshot: None,
-        low_notified: HashMap::new(),
-        zero_notified: HashMap::new(),
-        prev_effective: HashMap::new(),
+        notify: NotifyState::load(),
         panel_pinned: false,
         last_toggle: Instant::now() - Duration::from_secs(5),
         tray_id: "main-tray".to_string(),
         cache: QuotaCache::load(),
         history: History::load(),
-        pending_resets: HashMap::new(),
         hotkey_error: None,
+        tray_icon_key: String::new(),
     })));
 
     tauri::Builder::default()
@@ -1064,7 +1222,7 @@ mod tests {
             mock_acc("x1", ProviderKind::Codex, "Codex", 90),
         ];
 
-        let picks = compute_picks(&accounts);
+        let picks = compute_picks(&accounts, 0);
         assert_eq!(picks.len(), 2);
         assert_eq!(picks[0].account_name, "Beta");
         assert_eq!(picks[1].account_name, "Delta");
@@ -1098,12 +1256,104 @@ mod tests {
             tooltip_text: String::new(),
             last_refreshed_at: 0,
             settings: settings.clone(),
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
         };
         recompute_snapshot_metrics(&mut snap, &settings);
         assert_eq!(snap.overall_score, 40); // only Beta counts
         assert_eq!(snap.picks[0].account_name, "Beta"); // hidden Alpha not picked
         assert_eq!(snap.picks[1].account_name, "Work"); // alias, still pickable
         assert_eq!(snap.accounts.len(), 3); // raw list kept for the settings UI
+    }
+
+    fn snap_of(accounts: Vec<AccountQuota>) -> DashboardSnapshot {
+        DashboardSnapshot {
+            accounts,
+            picks: Vec::new(),
+            overall_score: 0,
+            mood: CatMood::Working,
+            tooltip_text: String::new(),
+            last_refreshed_at: 0,
+            settings: AppSettings::default(),
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn pick_prefers_quota_that_resets_soon() {
+        let now = 1_000_000;
+        let mut soon = mock_acc("c1", ProviderKind::Claude, "Kai", 12);
+        soon.primary_windows[0].reset_at = Some(now + 20 * 60);
+        let full = mock_acc("c2", ProviderKind::Claude, "Main", 94);
+        let picks = compute_picks(&[soon.clone(), full.clone()], now);
+        assert_eq!(picks[0].account_name, "Kai");
+        assert!(picks[0].use_before_reset);
+        assert_eq!(picks[0].reason, "20 分鐘後重設，先用它");
+        assert_eq!(picks[0].reset_at, Some(now + 20 * 60));
+
+        // Under 10% left is not worth recommending first.
+        let mut tiny = soon.clone();
+        tiny.effective_remaining = 5;
+        tiny.primary_windows[0].remaining_percent = 5;
+        tiny.primary_windows[1].remaining_percent = 5;
+        assert_eq!(compute_picks(&[tiny, full.clone()], now)[0].account_name, "Main");
+
+        // Weekly is the real cap: the 5h reset doesn't free anything.
+        let mut weekly_cap = soon;
+        weekly_cap.primary_windows[0].remaining_percent = 60;
+        weekly_cap.primary_windows[1].remaining_percent = 12;
+        let p = compute_picks(&[weekly_cap, full], now);
+        assert_eq!(p[0].account_name, "Main");
+        assert!(!p[0].use_before_reset);
+    }
+
+    #[test]
+    fn expired_account_keeps_last_known_numbers_for_picks() {
+        let mut idle = mock_acc("c1", ProviderKind::Claude, "Idle", 100);
+        idle.status = "expired".into();
+        let busy = mock_acc("c2", ProviderKind::Claude, "Busy", 30);
+        let picks = compute_picks(&[idle, busy], 0);
+        assert_eq!(picks[0].account_name, "Idle");
+        assert!(picks[0].note.is_some());
+
+        // Without cached numbers an expired account is not usable.
+        let mut empty = mock_acc("c3", ProviderKind::Claude, "Gone", 0);
+        empty.status = "expired".into();
+        empty.primary_windows.clear();
+        assert!(!is_usable(&empty));
+    }
+
+    #[test]
+    fn offline_when_nothing_is_fresh() {
+        let settings = AppSettings::default();
+        let mut a = mock_acc("c1", ProviderKind::Claude, "A", 80);
+        a.status = "stale".into();
+        a.error = Some("連線失敗".into());
+        let mut b = mock_acc("x1", ProviderKind::Codex, "Codex", 0);
+        b.status = "error".into();
+        b.primary_windows.clear();
+
+        let mut snap = snap_of(vec![a.clone(), b.clone()]);
+        recompute_snapshot_metrics(&mut snap, &settings);
+        assert!(snap.offline);
+        assert_eq!(snap.overall_score, 80); // last-known numbers still count
+        assert!(snap.tooltip_text.starts_with("暫時抓不到最新額度"));
+
+        // Skipped only because of the min interval (no error) is not offline.
+        a.error = None;
+        let mut snap = snap_of(vec![a, b.clone()]);
+        recompute_snapshot_metrics(&mut snap, &settings);
+        assert!(!snap.offline);
+
+        // Nothing usable at all: score 0 and the cat sleeps instead of looking happy.
+        let mut snap = snap_of(vec![b]);
+        recompute_snapshot_metrics(&mut snap, &settings);
+        assert!(snap.offline);
+        assert_eq!(snap.overall_score, 0);
+        assert_eq!(snap.mood, CatMood::Sleeping);
     }
 
     #[test]
@@ -1122,8 +1372,8 @@ mod tests {
             mock_acc("a2", ProviderKind::Antigravity, "D", 90),
         ];
 
-        assert_eq!(compute_overall_score(&accounts, ScoreMode::MaxAvg), 85);
-        assert_eq!(compute_overall_score(&accounts, ScoreMode::AllAvg), 50);
+        assert_eq!(compute_overall_score(&accounts, ScoreMode::MaxAvg), Some(85));
+        assert_eq!(compute_overall_score(&accounts, ScoreMode::AllAvg), Some(50));
 
         let settings = AppSettings::default();
         let mut snap = DashboardSnapshot {
@@ -1134,6 +1384,9 @@ mod tests {
             tooltip_text: String::new(),
             last_refreshed_at: 0,
             settings: settings.clone(),
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
         };
 
         recompute_snapshot_metrics(&mut snap, &settings);

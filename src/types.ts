@@ -27,7 +27,34 @@ export interface SmartPick {
   accountName: string;
   effectiveRemaining: number;
   reason: string;
+  /** Reset of the account's tightest limit. */
+  resetAt?: number | null;
+  /** Tightest limit resets soon with quota left: use it first. */
+  useBeforeReset?: boolean;
+  note?: string | null;
 }
+
+/** The limit runs out before it resets, at the current pace. */
+export interface Forecast {
+  label: string;
+  exhaustAt: number;
+  resetAt: number | null;
+  ratePerHour: number;
+}
+
+export interface UsageToday {
+  accountId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  requests: number;
+  /** Equivalent API list price (Claude only). */
+  costUsd: number | null;
+}
+
+export type TrayStyle = "number" | "ring" | "icon";
 
 export interface AccountPref {
   alias?: string | null;
@@ -84,6 +111,10 @@ export interface AppSettings {
   showHistory?: boolean;
   // data
   claudeMinIntervalSecs?: number;
+  // forecast / stats / tray
+  showForecast?: boolean;
+  showUsageStats?: boolean;
+  trayStyle?: TrayStyle;
 }
 
 export interface DashboardSnapshot {
@@ -94,4 +125,8 @@ export interface DashboardSnapshot {
   tooltipText: string;
   lastRefreshedAt: number;
   settings: AppSettings;
+  /** No visible account returned fresh data (network down / all expired). */
+  offline?: boolean;
+  forecasts?: Record<string, Forecast>;
+  usageToday?: Record<string, UsageToday>;
 }

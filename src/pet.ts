@@ -68,6 +68,8 @@ function applySnapshot(snap: DashboardSnapshot) {
     canvas.title = snap.tooltipText;
   }
   syncCanvasSize(snap.settings.petSize || 64);
+  // Greyed out while no account returns fresh data, so it never looks happy offline.
+  canvas.style.filter = snap.offline ? "grayscale(1) brightness(0.9)" : "";
   applyOpacity();
 }
 
@@ -173,7 +175,7 @@ window.addEventListener("resize", () => {
 });
 
 async function init() {
-  canvas.style.transition = "opacity 0.45s ease";
+  canvas.style.transition = "opacity 0.45s ease, filter 0.45s ease";
   scheduleIdle(4000);
   syncCanvasSize(petSize);
   renderAvatar(ctx, canvas.width, "hud_gauge", 100, currentMood, tick, defaultSettings);

@@ -50,6 +50,23 @@ pub async fn fetch_claude_quota(
         .and_then(Value::as_str)
         .map(format_plan);
 
+    // Claude Code refreshes its own token when that account is used; an expired
+    // one would only earn a 401, so don't spend a request on it.
+    if token_expired(oauth, now) {
+        return AccountQuota {
+            id,
+            provider: ProviderKind::Claude,
+            name,
+            plan,
+            effective_remaining: 0,
+            primary_windows: Vec::new(),
+            extra_windows: Vec::new(),
+            status: "expired".to_string(),
+            error: Some("憑證已過期：在 T3 用一次這個帳號就會自動更新".to_string()),
+            updated_at: now,
+        };
+    }
+
     let resp = client
         .get(CLAUDE_USAGE_URL)
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {access_token}"))
@@ -168,6 +185,14 @@ fn parse_window(label: &str, block: Option<&Value>) -> Option<QuotaWindow> {
     })
 }
 
+/// `expiresAt` is epoch milliseconds; missing / unparsable = assume valid.
+fn token_expired(oauth: &Value, now: i64) -> bool {
+    oauth
+        .get("expiresAt")
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .is_some_and(|ms| ms > 0 && ms <= now * 1000)
+}
+
 fn format_plan(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "max" => "Max".to_string(),
@@ -196,5 +221,18 @@ fn error_account(
         status: status.to_string(),
         error: Some(msg),
         updated_at: now,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_is_checked_locally() {
+        let now = 1_800_000_000;
+        assert!(token_expired(&serde_json::json!({"expiresAt": (now - 1) * 1000}), now));
+        assert!(!token_expired(&serde_json::json!({"expiresAt": (now + 60) * 1000}), now));
+        assert!(!token_expired(&serde_json::json!({}), now));
     }
 }

@@ -50,6 +50,26 @@ pub struct SmartPick {
     pub account_name: String,
     pub effective_remaining: i32,
     pub reason: String,
+    /// Reset time of the account's tightest limit.
+    #[serde(default)]
+    pub reset_at: Option<i64>,
+    /// The tightest limit resets soon and still has quota: use it before it's lost.
+    #[serde(default)]
+    pub use_before_reset: bool,
+    /// Extra caveat, e.g. the numbers are last-known because the token expired.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// "At the current pace this limit runs out before it resets."
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Forecast {
+    pub label: String,
+    pub exhaust_at: i64,
+    pub reset_at: Option<i64>,
+    /// Burn rate in percent per hour.
+    pub rate_per_hour: f64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -195,6 +215,21 @@ pub struct AppSettings {
     /// Minimum seconds between Claude usage calls per account.
     #[serde(default = "default_claude_interval")]
     pub claude_min_interval_secs: u64,
+
+    // ---- Forecast / stats / tray
+    /// "Runs out at 16:40" warnings.
+    #[serde(default = "default_true")]
+    pub show_forecast: bool,
+    /// Today's tokens / equivalent API cost from the local CLI logs.
+    #[serde(default = "default_true")]
+    pub show_usage_stats: bool,
+    /// System tray icon: "number" | "ring" | "icon"
+    #[serde(default = "default_tray_style")]
+    pub tray_style: String,
+}
+
+fn default_tray_style() -> String {
+    "number".to_string()
 }
 
 fn default_quiet_start() -> u32 {
@@ -278,6 +313,9 @@ impl Default for AppSettings {
             compact_accounts: false,
             show_history: true,
             claude_min_interval_secs: default_claude_interval(),
+            show_forecast: true,
+            show_usage_stats: true,
+            tray_style: default_tray_style(),
         }
     }
 }
@@ -292,6 +330,15 @@ pub struct DashboardSnapshot {
     pub tooltip_text: String,
     pub last_refreshed_at: i64,
     pub settings: AppSettings,
+    /// No visible account returned fresh data this round (network down / all expired).
+    #[serde(default)]
+    pub offline: bool,
+    /// Per account id.
+    #[serde(default)]
+    pub forecasts: HashMap<String, Forecast>,
+    /// Per account id.
+    #[serde(default)]
+    pub usage_today: HashMap<String, crate::usage_stats::UsageToday>,
 }
 
 impl AppSettings {
