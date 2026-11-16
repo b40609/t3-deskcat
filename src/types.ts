@@ -29,6 +29,8 @@ export interface SmartPick {
   reason: string;
 }
 
+export type PetTheme = "hud_gauge" | "desk_cat" | "custom";
+
 export interface AppSettings {
   petSize: number;
   workingThreshold: number;
@@ -41,6 +43,10 @@ export interface AppSettings {
   launchAtStartup: boolean;
   petX: number | null;
   petY: number | null;
+  petTheme?: PetTheme;
+  customImageWorking?: string | null;
+  customImageSweating?: string | null;
+  customImageSleeping?: string | null;
 }
 
 export interface DashboardSnapshot {

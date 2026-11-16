@@ -74,6 +74,20 @@ pub enum CatMood {
     Sleeping,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PetTheme {
+    HudGauge,
+    DeskCat,
+    Custom,
+}
+
+impl Default for PetTheme {
+    fn default() -> Self {
+        Self::HudGauge
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -88,6 +102,14 @@ pub struct AppSettings {
     pub launch_at_startup: bool,
     pub pet_x: Option<i32>,
     pub pet_y: Option<i32>,
+    #[serde(default)]
+    pub pet_theme: PetTheme,
+    #[serde(default)]
+    pub custom_image_working: Option<String>,
+    #[serde(default)]
+    pub custom_image_sweating: Option<String>,
+    #[serde(default)]
+    pub custom_image_sleeping: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -104,6 +126,10 @@ impl Default for AppSettings {
             launch_at_startup: false,
             pet_x: None,
             pet_y: None,
+            pet_theme: PetTheme::HudGauge,
+            custom_image_working: None,
+            custom_image_sweating: None,
+            custom_image_sleeping: None,
         }
     }
 }

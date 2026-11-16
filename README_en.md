@@ -32,14 +32,15 @@ Checking rate limits manually via command-line arguments or browser dashboards b
 
 ## ✨ Key Features
 
-### 1. 🐱 3-Stage Pixel Typing Animations
+### 1. 🎨 Multiple Themes & Custom Virtual Pets (Themes & Custom Avatar)
 Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), freely draggable across multiple monitors:
 
-| State | Visual Behavior | Default Threshold |
-| :--- | :--- | :--- |
-| **Working** | Crisp typing in front of a cyan glowing monitor, energized | Overall Score `> 70%` |
-| **Sweating** | Rapid frenzy typing, sweating with a steaming coffee cup | Overall Score `20% ~ 70%` |
-| **Sleeping** | Monitor dimmed, slumped over the keyboard snoring (`Zzz`) | Overall Score `< 20%` or `0%` |
+- **🧭 Professional HUD Radial Gauge (Default & Productivity-focused)**:  
+  Tailored for software engineers and deep-work sessions. A translucent cybernetic disc that renders real-time quota percentage (e.g. `88%`), a neon status progress arc (Cyan `>70%` / Amber `20~70%` / Crimson `<20%`), and a rotating scanner pulse. Sleek, distraction-free, and perfect for screen sharing.
+- **🐱 DeskCat Classic Pixel Cat**:  
+  The beloved 32×32 side-view cat typing at a desk, featuring 3 reactive animation states (Working `>70%`, Sweating `20%~70%`, and Sleeping `<20%`).
+- **🖼️ Custom Virtual Pets (User Uploads)**:  
+  Replace the avatar with any pet, anime character, or mascot of your choice (PNG, JPG, or animated GIF). Upload distinct images for each state, or provide a single favorite image that automatically reacts with tremor shakes and floating `Zzz` bubbles!
 
 ### 2. 🔍 Zero-Setup Auto-Discovery
 Parses active T3 Code profile configurations and local auth tokens without any manual API Key entry or redundant OAuth authorizations:

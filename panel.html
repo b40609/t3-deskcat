@@ -36,7 +36,66 @@
         <div class="settings-card">
           <div class="setting-row">
             <div class="setting-label">
-              <span>小貓尺寸</span>
+              <span>桌面外觀風格 / 虛擬寵物</span>
+            </div>
+            <div class="theme-selector" id="theme-selector">
+              <button data-theme="hud_gauge" class="theme-btn active">
+                <span class="theme-btn-icon">🧭</span>
+                <span class="theme-btn-title">專業 HUD 儀表</span>
+                <span class="theme-btn-desc">極簡科技·免打擾</span>
+              </button>
+              <button data-theme="desk_cat" class="theme-btn">
+                <span class="theme-btn-icon">🐱</span>
+                <span class="theme-btn-title">DeskCat 像素貓</span>
+                <span class="theme-btn-desc">打字趕工·趴睡摸魚</span>
+              </button>
+              <button data-theme="custom" class="theme-btn">
+                <span class="theme-btn-icon">🖼️</span>
+                <span class="theme-btn-title">自訂虛擬寵物</span>
+                <span class="theme-btn-desc">自選圖片/動態 GIF</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="custom-images-card" class="custom-card hidden">
+            <div class="custom-card-header">
+              <span>自訂三態圖片（支援 PNG / JPG / GIF）</span>
+            </div>
+            <div class="custom-slots-grid">
+              <div class="custom-slot" data-slot="working">
+                <div class="slot-preview" id="prev-slot-working">💻</div>
+                <div class="slot-name">充沛 (&gt;70%)</div>
+                <label class="slot-upload-label">
+                  上傳圖片
+                  <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
+                </label>
+              </div>
+              <div class="custom-slot" data-slot="sweating">
+                <div class="slot-preview" id="prev-slot-sweating">💦</div>
+                <div class="slot-name">趕工 (20~70%)</div>
+                <label class="slot-upload-label">
+                  上傳圖片
+                  <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
+                </label>
+              </div>
+              <div class="custom-slot" data-slot="sleeping">
+                <div class="slot-preview" id="prev-slot-sleeping">😴</div>
+                <div class="slot-name">見底 (&lt;20%)</div>
+                <label class="slot-upload-label">
+                  上傳圖片
+                  <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
+                </label>
+              </div>
+            </div>
+            <div class="custom-card-hint">
+              <span>* 僅需 1 張即可通用，亦可為三種狀態設定專屬圖片。</span>
+              <button id="btn-clear-custom" class="link-btn">清除自訂圖片</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>顯示圖示尺寸</span>
               <strong id="val-pet-size">64 px</strong>
             </div>
             <input id="inp-pet-size" type="range" min="48" max="128" step="2" value="64" />

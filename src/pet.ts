@@ -1,18 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { drawDeskCat } from "./catSprite";
-import type { CatMood, DashboardSnapshot } from "./types";
+import { renderAvatar } from "./themeRenderer";
+import type { AppSettings, CatMood, DashboardSnapshot } from "./types";
 
 const canvas = document.getElementById("pet-canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const appWindow = getCurrentWindow();
 
+let currentSnapshot: DashboardSnapshot | null = null;
 let currentMood: CatMood = "working";
 let previewMoodOverride: CatMood | null = null;
 let previewTimeout: number | undefined;
 let petSize = 64;
 let tick = 0;
+
+const defaultSettings: AppSettings = {
+  petSize: 64,
+  workingThreshold: 70,
+  sleepingThreshold: 20,
+  scoreMode: "max_avg",
+  refreshIntervalSecs: 120,
+  notifyEnabled: true,
+  notifyLowThreshold: 20,
+  showAntigravityExtra: false,
+  launchAtStartup: false,
+  petX: null,
+  petY: null,
+  petTheme: "hud_gauge",
+};
 
 function syncCanvasSize(logicalSize: number) {
   petSize = logicalSize;
@@ -25,6 +41,7 @@ function syncCanvasSize(logicalSize: number) {
 }
 
 function applySnapshot(snap: DashboardSnapshot) {
+  currentSnapshot = snap;
   currentMood = snap.mood;
   if (snap.tooltipText) {
     canvas.title = snap.tooltipText;
@@ -32,12 +49,16 @@ function applySnapshot(snap: DashboardSnapshot) {
   syncCanvasSize(snap.settings.petSize || 64);
 }
 
-// Animation loop (~10 fps for crisp pixel motion with near-zero CPU)
+// Animation loop (~12 fps: silky smooth HUD rotation, crisp sprite, negligible CPU)
 setInterval(() => {
   tick = (tick + 1) % 10000;
   const effectiveMood = previewMoodOverride ?? currentMood;
-  drawDeskCat(ctx, canvas.width, effectiveMood, tick);
-}, 100);
+  const settings = currentSnapshot?.settings ?? defaultSettings;
+  const theme = settings.petTheme ?? "hud_gauge";
+  const score = currentSnapshot?.overallScore ?? 100;
+
+  renderAvatar(ctx, canvas.width, theme, score, effectiveMood, tick, settings);
+}, 80);
 
 // Distinguish click (toggle panel) vs drag (>4px native window move)
 let downX = 0;
@@ -97,7 +118,7 @@ window.addEventListener("resize", () => {
 
 async function init() {
   syncCanvasSize(petSize);
-  drawDeskCat(ctx, canvas.width, currentMood, tick);
+  renderAvatar(ctx, canvas.width, "hud_gauge", 100, currentMood, tick, defaultSettings);
 
   await listen<DashboardSnapshot>("snapshot-updated", (event) => {
     applySnapshot(event.payload);

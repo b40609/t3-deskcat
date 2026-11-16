@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { drawDeskCat } from "./catSprite";
+import { renderAvatar } from "./themeRenderer";
 import type {
   AccountQuota,
   AppSettings,
   CatMood,
   DashboardSnapshot,
+  PetTheme,
   ProviderKind,
   ScoreMode,
 } from "./types";
@@ -25,6 +26,16 @@ const btnPin = document.getElementById("btn-pin")!;
 const btnSettings = document.getElementById("btn-settings")!;
 
 // Settings inputs
+const themeButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".theme-btn"));
+const customCard = document.getElementById("custom-images-card")!;
+const prevSlotWorking = document.getElementById("prev-slot-working")!;
+const prevSlotSweating = document.getElementById("prev-slot-sweating")!;
+const prevSlotSleeping = document.getElementById("prev-slot-sleeping")!;
+const fileWorking = document.getElementById("file-working") as HTMLInputElement;
+const fileSweating = document.getElementById("file-sweating") as HTMLInputElement;
+const fileSleeping = document.getElementById("file-sleeping") as HTMLInputElement;
+const btnClearCustom = document.getElementById("btn-clear-custom")!;
+
 const inpPetSize = document.getElementById("inp-pet-size") as HTMLInputElement;
 const valPetSize = document.getElementById("val-pet-size")!;
 const inpWorkTh = document.getElementById("inp-work-th") as HTMLInputElement;
@@ -47,11 +58,30 @@ let showingSettings = false;
 let pinned = false;
 let miniTick = 0;
 
+const fallbackSettings: AppSettings = {
+  petSize: 64,
+  workingThreshold: 70,
+  sleepingThreshold: 20,
+  scoreMode: "max_avg",
+  refreshIntervalSecs: 120,
+  notifyEnabled: true,
+  notifyLowThreshold: 20,
+  showAntigravityExtra: false,
+  launchAtStartup: false,
+  petX: null,
+  petY: null,
+  petTheme: "hud_gauge",
+};
+
+// Topbar mini animation loop
 setInterval(() => {
   miniTick = (miniTick + 1) % 10000;
   const mood: CatMood = currentSnapshot?.mood ?? "working";
-  drawDeskCat(miniCtx, miniCanvas.width, mood, miniTick);
-}, 140);
+  const settings = currentSettings ?? fallbackSettings;
+  const theme = settings.petTheme ?? "hud_gauge";
+  const score = currentSnapshot?.overallScore ?? 100;
+  renderAvatar(miniCtx, miniCanvas.width, theme, score, mood, miniTick, settings);
+}, 100);
 
 function providerLabel(p: ProviderKind): string {
   if (p === "claude") return "Claude";
@@ -59,134 +89,148 @@ function providerLabel(p: ProviderKind): string {
   return "ChatGPT";
 }
 
-function toneClass(pct: number): "good" | "warn" | "low" {
-  const work = currentSettings?.workingThreshold ?? 70;
-  const sleep = currentSettings?.sleepingThreshold ?? 20;
-  if (pct > work) return "good";
-  if (pct >= sleep && pct > 0) return "warn";
-  return "low";
+function moodLabel(m: CatMood): string {
+  if (m === "working") return "元氣工作";
+  if (m === "sweating") return "緊張趕工";
+  return "額度用盡";
 }
 
-function formatReset(ts: number | null): string {
-  if (!ts) return "";
-  const diff = ts - Math.floor(Date.now() / 1000);
-  if (diff <= 0) return "即將重置";
-  const mins = Math.floor(diff / 60);
-  const hours = Math.floor(mins / 60);
-  const days = Math.floor(hours / 24);
-  if (days > 0) return `${days}d ${hours % 24}h`;
-  if (hours > 0) return `${hours}h ${mins % 60}m`;
-  return `${mins}m`;
-}
-
-function escapeHtml(str: string): string {
-  return str
+function escapeHtml(text: string): string {
+  return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function renderDashboard(snap: DashboardSnapshot) {
   currentSnapshot = snap;
   currentSettings = snap.settings;
+  syncSettingsForm(snap.settings);
 
-  // Mood badge
-  const moodLabel =
-    snap.mood === "working"
-      ? `元氣上班 ${snap.overallScore}%`
-      : snap.mood === "sweating"
-        ? `趕工冒汗 ${snap.overallScore}%`
-        : `見底趴睡 ${snap.overallScore}%`;
-  moodBadge.textContent = moodLabel;
+  // Topbar
+  moodBadge.textContent = moodLabel(snap.mood);
   moodBadge.className = `mood-badge ${snap.mood}`;
 
-  // Smart recommendations
-  const recommendedIds = new Set(snap.picks.map((p) => p.accountId));
+  // Smart Picks
   if (snap.picks.length === 0) {
-    picksSection.innerHTML = "";
+    picksSection.innerHTML = `
+      <div class="empty-hint">尚未抓取到可用帳號</div>
+    `;
   } else {
     picksSection.innerHTML = snap.picks
-      .map((pick) => {
-        const tone = toneClass(pick.effectiveRemaining);
-        return `
-          <div class="pick-card">
-            <div class="pick-top">
-              <span>${providerLabel(pick.provider)} 優先使用</span>
-              <span class="pick-tag">智慧推薦</span>
-            </div>
-            <div class="pick-main">
-              <span class="pick-name">${escapeHtml(pick.accountName)}</span>
-              <span class="pick-pct tone-${tone}">${pick.effectiveRemaining}%</span>
-            </div>
-            <div class="pick-reason">${escapeHtml(pick.reason)}</div>
+      .map(
+        (pick) => `
+        <div class="pick-item">
+          <div class="pick-header">
+            <span class="provider-pill ${pick.provider}">${providerLabel(pick.provider)}</span>
+            <span class="pick-name">${escapeHtml(pick.accountName)}</span>
+            <span class="pick-pct tone-${getTone(pick.effectiveRemaining)}">${pick.effectiveRemaining}%</span>
           </div>
-        `;
-      })
+          <div class="pick-reason">${escapeHtml(pick.reason)}</div>
+        </div>
+      `,
+      )
       .join("");
   }
 
-  // Accounts list
+  // Account list
   if (snap.accounts.length === 0) {
-    accountsSection.innerHTML = `<div class="acc-row"><span class="err-text">未偵測到 T3 Code 或本機 CLI 登入帳號</span></div>`;
+    accountsSection.innerHTML = `
+      <div class="empty-hint">未發現支援之 AI 憑證（Claude / Antigravity / Codex）</div>
+    `;
   } else {
     accountsSection.innerHTML = snap.accounts
-      .map((acc) => renderAccountRow(acc, recommendedIds.has(acc.id), snap.settings.showAntigravityExtra))
+      .map((acc) => renderAccountCard(acc, snap.settings.showAntigravityExtra))
       .join("");
   }
 
   // Footer
-  const dt = new Date(snap.lastRefreshedAt * 1000);
-  lastUpdatedEl.textContent = `更新於 ${dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-  scoreHintEl.textContent =
-    snap.settings.scoreMode === "max_avg" ? "計算：各家最高平均" : "計算：全部帳號平均";
+  const date = new Date(snap.lastRefreshedAt * 1000);
+  const timeStr = date.toLocaleTimeString("zh-TW", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  lastUpdatedEl.textContent = `最後更新 ${timeStr}`;
 
-  syncSettingsForm(snap.settings);
+  const modeHint =
+    snap.settings.scoreMode === "max_avg" ? "各家最高平均" : "全部帳號平均";
+  scoreHintEl.textContent = `總分 ${snap.overallScore}%（${modeHint}）`;
 }
 
-function renderAccountRow(
-  acc: AccountQuota,
-  isRecommended: boolean,
-  showAgExtra: boolean,
-): string {
-  const planBadge = acc.plan ? `<span class="acc-plan">${escapeHtml(acc.plan)}</span>` : "";
-  const recClass = isRecommended ? "recommended" : "";
+function getTone(pct: number): "good" | "warn" | "bad" {
+  if (pct > 70) return "good";
+  if (pct >= 20) return "warn";
+  return "bad";
+}
 
-  if (acc.status !== "ok") {
-    return `
-      <div class="acc-row ${recClass}">
-        <div class="acc-head">
-          <div class="acc-id">
-            <span class="provider-pill ${acc.provider}">${providerLabel(acc.provider)}</span>
-            <span class="acc-name">${escapeHtml(acc.name)}</span>
-            ${planBadge}
-          </div>
-          <span class="acc-pct tone-low">--%</span>
-        </div>
-        <div class="err-text">${escapeHtml(acc.error || "無法取得額度")}</div>
+function formatResetAt(resetAt: number | null): string {
+  if (!resetAt) return "";
+  const now = Math.floor(Date.now() / 1000);
+  const diffSec = resetAt - now;
+  if (diffSec <= 0) return "即將重置";
+  const hours = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  if (hours > 24) {
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return `${days}天${remHours}時後重置`;
+  }
+  if (hours > 0) {
+    return `${hours}時${mins}分後重置`;
+  }
+  return `${mins}分後重置`;
+}
+
+function renderAccountCard(acc: AccountQuota, showExtra: boolean): string {
+  const isErr = acc.status !== "ok";
+  const tone = isErr ? "bad" : getTone(acc.effectiveRemaining);
+
+  const planBadge = acc.plan
+    ? `<span class="acc-plan">${escapeHtml(acc.plan)}</span>`
+    : "";
+
+  let windowsHtml = "";
+  if (acc.primaryWindows.length > 0) {
+    windowsHtml = acc.primaryWindows
+      .map((w) => {
+        const timeStr = formatResetAt(w.resetAt);
+        const timeSpan = timeStr ? ` · <span class="reset-time">${timeStr}</span>` : "";
+        return `
+          <span class="window-pill">
+            <span class="win-label">${w.label}</span>
+            <span class="win-val tone-${getTone(w.remainingPercent)}">${w.remainingPercent}%</span>
+            ${timeSpan}
+          </span>
+        `;
+      })
+      .join("");
+  } else if (acc.error) {
+    windowsHtml = `<span class="acc-err-msg">${escapeHtml(acc.error)}</span>`;
+  }
+
+  let extraHtml = "";
+  if (showExtra && acc.extraWindows.length > 0) {
+    extraHtml = `
+      <div class="extra-windows">
+        <span class="extra-title">次要用量池:</span>
+        ${acc.extraWindows
+          .map(
+            (w) =>
+              `<span class="window-pill extra"><span class="win-label">${w.label}</span> <span class="win-val">${w.remainingPercent}%</span></span>`,
+          )
+          .join("")}
       </div>
     `;
   }
 
-  const tone = toneClass(acc.effectiveRemaining);
-  const windowsHtml = acc.primaryWindows
-    .map((w) => {
-      const rst = formatReset(w.resetAt);
-      return `<span class="win-item">${escapeHtml(w.label)} <strong>${w.remainingPercent}%</strong>${rst ? ` (${rst})` : ""}</span>`;
-    })
-    .join("");
-
-  const extraHtml =
-    showAgExtra && acc.extraWindows.length > 0
-      ? `<div class="extra-line">${acc.extraWindows
-          .map((w) => `<span>${escapeHtml(w.label)} ${w.remainingPercent}%</span>`)
-          .join("")}</div>`
-      : "";
-
   return `
-    <div class="acc-row ${recClass}">
-      <div class="acc-head">
-        <div class="acc-id">
+    <div class="acc-card ${isErr ? "err-card" : ""}">
+      <div class="acc-top">
+        <div class="acc-title-group">
           <span class="provider-pill ${acc.provider}">${providerLabel(acc.provider)}</span>
           <span class="acc-name">${escapeHtml(acc.name)}</span>
           ${planBadge}
@@ -209,6 +253,24 @@ function setRangeIfIdle(inp: HTMLInputElement, value: number) {
 }
 
 function syncSettingsForm(s: AppSettings) {
+  // Theme selector
+  const activeTheme = s.petTheme ?? "hud_gauge";
+  themeButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.theme === activeTheme);
+  });
+  customCard.classList.toggle("hidden", activeTheme !== "custom");
+
+  // Custom image preview slots
+  prevSlotWorking.innerHTML = s.customImageWorking
+    ? `<img src="${s.customImageWorking}" alt="Working" />`
+    : `💻`;
+  prevSlotSweating.innerHTML = s.customImageSweating
+    ? `<img src="${s.customImageSweating}" alt="Sweating" />`
+    : `💦`;
+  prevSlotSleeping.innerHTML = s.customImageSleeping
+    ? `<img src="${s.customImageSleeping}" alt="Sleeping" />`
+    : `😴`;
+
   setRangeIfIdle(inpPetSize, s.petSize);
   valPetSize.textContent = `${s.petSize} px`;
 
@@ -287,6 +349,50 @@ btnRefresh.addEventListener("click", async () => {
   }
 });
 
+// Theme selection
+themeButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const theme = btn.dataset.theme as PetTheme;
+    commitSettings({ petTheme: theme }, true);
+  });
+});
+
+// File upload helper
+function handleImageUpload(input: HTMLInputElement, key: "customImageWorking" | "customImageSweating" | "customImageSleeping") {
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      commitSettings({ [key]: dataUrl }, true);
+    };
+    reader.readAsDataURL(file);
+    input.value = "";
+  });
+}
+
+handleImageUpload(fileWorking, "customImageWorking");
+handleImageUpload(fileSweating, "customImageSweating");
+handleImageUpload(fileSleeping, "customImageSleeping");
+
+btnClearCustom.addEventListener("click", async () => {
+  try {
+    const updated = await invoke<DashboardSnapshot>("clear_custom_images");
+    renderDashboard(updated);
+  } catch {
+    // fallback
+    commitSettings(
+      {
+        customImageWorking: null,
+        customImageSweating: null,
+        customImageSleeping: null,
+      },
+      true,
+    );
+  }
+});
+
 inpPetSize.addEventListener("input", () => {
   commitSettings({ petSize: Number(inpPetSize.value) });
 });
@@ -352,7 +458,8 @@ window.addEventListener("keydown", (e) => {
 });
 
 async function init() {
-  drawDeskCat(miniCtx, miniCanvas.width, "working", 0);
+  const defaultTheme = "hud_gauge";
+  renderAvatar(miniCtx, miniCanvas.width, defaultTheme, 100, "working", 0, fallbackSettings);
 
   await listen<DashboardSnapshot>("snapshot-updated", (event) => {
     renderDashboard(event.payload);

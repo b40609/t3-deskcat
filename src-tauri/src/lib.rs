@@ -87,6 +87,15 @@ fn update_settings(
         if clean.pet_y.is_none() {
             clean.pet_y = guard.settings.pet_y;
         }
+        if clean.custom_image_working.is_none() {
+            clean.custom_image_working = guard.settings.custom_image_working.clone();
+        }
+        if clean.custom_image_sweating.is_none() {
+            clean.custom_image_sweating = guard.settings.custom_image_sweating.clone();
+        }
+        if clean.custom_image_sleeping.is_none() {
+            clean.custom_image_sleeping = guard.settings.custom_image_sleeping.clone();
+        }
 
         settings::save_settings(&clean)?;
         guard.settings = clean.clone();
@@ -200,6 +209,26 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn preview_mood(app: AppHandle, mood: CatMood) {
     let _ = app.emit("preview-mood", mood);
+}
+
+#[tauri::command]
+fn clear_custom_images(
+    app: AppHandle,
+    state: tauri::State<SharedState>,
+) -> Result<DashboardSnapshot, String> {
+    let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
+    guard.settings.custom_image_working = None;
+    guard.settings.custom_image_sweating = None;
+    guard.settings.custom_image_sleeping = None;
+    settings::save_settings(&guard.settings)?;
+    let clean_settings = guard.settings.clone();
+    if let Some(ref mut snap) = guard.snapshot {
+        snap.settings = clean_settings;
+        let snap_clone = snap.clone();
+        let _ = app.emit("snapshot-updated", &snap_clone);
+        return Ok(snap_clone);
+    }
+    Err("Snapshot not ready".to_string())
 }
 
 #[tauri::command]
@@ -587,6 +616,7 @@ pub fn run() {
             save_pet_position,
             test_notification,
             preview_mood,
+            clear_custom_images,
             quit_app,
         ])
         .setup(move |app| {
