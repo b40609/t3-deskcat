@@ -82,6 +82,21 @@ pub async fn fetch_claude_quota(
         };
     }
 
+    if status == 429 {
+        return AccountQuota {
+            id,
+            provider: ProviderKind::Claude,
+            name,
+            plan,
+            effective_remaining: 0,
+            primary_windows: Vec::new(),
+            extra_windows: Vec::new(),
+            status: "cooldown".to_string(),
+            error: Some("429 請求頻繁冷卻中".to_string()),
+            updated_at: now,
+        };
+    }
+
     if !response.status().is_success() {
         return error_account(id, name, now, "error", format!("HTTP {status}"));
     }

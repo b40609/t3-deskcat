@@ -113,26 +113,58 @@ function renderDashboard(snap: DashboardSnapshot) {
   moodBadge.textContent = moodLabel(snap.mood);
   moodBadge.className = `mood-badge ${snap.mood}`;
 
-  // Smart Picks
-  if (snap.picks.length === 0) {
-    picksSection.innerHTML = `
-      <div class="empty-hint">尚未抓取到可用帳號</div>
+  // KPI strip
+  const kpiStrip = document.getElementById("kpi-strip");
+  if (kpiStrip) {
+    const totalAccs = snap.accounts.length;
+    const okAccs = snap.accounts.filter((a) => a.status === "ok").length;
+    const cooldownAccs = snap.accounts.filter((a) => a.status === "cooldown").length;
+    const scoreTone = getTone(snap.overallScore);
+
+    kpiStrip.innerHTML = `
+      <div class="kpi-pill">
+        <span class="kpi-label">總體電量</span>
+        <span class="kpi-val tone-${scoreTone}">⚡ ${snap.overallScore}%</span>
+      </div>
+      <div class="kpi-pill">
+        <span class="kpi-label">在線帳號</span>
+        <span class="kpi-val tone-good">● ${okAccs}/${totalAccs}</span>
+      </div>
+      <div class="kpi-pill">
+        <span class="kpi-label">請求狀態</span>
+        <span class="kpi-val ${cooldownAccs > 0 ? "tone-warn" : "tone-good"}">${cooldownAccs > 0 ? `⏳ ${cooldownAccs} 冷卻` : "✓ 順暢"}</span>
+      </div>
     `;
+  }
+
+  // Smart Picks
+  const secPicks = document.getElementById("sec-picks");
+  if (snap.picks.length === 0) {
+    if (secPicks) secPicks.classList.add("hidden");
+    picksSection.innerHTML = "";
   } else {
+    if (secPicks) secPicks.classList.remove("hidden");
     picksSection.innerHTML = snap.picks
       .map(
         (pick) => `
-        <div class="pick-item">
-          <div class="pick-header">
+        <div class="pick-card">
+          <div class="pick-top">
             <span class="provider-pill ${pick.provider}">${providerLabel(pick.provider)}</span>
-            <span class="pick-name">${escapeHtml(pick.accountName)}</span>
             <span class="pick-pct tone-${getTone(pick.effectiveRemaining)}">${pick.effectiveRemaining}%</span>
           </div>
+          <span class="pick-name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span>
           <div class="pick-reason">${escapeHtml(pick.reason)}</div>
         </div>
       `,
       )
       .join("");
+  }
+
+  // Account count
+  const accountsCountEl = document.getElementById("accounts-count");
+  if (accountsCountEl) {
+    const okCount = snap.accounts.filter((a) => a.status === "ok").length;
+    accountsCountEl.textContent = `${okCount} 在線 · 共 ${snap.accounts.length} 帳號`;
   }
 
   // Account list
@@ -154,7 +186,7 @@ function renderDashboard(snap: DashboardSnapshot) {
     minute: "2-digit",
     second: "2-digit",
   });
-  lastUpdatedEl.textContent = `最後更新 ${timeStr}`;
+  lastUpdatedEl.textContent = `更新於 ${timeStr}`;
 
   const modeHint =
     snap.settings.scoreMode === "max_avg" ? "各家最高平均" : "全部帳號平均";
@@ -186,8 +218,10 @@ function formatResetAt(resetAt: number | null): string {
 }
 
 function renderAccountCard(acc: AccountQuota, showExtra: boolean): string {
-  const isErr = acc.status !== "ok";
-  const tone = isErr ? "bad" : getTone(acc.effectiveRemaining);
+  const isCooldown = acc.status === "cooldown";
+  const isExpired = acc.status === "expired";
+  const isErr = acc.status !== "ok" && !isCooldown;
+  const tone = isErr ? "bad" : isCooldown ? "warn" : getTone(acc.effectiveRemaining);
 
   const planBadge = acc.plan
     ? `<span class="acc-plan">${escapeHtml(acc.plan)}</span>`
@@ -208,8 +242,14 @@ function renderAccountCard(acc: AccountQuota, showExtra: boolean): string {
         `;
       })
       .join("");
-  } else if (acc.error) {
-    windowsHtml = `<span class="acc-err-msg">${escapeHtml(acc.error)}</span>`;
+  }
+
+  if (isCooldown) {
+    windowsHtml += `<span class="status-pill cooldown">⏳ 429 請求頻繁冷卻中</span>`;
+  } else if (isExpired) {
+    windowsHtml = `<span class="status-pill expired">🔑 授權過期請在 T3 登入</span>`;
+  } else if (isErr && acc.error) {
+    windowsHtml = `<span class="status-pill error">⚠️ ${escapeHtml(acc.error)}</span>`;
   }
 
   let extraHtml = "";
@@ -227,12 +267,14 @@ function renderAccountCard(acc: AccountQuota, showExtra: boolean): string {
     `;
   }
 
+  const cardClass = isCooldown ? "cooldown-card" : isErr ? "err-card" : "";
+
   return `
-    <div class="acc-card ${isErr ? "err-card" : ""}">
+    <div class="acc-card ${cardClass}">
       <div class="acc-top">
         <div class="acc-title-group">
           <span class="provider-pill ${acc.provider}">${providerLabel(acc.provider)}</span>
-          <span class="acc-name">${escapeHtml(acc.name)}</span>
+          <span class="acc-name" title="${escapeHtml(acc.name)}">${escapeHtml(acc.name)}</span>
           ${planBadge}
         </div>
         <span class="acc-pct tone-${tone}">${acc.effectiveRemaining}%</span>

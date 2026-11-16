@@ -243,16 +243,21 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         .build()
         .unwrap_or_else(|_| Client::new());
 
-    let mut handles = Vec::with_capacity(discovered.len());
+    let mut non_claude = Vec::new();
+    let mut claude_accounts = Vec::new();
+
     for acc in discovered {
+        match acc {
+            DiscoveredAccount::Claude { .. } => claude_accounts.push(acc),
+            _ => non_claude.push(acc),
+        }
+    }
+
+    let mut handles = Vec::with_capacity(non_claude.len());
+    for acc in non_claude {
         let client = client.clone();
         handles.push(tokio::spawn(async move {
             match acc {
-                DiscoveredAccount::Claude {
-                    id,
-                    name,
-                    credentials_path,
-                } => fetch_claude_quota(&client, id, name, &credentials_path).await,
                 DiscoveredAccount::Antigravity {
                     id,
                     name,
@@ -266,14 +271,51 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     name,
                     auth_path,
                 } => fetch_codex_quota(&client, id, name, &auth_path).await,
+                _ => unreachable!(),
             }
         }));
     }
 
-    let mut accounts = Vec::with_capacity(handles.len());
+    // Sequence Claude calls with 350ms delay to avoid Anthropic OAuth 429
+    let mut claude_results = Vec::with_capacity(claude_accounts.len());
+    for (idx, acc) in claude_accounts.into_iter().enumerate() {
+        if idx > 0 {
+            tokio::time::sleep(Duration::from_millis(350)).await;
+        }
+        if let DiscoveredAccount::Claude {
+            id,
+            name,
+            credentials_path,
+        } = acc
+        {
+            claude_results.push(fetch_claude_quota(&client, id, name, &credentials_path).await);
+        }
+    }
+
+    let mut accounts = Vec::with_capacity(handles.len() + claude_results.len());
     for handle in handles {
         if let Ok(res) = handle.await {
             accounts.push(res);
+        }
+    }
+    accounts.extend(claude_results);
+
+    // If any account hit cooldown (429), preserve previous quota if available
+    if let Ok(guard) = state.0.lock() {
+        if let Some(prev_snap) = &guard.snapshot {
+            for acc in &mut accounts {
+                if acc.status == "cooldown" {
+                    if let Some(prev) = prev_snap
+                        .accounts
+                        .iter()
+                        .find(|p| p.id == acc.id && p.status == "ok")
+                    {
+                        acc.effective_remaining = prev.effective_remaining;
+                        acc.primary_windows = prev.primary_windows.clone();
+                        acc.extra_windows = prev.extra_windows.clone();
+                    }
+                }
+            }
         }
     }
 
@@ -380,7 +422,7 @@ fn compute_picks(accounts: &[AccountQuota]) -> Vec<SmartPick> {
     for provider in [ProviderKind::Claude, ProviderKind::Antigravity] {
         let candidates: Vec<&AccountQuota> = accounts
             .iter()
-            .filter(|a| a.provider == provider && a.status == "ok")
+            .filter(|a| a.provider == provider && a.status == "ok" && a.effective_remaining > 0)
             .collect();
         if candidates.is_empty() {
             continue;

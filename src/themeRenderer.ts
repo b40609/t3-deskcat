@@ -1,7 +1,9 @@
 import { drawDeskCat } from "./catSprite";
+import { MUSE_ASSETS } from "./museAssets";
 import type { AppSettings, CatMood, PetTheme } from "./types";
 
 const imageCache: Record<string, HTMLImageElement> = {};
+const museImages: Partial<Record<CatMood, HTMLImageElement>> = {};
 
 function getCachedImage(src: string | null | undefined): HTMLImageElement | null {
   if (!src) return null;
@@ -12,6 +14,80 @@ function getCachedImage(src: string | null | undefined): HTMLImageElement | null
   }
   const cached = imageCache[src];
   return cached.complete && cached.naturalWidth > 0 ? cached : null;
+}
+
+export function getMuseImage(mood: CatMood): HTMLImageElement | null {
+  if (!museImages[mood]) {
+    const img = new Image();
+    img.src = MUSE_ASSETS[mood] || MUSE_ASSETS.working;
+    museImages[mood] = img;
+  }
+  const img = museImages[mood]!;
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
+
+/**
+ * High-definition Muse (月薪貓) Avatar Renderer
+ * Uses authentic illustrated Muse with headphones and laptop, plus animated alive state.
+ */
+export function drawMuseCat(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  mood: CatMood,
+  tick: number,
+) {
+  ctx.clearRect(0, 0, size, size);
+  ctx.imageSmoothingEnabled = true;
+
+  const img = getMuseImage(mood);
+  if (!img) return;
+
+  ctx.save();
+
+  let offsetY = 0;
+  let offsetX = 0;
+  let glowColor = "rgba(56, 189, 248, 0.25)";
+
+  if (mood === "working") {
+    // Rhythmic typing/breathing bob (smooth sine wave)
+    offsetY = Math.sin(((tick % 30) / 30) * Math.PI * 2) * (size * 0.025);
+    glowColor = "rgba(52, 211, 153, 0.22)";
+  } else if (mood === "sweating") {
+    // Fast energetic typing tremor
+    offsetX = Math.sin(tick * 2.2) * (size * 0.03);
+    glowColor = "rgba(251, 191, 36, 0.35)";
+  } else if (mood === "sleeping") {
+    // Peaceful sleeping heave
+    offsetY =
+      Math.sin(((tick % 50) / 50) * Math.PI * 2) * (size * 0.015) + size * 0.025;
+    ctx.globalAlpha = 0.88;
+    glowColor = "rgba(148, 163, 184, 0.18)";
+  }
+
+  // Subtle circular ambient backlight glow for workbench depth
+  const center = size / 2;
+  const radius = size * 0.46;
+  const grad = ctx.createRadialGradient(
+    center,
+    center,
+    radius * 0.2,
+    center,
+    center,
+    radius,
+  );
+  grad.addColorStop(0, glowColor);
+  grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(center, center, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Draw Muse avatar (crisp transparent illustration)
+  const drawSize = size * 0.94;
+  const pos = (size - drawSize) / 2;
+  ctx.drawImage(img, pos + offsetX, pos + offsetY, drawSize, drawSize);
+
+  ctx.restore();
 }
 
 /**
@@ -261,7 +337,7 @@ export function renderAvatar(
   settings: AppSettings,
 ) {
   if (theme === "desk_cat") {
-    drawDeskCat(ctx, size, mood, tick);
+    drawMuseCat(ctx, size, mood, tick);
   } else if (theme === "custom") {
     drawCustomAvatar(ctx, size, mood, tick, settings);
   } else {

@@ -24,8 +24,20 @@
       </header>
 
       <main id="view-dashboard" class="content">
-        <section id="picks-section" class="picks-grid"></section>
-        <section id="accounts-section" class="accounts-list"></section>
+        <section id="kpi-strip" class="kpi-strip"></section>
+        <section class="section-container" id="sec-picks">
+          <div class="section-header">
+            <span class="section-title">⚡ 最佳推薦</span>
+          </div>
+          <div id="picks-section" class="picks-grid"></div>
+        </section>
+        <section class="section-container" id="sec-accounts">
+          <div class="section-header">
+            <span class="section-title">📊 帳號配額池</span>
+            <span id="accounts-count" class="section-count"></span>
+          </div>
+          <div id="accounts-section" class="accounts-list"></div>
+        </section>
         <footer class="footbar">
           <span id="last-updated">尚未更新</span>
           <span id="score-hint"></span>
@@ -46,8 +58,8 @@
               </button>
               <button data-theme="desk_cat" class="theme-btn">
                 <span class="theme-btn-icon">🐱</span>
-                <span class="theme-btn-title">DeskCat 像素貓</span>
-                <span class="theme-btn-desc">打字趕工·趴睡摸魚</span>
+                <span class="theme-btn-title">Muse 月薪貓</span>
+                <span class="theme-btn-desc">耳機筆電·專注工作</span>
               </button>
               <button data-theme="custom" class="theme-btn">
                 <span class="theme-btn-icon">🖼️</span>
