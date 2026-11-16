@@ -1,0 +1,181 @@
+<Rive version="1" kind="fragment">
+    <Artboard defaultStateMachineId="0:7" viewModelId="0:50" viewModelInstanceId="0:51" clip="true" width="512" height="512" styleId="0:5" name="MuseCat" id="0:2">
+        <LayoutComponentStyle name="Artboard Style" id="0:5"/>
+
+        <Image x="256" y="256" assetId="0:31" name="Work" id="0:11"/>
+        <Image x="256" y="256" assetId="0:32" opacity="0" name="Sweat" id="0:12"/>
+        <Image x="256" y="256" assetId="0:33" opacity="0" name="Sleep" id="0:13"/>
+        <Text x="370" y="100" width="120" height="80" opacity="0" name="Zzz" id="0:14">
+            <TextStylePaint fontSize="64" fontAssetId="0:30" name="Style 1" id="0:21">
+                <Fill name="Fill">
+                    <SolidColor colorValue="FF4A2C1A" name="Color"/>
+                </Fill>
+            </TextStylePaint>
+            <TextValueRun styleId="0:21" text="Z" name="Run"/>
+        </Text>
+
+        <StateMachine name="Pet States" id="0:7">
+            <StateMachineLayer name="Layer 1" id="0:8">
+                <AnyState x="200" y="-120"/>
+                <ExitState x="400" y="-120"/>
+                <EntryState>
+                    <StateTransition stateToId="0:40"/>
+                </EntryState>
+                <AnimationState x="160" y="0" animationId="0:6" id="0:40">
+                    <StateTransition stateToId="0:41" duration="300">
+                        <TransitionViewModelCondition opValue="lessThan">
+                            <TransitionPropertyViewModelComparator>
+                                <BindablePropertyNumber>
+                                    <DataBindContext sourcePathIds="0:50-0:52" propertyKey="636"/>
+                                </BindablePropertyNumber>
+                            </TransitionPropertyViewModelComparator>
+                            <TransitionValueNumberComparator value="50"/>
+                        </TransitionViewModelCondition>
+                    </StateTransition>
+                </AnimationState>
+                <AnimationState x="360" y="0" animationId="0:20" id="0:41">
+                    <StateTransition stateToId="0:40" duration="300">
+                        <TransitionViewModelCondition opValue="greaterThanOrEqual">
+                            <TransitionPropertyViewModelComparator>
+                                <BindablePropertyNumber>
+                                    <DataBindContext sourcePathIds="0:50-0:52" propertyKey="636"/>
+                                </BindablePropertyNumber>
+                            </TransitionPropertyViewModelComparator>
+                            <TransitionValueNumberComparator value="50"/>
+                        </TransitionViewModelCondition>
+                    </StateTransition>
+                    <StateTransition stateToId="0:42" duration="300">
+                        <TransitionViewModelCondition opValue="lessThan">
+                            <TransitionPropertyViewModelComparator>
+                                <BindablePropertyNumber>
+                                    <DataBindContext sourcePathIds="0:50-0:52" propertyKey="636"/>
+                                </BindablePropertyNumber>
+                            </TransitionPropertyViewModelComparator>
+                            <TransitionValueNumberComparator value="20"/>
+                        </TransitionViewModelCondition>
+                    </StateTransition>
+                </AnimationState>
+                <AnimationState x="560" y="0" animationId="0:22" id="0:42">
+                    <StateTransition stateToId="0:41" duration="300">
+                        <TransitionViewModelCondition opValue="greaterThanOrEqual">
+                            <TransitionPropertyViewModelComparator>
+                                <BindablePropertyNumber>
+                                    <DataBindContext sourcePathIds="0:50-0:52" propertyKey="636"/>
+                                </BindablePropertyNumber>
+                            </TransitionPropertyViewModelComparator>
+                            <TransitionValueNumberComparator value="20"/>
+                        </TransitionViewModelCondition>
+                    </StateTransition>
+                </AnimationState>
+            </StateMachineLayer>
+        </StateMachine>
+
+        <LinearAnimation loopValue="loop" duration="30" name="Typing" id="0:6">
+            <KeyedObject objectId="0:11">
+                <KeyedProperty propertyKey="14">
+                    <KeyFrameDouble value="256" interpolationType="linear"/>
+                    <KeyFrameDouble value="250" interpolationType="linear" frame="15"/>
+                    <KeyFrameDouble value="256" interpolationType="linear" frame="30"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="1"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:12">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:13">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:14">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+
+        <LinearAnimation loopValue="loop" duration="60" name="Sweating" id="0:20">
+            <KeyedObject objectId="0:11">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:12">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="1"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:13">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:14">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+
+        <LinearAnimation loopValue="loop" duration="180" name="Sleeping" id="0:22">
+            <KeyedObject objectId="0:11">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:12">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:13">
+                <KeyedProperty propertyKey="16">
+                    <KeyFrameDouble value="1" interpolationType="linear"/>
+                    <KeyFrameDouble value="1.05" interpolationType="linear" frame="90"/>
+                    <KeyFrameDouble value="1" interpolationType="linear" frame="180"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="17">
+                    <KeyFrameDouble value="1" interpolationType="linear"/>
+                    <KeyFrameDouble value="1.05" interpolationType="linear" frame="90"/>
+                    <KeyFrameDouble value="1" interpolationType="linear" frame="180"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="14">
+                    <KeyFrameDouble value="256" interpolationType="linear"/>
+                    <KeyFrameDouble value="251" interpolationType="linear" frame="90"/>
+                    <KeyFrameDouble value="256" interpolationType="linear" frame="180"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="1"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:14">
+                <KeyedProperty propertyKey="14">
+                    <KeyFrameDouble value="150" interpolationType="linear"/>
+                    <KeyFrameDouble value="70" interpolationType="linear" frame="180"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="1" interpolationType="linear" frame="45"/>
+                    <KeyFrameDouble value="1" interpolationType="linear" frame="135"/>
+                    <KeyFrameDouble value="0" interpolationType="linear" frame="180"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+    </Artboard>
+
+    <ViewModel defaultInstanceId="0:51" name="Pet" id="0:50">
+        <ViewModelPropertyNumber name="quota" id="0:52"/>
+        <ViewModelInstance exports="true" name="Instance" id="0:51">
+            <ViewModelInstanceNumber propertyValue="100" viewModelPropertyId="0:52"/>
+        </ViewModelInstance>
+    </ViewModel>
+
+    <FontAsset file="Montserrat.ttf" name="Montserrat" id="0:30"/>
+    <ImageAsset file="muse_work_512.png" name="Work" id="0:31"/>
+    <ImageAsset file="muse_sweat_512.png" name="Sweat" id="0:32"/>
+    <ImageAsset file="muse_sleep_512.png" name="Sleep" id="0:33"/>
+</Rive>
