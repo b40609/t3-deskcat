@@ -52,10 +52,10 @@ function px(
 }
 
 /**
- * Renders a crisp 32x32 side-view "Salary Cat" (月薪貓) typing at a desk.
+ * Renders a crisp 32x32 side-view DeskCat typing at a desk.
  * Scales cleanly at 48px..128px with pixel-exact edges.
  */
-export function drawSalaryCat(
+export function drawDeskCat(
   ctx: CanvasRenderingContext2D,
   canvasSize: number,
   mood: CatMood,
@@ -127,7 +127,7 @@ export function drawSalaryCat(
   px(ctx, 7 + lean, 17, 7, 8, C.fur, s);
   px(ctx, 7 + lean, 21, 3, 4, C.furShade, s);
 
-  // Blue collar + Iconic Red Salary-Cat Necktie
+  // Blue collar + Red Necktie
   px(ctx, 11 + lean, 16, 4, 1, C.collar, s);
   px(ctx, 14 + lean, 17, 2, 3, C.tie, s);
   px(ctx, 15 + lean, 20, 1, 2, C.tieDark, s);

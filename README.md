@@ -1,9 +1,9 @@
 <div align="center">
 
-# 🐾 T3 DeskCat · 月薪貓
+# 🐾 T3 DeskCat
 
-**A lightweight, always-on-top Salary-Cat desktop pet & multi-account AI quota monitor built with Rust + Tauri v2.**  
-*為 T3 Code 開發者打造的摸魚桌面寵物與多模型多帳號額度雷達（零手動綁定、無感常駐、三段像素動態）*
+**A lightweight, always-on-top desktop pet & multi-account AI quota monitor built with Rust + Tauri v2.**  
+*為 T3 Code 開發者打造的桌面寵物與多模型多帳號額度雷達（零手動綁定、無感常駐、三段像素動態）*
 
 [![GitHub release](https://img.shields.io/github/v/release/b40609/t3-deskcat?color=24C8DB&logo=github)](https://github.com/b40609/t3-deskcat/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows)](https://github.com/b40609/t3-deskcat/releases)
@@ -22,7 +22,7 @@
 身為高強度使用 **T3 Code** 的重度使用者，通常會同時訂閱多個 AI 服務的多組帳號（例如 **Claude × 3、Antigravity × 3、ChatGPT / Codex × 1**）。  
 過去每次切換或寫程式途中，額度用盡才發現卡住；或者需要繁瑣地打開網頁或 CLI 一個個查詢剩餘用量。
 
-**T3 DeskCat（月薪貓）** 直接化身為一隻常駐在桌面邊緣的側面打字小貓：
+**T3 DeskCat** 直接化身為一隻常駐在桌面邊緣的側面打字小貓：
 - **零手動設定**：自動掃描 T3 Code 本機憑證，啟動即用。
 - **神態反映額度**：小貓打字精力充沛代表額度充足；冒汗狂敲代表額度吃緊；趴在鍵盤睡覺代表額度見底。
 - **最佳帳號智慧推薦**：滑鼠懸停即可知道目前各家最該使用哪一個帳號。
@@ -129,7 +129,7 @@ npm run tauri build
 t3-deskcat/
 ├── .github/workflows/       # GitHub Actions 跨平台自動釋出流程
 ├── src/                     # 前端 Webview UI (TypeScript + Canvas)
-│   ├── catSprite.ts         # 像素月薪貓逐幀繪製與狀態引擎 (Canvas 2D)
+│   ├── catSprite.ts         # 像素小貓逐幀繪製與狀態引擎 (Canvas 2D)
 │   ├── panel.ts             # 展開式儀表板與即時設定介面邏輯
 │   ├── pet.ts               # 小貓懸浮視窗、滑鼠拖曳與互動監聽
 │   ├── styles.css           # 玻璃擬態 (Glassmorphism) 深色主題樣式

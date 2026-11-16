@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { drawSalaryCat } from "./catSprite";
+import { drawDeskCat } from "./catSprite";
 import type { CatMood, DashboardSnapshot } from "./types";
 
 const canvas = document.getElementById("pet-canvas") as HTMLCanvasElement;
@@ -36,7 +36,7 @@ function applySnapshot(snap: DashboardSnapshot) {
 setInterval(() => {
   tick = (tick + 1) % 10000;
   const effectiveMood = previewMoodOverride ?? currentMood;
-  drawSalaryCat(ctx, canvas.width, effectiveMood, tick);
+  drawDeskCat(ctx, canvas.width, effectiveMood, tick);
 }, 100);
 
 // Distinguish click (toggle panel) vs drag (>4px native window move)
@@ -97,7 +97,7 @@ window.addEventListener("resize", () => {
 
 async function init() {
   syncCanvasSize(petSize);
-  drawSalaryCat(ctx, canvas.width, currentMood, tick);
+  drawDeskCat(ctx, canvas.width, currentMood, tick);
 
   await listen<DashboardSnapshot>("snapshot-updated", (event) => {
     applySnapshot(event.payload);

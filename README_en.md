@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🐾 T3 DeskCat · Salary Cat
+# 🐾 T3 DeskCat
 
-**A lightweight, always-on-top Salary-Cat desktop pet & multi-account AI quota monitor built with Rust + Tauri v2.**  
+**A lightweight, always-on-top desktop pet & multi-account AI quota monitor built with Rust + Tauri v2.**  
 *Designed for power users of T3 Code to effortlessly track multiple accounts across Claude, Antigravity, and ChatGPT.*
 
 [![GitHub release](https://img.shields.io/github/v/release/b40609/t3-deskcat?color=24C8DB&logo=github)](https://github.com/b40609/t3-deskcat/releases)
@@ -22,7 +22,7 @@
 Power users and software engineers working with **T3 Code** frequently maintain multiple subscriptions across various providers (e.g., **Claude × 3, Antigravity × 3, ChatGPT / Codex × 1**).  
 Checking rate limits manually via command-line arguments or browser dashboards breaks developer flow and leads to unexpected mid-coding disruptions.
 
-**T3 DeskCat** lives right at the edge of your screen as a dedicated "Salary-Cat" desktop companion:
+**T3 DeskCat** lives right at the edge of your screen as an animated desktop companion:
 - **Zero Configuration**: Automatically discovers your local credentials from T3 Code out of the box.
 - **Mood Reflects Quotas**: The cat's typing intensity directly represents your quota reserve. Energetic when full, frantically sweating when running low, and asleep when drained.
 - **Smart Recommendations**: Hover over the cat anytime to see which account currently offers the highest quota.

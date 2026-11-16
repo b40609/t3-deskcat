@@ -2,7 +2,7 @@
   "name": "t3-deskcat",
   "version": "0.1.0",
   "private": true,
-  "description": "Salary-cat desktop pet & multi-account quota monitor for T3 Code (Claude, Antigravity, Codex)",
+  "description": "Desktop pet & multi-account AI quota monitor for T3 Code (Claude, Antigravity, Codex)",
   "type": "module",
   "scripts": {
     "dev": "vite",

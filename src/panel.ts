@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { drawSalaryCat } from "./catSprite";
+import { drawDeskCat } from "./catSprite";
 import type {
   AccountQuota,
   AppSettings,
@@ -50,7 +50,7 @@ let miniTick = 0;
 setInterval(() => {
   miniTick = (miniTick + 1) % 10000;
   const mood: CatMood = currentSnapshot?.mood ?? "working";
-  drawSalaryCat(miniCtx, miniCanvas.width, mood, miniTick);
+  drawDeskCat(miniCtx, miniCanvas.width, mood, miniTick);
 }, 140);
 
 function providerLabel(p: ProviderKind): string {
@@ -352,7 +352,7 @@ window.addEventListener("keydown", (e) => {
 });
 
 async function init() {
-  drawSalaryCat(miniCtx, miniCanvas.width, "working", 0);
+  drawDeskCat(miniCtx, miniCanvas.width, "working", 0);
 
   await listen<DashboardSnapshot>("snapshot-updated", (event) => {
     renderDashboard(event.payload);

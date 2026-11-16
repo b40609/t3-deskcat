@@ -191,7 +191,7 @@ fn save_pet_position(app: AppHandle, state: tauri::State<SharedState>) {
 fn test_notification(app: AppHandle) -> Result<(), String> {
     app.notification()
         .builder()
-        .title("T3 DeskCat 月薪貓")
+        .title("T3 DeskCat")
         .body("系統通知運作正常！額度過低或重置時會在這裡提醒你。")
         .show()
         .map_err(|err| format!("通知發送失敗: {err}"))
@@ -279,7 +279,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     if prev_val < 80 && rem >= 98 {
                         notifications.push((
                             format!("✨ {} ({}) 額度已重置", acc.provider.short_label(), acc.name),
-                            format!("已恢復至 {rem}%，月薪貓繼續上工！"),
+                            format!("已恢復至 {rem}%，小貓繼續上工！"),
                         ));
                     }
                 }
@@ -633,7 +633,7 @@ pub fn run() {
 
             let tray_builder = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("T3 DeskCat（月薪貓）")
+                .tooltip("T3 DeskCat")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event({

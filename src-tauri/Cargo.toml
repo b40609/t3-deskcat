@@ -1,7 +1,7 @@
 [package]
 name = "t3-deskcat"
 version = "0.1.0"
-description = "A salary-cat desktop pet and multi-account quota monitor for T3 Code"
+description = "A lightweight desktop pet and multi-account AI quota monitor for T3 Code"
 authors = ["b40609"]
 license = "MIT"
 edition = "2021"
