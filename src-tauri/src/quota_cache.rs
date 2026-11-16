@@ -144,7 +144,14 @@ impl QuotaCache {
             }
         }
         if changed && acc.provider == ProviderKind::Claude {
-            if let Some(min) = acc.primary_windows.iter().map(|w| w.remaining_percent).min() {
+            // Model-specific windows ("Wk Sonnet") don't drive the effective value.
+            if let Some(min) = acc
+                .primary_windows
+                .iter()
+                .filter(|w| !w.label.contains(' '))
+                .map(|w| w.remaining_percent)
+                .min()
+            {
                 acc.effective_remaining = min;
             }
         }

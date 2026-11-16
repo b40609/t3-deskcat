@@ -122,6 +122,15 @@ pub async fn fetch_claude_quota(
         .min()
         .unwrap_or(0);
 
+    // Model-specific weekly limits (shown like Claude's own usage page, but
+    // they don't drive the overall score).
+    if let Some(w) = parse_window("Wk Sonnet", body.get("seven_day_sonnet")) {
+        windows.push(w);
+    }
+    if let Some(w) = parse_window("Wk Opus", body.get("seven_day_opus")) {
+        windows.push(w);
+    }
+
     AccountQuota {
         id,
         provider: ProviderKind::Claude,

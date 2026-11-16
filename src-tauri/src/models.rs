@@ -110,6 +110,40 @@ pub struct AppSettings {
     pub custom_image_sweating: Option<String>,
     #[serde(default)]
     pub custom_image_sleeping: Option<String>,
+    // ---- Display customisation (all optional for backward compatibility)
+    /// Panel text scale in percent (80-125).
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: u32,
+    /// "system" | "light" | "dark"
+    #[serde(default = "default_appearance")]
+    pub appearance: String,
+    /// "used" (Claude style) | "remaining"
+    #[serde(default = "default_usage_display")]
+    pub usage_display: String,
+    /// "absolute" (於 下午7:00 重設) | "relative" (3 小時後重設)
+    #[serde(default = "default_reset_format")]
+    pub reset_format: String,
+    #[serde(default = "default_true")]
+    pub show_picks: bool,
+    /// Pet particle effects (music notes, Zzz, sweat, sparks)
+    #[serde(default = "default_true")]
+    pub pet_effects: bool,
+}
+
+fn default_ui_scale() -> u32 {
+    90
+}
+fn default_appearance() -> String {
+    "system".to_string()
+}
+fn default_usage_display() -> String {
+    "used".to_string()
+}
+fn default_reset_format() -> String {
+    "absolute".to_string()
+}
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -130,6 +164,12 @@ impl Default for AppSettings {
             custom_image_working: None,
             custom_image_sweating: None,
             custom_image_sleeping: None,
+            ui_scale: default_ui_scale(),
+            appearance: default_appearance(),
+            usage_display: default_usage_display(),
+            reset_format: default_reset_format(),
+            show_picks: true,
+            pet_effects: true,
         }
     }
 }

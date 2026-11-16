@@ -117,6 +117,10 @@
                   <div class="row-line"><span>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
                   <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
                 </div>
+                <label class="row">
+                  <span>動態特效<small class="row-hint">音符、Zzz、汗滴、愛心</small></span>
+                  <input id="inp-pet-effects" class="switch" type="checkbox" checked />
+                </label>
                 <div class="row row-stack">
                   <span class="row-caption">預覽動畫</span>
                   <div class="chips">
@@ -126,6 +130,43 @@
                   </div>
                 </div>
               </div>
+            </section>
+
+            <section class="group">
+              <div class="group-header">顯示</div>
+              <div class="list">
+                <div class="row">
+                  <span>外觀</span>
+                  <div class="segmented" data-key="appearance">
+                    <button data-value="system" class="seg-btn">系統</button>
+                    <button data-value="light" class="seg-btn">淺色</button>
+                    <button data-value="dark" class="seg-btn">深色</button>
+                  </div>
+                </div>
+                <div class="row row-slider">
+                  <div class="row-line"><span>字體大小</span><span class="value" id="val-ui-scale">90%</span></div>
+                  <input id="inp-ui-scale" class="slider" type="range" min="80" max="125" step="5" value="90" />
+                </div>
+                <div class="row">
+                  <span>用量數字</span>
+                  <div class="segmented" data-key="usageDisplay">
+                    <button data-value="used" class="seg-btn">已使用</button>
+                    <button data-value="remaining" class="seg-btn">剩餘</button>
+                  </div>
+                </div>
+                <div class="row">
+                  <span>重設時間</span>
+                  <div class="segmented" data-key="resetFormat">
+                    <button data-value="absolute" class="seg-btn">時刻</button>
+                    <button data-value="relative" class="seg-btn">倒數</button>
+                  </div>
+                </div>
+                <label class="row">
+                  <span>顯示「推薦使用」</span>
+                  <input id="inp-show-picks" class="switch" type="checkbox" checked />
+                </label>
+              </div>
+              <div class="group-footer">「已使用」與 Claude 官方用量頁一致；圓環與心情仍以剩餘額度計算。</div>
             </section>
 
             <section class="group">
@@ -141,9 +182,9 @@
                 </div>
                 <div class="row">
                   <span>計算方式</span>
-                  <div class="segmented" id="seg-score-mode">
-                    <button data-mode="max_avg" class="seg-btn active">各家最高</button>
-                    <button data-mode="all_avg" class="seg-btn">全部平均</button>
+                  <div class="segmented" id="seg-score-mode" data-key="scoreMode">
+                    <button data-value="max_avg" class="seg-btn">各家最高</button>
+                    <button data-value="all_avg" class="seg-btn">全部平均</button>
                   </div>
                 </div>
               </div>

@@ -276,6 +276,8 @@ export class MuseAnimator {
   private lastSpawn: Record<string, number> = {};
   private lastT = 0;
   private bubbleCycleStart = 0;
+  /** Particle effects (notes, Zzz, sweat, sparks, hearts). */
+  effects = true;
 
   /** Called on hover / click from the host window. */
   poke(kind: "hop" | "squish" = "hop") {
@@ -654,6 +656,7 @@ export class MuseAnimator {
   // ---------------------------------------------------------------- particles
 
   private spawn(kind: Particle["kind"], x: number, y: number, t: number, v: { vx: number; vy: number }) {
+    if (!this.effects) return;
     const life = { note: 2200, z: 2600, spark: 260, sweat: 700, heart: 1100, pop: 380, bang: 900 }[kind];
     this.particles.push({
       kind, x, y, vx: v.vx, vy: v.vy, born: t, life,

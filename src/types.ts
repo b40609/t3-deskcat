@@ -47,6 +47,12 @@ export interface AppSettings {
   customImageWorking?: string | null;
   customImageSweating?: string | null;
   customImageSleeping?: string | null;
+  uiScale?: number;
+  appearance?: "system" | "light" | "dark";
+  usageDisplay?: "used" | "remaining";
+  resetFormat?: "absolute" | "relative";
+  showPicks?: boolean;
+  petEffects?: boolean;
 }
 
 export interface DashboardSnapshot {

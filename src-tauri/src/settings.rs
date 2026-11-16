@@ -38,4 +38,14 @@ fn sanitize(s: &mut AppSettings) {
     s.working_threshold = s.working_threshold.clamp(s.sleeping_threshold + 1, 99);
     s.notify_low_threshold = s.notify_low_threshold.clamp(1, 90);
     s.refresh_interval_secs = s.refresh_interval_secs.clamp(30, 3600);
+    s.ui_scale = s.ui_scale.clamp(80, 125);
+    if !matches!(s.appearance.as_str(), "system" | "light" | "dark") {
+        s.appearance = "system".to_string();
+    }
+    if !matches!(s.usage_display.as_str(), "used" | "remaining") {
+        s.usage_display = "used".to_string();
+    }
+    if !matches!(s.reset_format.as_str(), "absolute" | "relative") {
+        s.reset_format = "absolute".to_string();
+    }
 }

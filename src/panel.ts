@@ -8,7 +8,6 @@ import type {
   DashboardSnapshot,
   PetTheme,
   ProviderKind,
-  ScoreMode,
 } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -54,8 +53,11 @@ const inpRefreshSec = $<HTMLInputElement>("inp-refresh-sec");
 const valRefreshSec = $("val-refresh-sec");
 const inpAgExtra = $<HTMLInputElement>("inp-ag-extra");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
-const segControl = $("seg-score-mode");
-const segButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+const inpUiScale = $<HTMLInputElement>("inp-ui-scale");
+const valUiScale = $("val-ui-scale");
+const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
+const inpPetEffects = $<HTMLInputElement>("inp-pet-effects");
+const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
 
 let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
@@ -76,6 +78,12 @@ const fallbackSettings: AppSettings = {
   petX: null,
   petY: null,
   petTheme: "desk_cat",
+  uiScale: 90,
+  appearance: "system",
+  usageDisplay: "used",
+  resetFormat: "absolute",
+  showPicks: true,
+  petEffects: true,
 };
 
 // Header avatar: animated, but only while the panel is visible
@@ -131,15 +139,62 @@ function getTone(pct: number): "good" | "warn" | "bad" {
   return "bad";
 }
 
+const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
+
+/** Claude-style reset text: "於 下午7:00 重設" / "週六上午2:00 重設", or a countdown. */
 function formatResetAt(resetAt: number | null): string {
   if (!resetAt) return "";
   const diffSec = resetAt - Math.floor(Date.now() / 1000);
-  if (diffSec <= 0) return "即將重置";
-  const hours = Math.floor(diffSec / 3600);
-  const mins = Math.floor((diffSec % 3600) / 60);
-  if (hours >= 24) return `${Math.floor(hours / 24)}天${hours % 24}時後重置`;
-  if (hours > 0) return `${hours}時${mins}分後重置`;
-  return `${mins}分後重置`;
+  if (diffSec <= 0) return "即將重設";
+  const fmt = (currentSettings ?? fallbackSettings).resetFormat ?? "absolute";
+  if (fmt === "relative") {
+    const hours = Math.floor(diffSec / 3600);
+    const mins = Math.floor((diffSec % 3600) / 60);
+    if (hours >= 24) return `${Math.floor(hours / 24)} 天 ${hours % 24} 小時後重設`;
+    if (hours > 0) return `${hours} 小時 ${mins} 分後重設`;
+    return `${Math.max(1, mins)} 分鐘後重設`;
+  }
+  const d = new Date(resetAt * 1000);
+  const now = new Date();
+  const time = d.toLocaleTimeString("zh-TW", { hour: "numeric", minute: "2-digit", hour12: true });
+  if (d.toDateString() === now.toDateString()) return `於 ${time} 重設`;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === tomorrow.toDateString()) return `明天${time} 重設`;
+  if (diffSec < 6.5 * 86400) return `${WEEKDAYS[d.getDay()]}${time} 重設`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${time} 重設`;
+}
+
+/** Window label → Claude-style name ("5 小時限制", "每週 · 所有模型", "每週 · Sonnet") */
+function windowName(label: string, provider: ProviderKind): string {
+  const [base, ...rest] = label.split(" ");
+  const pool = rest.join(" ");
+  // AG secondary pools come as "Argon 5h" / "3P Wk"
+  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
+  const span: Record<string, string> = { "5h": "5 小時限制", Wk: "每週", "週": "每週", Mo: "每月" };
+  let name =
+    span[base] ??
+    (/^\d+h$/.test(base) ? `${base.slice(0, -1)} 小時限制` : /^\d+d$/.test(base) ? `${base.slice(0, -1)} 天限制` : base);
+  if (name === "每週" || name === "每月") {
+    name += pool ? ` · ${pool}` : provider === "claude" ? " · 所有模型" : "限制";
+  }
+  return name;
+}
+
+function renderWindow(w: { label: string; remainingPercent: number; resetAt: number | null }, provider: ProviderKind) {
+  const showUsed = ((currentSettings ?? fallbackSettings).usageDisplay ?? "used") === "used";
+  const remaining = Math.max(0, Math.min(100, w.remainingPercent));
+  const value = showUsed ? 100 - remaining : remaining;
+  const tone = getTone(remaining);
+  const reset = formatResetAt(w.resetAt);
+  return `
+    <div class="win">
+      <div class="win-line">
+        <span class="win-name">${escapeHtml(windowName(w.label, provider))}</span>
+        <span class="win-meta">${reset ? `<span class="win-reset">${reset}</span>` : ""}<span class="win-val">${value}%</span></span>
+      </div>
+      <div class="bar"><span class="${showUsed ? `used-${tone}` : tone}" style="width:${value}%"></span></div>
+    </div>`;
 }
 
 function ageLabel(ts: number): string {
@@ -190,46 +245,33 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
   const isErr = acc.status !== "ok" && !isStale && !isCooldown;
-  const tone = isErr ? "bad" : isCooldown ? "warn" : getTone(acc.effectiveRemaining);
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
 
-  let detail: string;
+  let body: string;
+  let note = "";
   if (isExpired) {
-    detail = `<span class="status expired">授權已過期，請在 T3 重新登入</span>`;
+    body = `<span class="status expired">授權已過期，請在 T3 重新登入</span>`;
   } else if (isErr) {
-    detail = `<span class="status error">${escapeHtml(acc.error ?? "讀取失敗")}</span>`;
+    body = `<span class="status error">${escapeHtml(acc.error ?? "讀取失敗")}</span>`;
+  } else if (isCooldown) {
+    body = `<span class="status cooldown">${escapeHtml(acc.error ?? "查詢受限，稍後自動重試")}</span>`;
   } else {
-    const wins = acc.primaryWindows
-      .map((w) => {
-        const reset = formatResetAt(w.resetAt);
-        return `<span>${escapeHtml(w.label)} <b class="tone-${getTone(w.remainingPercent)}">${w.remainingPercent}%</b>${reset ? ` · ${reset}` : ""}</span>`;
-      })
-      .join("");
-    const extra =
-      showExtra && acc.extraWindows.length
-        ? acc.extraWindows.map((w) => `<span>${escapeHtml(w.label)} <b>${w.remainingPercent}%</b></span>`).join("")
-        : "";
-    const cd = isStale
-      ? `<span class="status stale">${ageLabel(acc.updatedAt)}的資料${acc.error ? ` · ${escapeHtml(acc.error)}` : ""}</span>`
-      : isCooldown
-        ? `<span class="status cooldown">${escapeHtml(acc.error ?? "查詢受限，稍後自動重試")}</span>`
-        : "";
-    detail = `<div class="windows">${wins}${extra}${cd}</div>`;
+    const wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
+    body = wins.length
+      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
+      : `<span class="status stale">沒有用量資料</span>`;
+    if (isStale) {
+      note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
+    }
   }
-
-  const bar = isErr || isCooldown
-    ? ""
-    : `<div class="bar"><span class="${tone}" style="width:${Math.max(0, Math.min(100, acc.effectiveRemaining))}%"></span></div>`;
 
   return `
     <div class="row acc ${isErr ? "dim" : ""}">
       <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
       <div class="row-main">
-        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(acc.name)}</span>${plan}</div>
-        ${bar}
-        ${detail}
+        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(acc.name)}</span>${plan}${note}</div>
+        <div class="wins">${body}</div>
       </div>
-      <span class="pct tone-${tone}">${isErr || isCooldown ? "—" : `${acc.effectiveRemaining}<small>%</small>`}</span>
     </div>`;
 }
 
@@ -246,7 +288,7 @@ function renderDashboard(snap: DashboardSnapshot) {
   renderRings(snap.accounts);
 
   const secPicks = $("sec-picks");
-  secPicks.classList.toggle("hidden", snap.picks.length === 0);
+  secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
   picksSection.innerHTML = snap.picks
     .map(
       (pick) => `
@@ -256,7 +298,7 @@ function renderDashboard(snap: DashboardSnapshot) {
           <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
           <span class="row-sub">${providerLabel(pick.provider)} · ${escapeHtml(pick.reason)}</span>
         </div>
-        <span class="pct tone-${getTone(pick.effectiveRemaining)}">${pick.effectiveRemaining}<small>%</small></span>
+        <span class="pct tone-${getTone(pick.effectiveRemaining)}"><small class="pct-cap">剩餘</small>${pick.effectiveRemaining}<small>%</small></span>
       </div>`,
     )
     .join("");
@@ -321,8 +363,29 @@ function syncSettingsForm(s: AppSettings) {
   inpAgExtra.checked = s.showAntigravityExtra;
   inpAutostart.checked = s.launchAtStartup;
 
-  segButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === s.scoreMode));
-  segControl.classList.toggle("second", s.scoreMode === "all_avg");
+  setRangeIfIdle(inpUiScale, s.uiScale ?? 90);
+  valUiScale.textContent = `${s.uiScale ?? 90}%`;
+  inpShowPicks.checked = s.showPicks !== false;
+  inpPetEffects.checked = s.petEffects !== false;
+
+  segControls.forEach((seg) => {
+    const key = seg.dataset.key as keyof AppSettings;
+    const btns = Array.from(seg.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+    const value = String(s[key] ?? btns[0].dataset.value);
+    const idx = Math.max(0, btns.findIndex((b) => b.dataset.value === value));
+    btns.forEach((b, i) => b.classList.toggle("active", i === idx));
+    seg.style.setProperty("--n", String(btns.length));
+    seg.style.setProperty("--i", String(idx));
+  });
+  applyDisplay(s);
+}
+
+function applyDisplay(s: AppSettings) {
+  const root = document.documentElement;
+  const appearance = s.appearance ?? "system";
+  if (appearance === "system") delete root.dataset.theme;
+  else root.dataset.theme = appearance;
+  root.style.setProperty("--ui-zoom", String((s.uiScale ?? 90) / 100));
 }
 
 let saveTimer: number | undefined;
@@ -421,9 +484,17 @@ inpSleepTh.addEventListener("input", () => {
   commitSettings({ sleepingThreshold: sleep, workingThreshold: Math.min(99, work) });
 });
 
-segButtons.forEach((btn) => {
-  btn.addEventListener("click", () => commitSettings({ scoreMode: btn.dataset.mode as ScoreMode }, true));
+segControls.forEach((seg) => {
+  seg.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      commitSettings({ [seg.dataset.key as string]: btn.dataset.value } as Partial<AppSettings>, true);
+    });
+  });
 });
+
+inpUiScale.addEventListener("input", () => commitSettings({ uiScale: Number(inpUiScale.value) }));
+inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
+inpPetEffects.addEventListener("change", () => commitSettings({ petEffects: inpPetEffects.checked }, true));
 
 inpNotify.addEventListener("change", () => commitSettings({ notifyEnabled: inpNotify.checked }, true));
 inpNotifyTh.addEventListener("input", () => commitSettings({ notifyLowThreshold: Number(inpNotifyTh.value) }));

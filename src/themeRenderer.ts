@@ -33,8 +33,11 @@ export function drawMuseCat(
   size: number,
   mood: CatMood,
   _tick: number,
+  effects = true,
 ) {
-  getAnimator(ctx).render(ctx, size, mood);
+  const anim = getAnimator(ctx);
+  anim.effects = effects;
+  anim.render(ctx, size, mood);
 }
 
 /**
@@ -286,7 +289,7 @@ export function renderAvatar(
   settings: AppSettings,
 ) {
   if (theme === "desk_cat") {
-    drawMuseCat(ctx, size, mood, tick);
+    drawMuseCat(ctx, size, mood, tick, settings.petEffects !== false);
   } else if (theme === "custom") {
     drawCustomAvatar(ctx, size, mood, tick, settings);
   } else {
