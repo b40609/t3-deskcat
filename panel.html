@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>T3 DeskCat Panel</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="shell">
+      <header class="topbar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <canvas id="mini-cat" width="24" height="24"></canvas>
+          <div class="brand-text" data-tauri-drag-region>
+            <span class="title">T3 DeskCat</span>
+            <span id="mood-badge" class="mood-badge working">載入中</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="btn-refresh" class="icon-btn" title="立即刷新額度">↻</button>
+          <button id="btn-pin" class="icon-btn" title="釘選面板（不自動收合）">📌</button>
+          <button id="btn-settings" class="icon-btn" title="設定">⚙</button>
+        </div>
+      </header>
+
+      <main id="view-dashboard" class="content">
+        <section id="picks-section" class="picks-grid"></section>
+        <section id="accounts-section" class="accounts-list"></section>
+        <footer class="footbar">
+          <span id="last-updated">尚未更新</span>
+          <span id="score-hint"></span>
+        </footer>
+      </main>
+
+      <main id="view-settings" class="content hidden">
+        <div class="settings-card">
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>月薪貓尺寸</span>
+              <strong id="val-pet-size">64 px</strong>
+            </div>
+            <input id="inp-pet-size" type="range" min="48" max="128" step="2" value="64" />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>總體額度計算方式</span>
+            </div>
+            <div class="segmented" id="seg-score-mode">
+              <button data-mode="max_avg" class="seg-btn active">各家最高平均</button>
+              <button data-mode="all_avg" class="seg-btn">全部帳號平均</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>元氣上班門檻（大於此值）</span>
+              <strong id="val-work-th">70%</strong>
+            </div>
+            <input id="inp-work-th" type="range" min="30" max="95" step="5" value="70" />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>見底趴睡門檻（小於此值）</span>
+              <strong id="val-sleep-th">20%</strong>
+            </div>
+            <input id="inp-sleep-th" type="range" min="5" max="60" step="5" value="20" />
+            <div class="subhint" id="val-sweat-range">趕工冒汗區間：20% ~ 70%</div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>即時預覽桌寵動畫（3 秒）</span>
+            </div>
+            <div class="preview-btns">
+              <button class="pill-btn" data-preview="working">💻 上班</button>
+              <button class="pill-btn" data-preview="sweating">💦 冒汗</button>
+              <button class="pill-btn" data-preview="sleeping">😴 趴睡</button>
+            </div>
+          </div>
+
+          <div class="setting-row toggle-row">
+            <span>Windows 系統通知（低額度 / 重置）</span>
+            <input id="inp-notify" type="checkbox" checked />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>低額度通知警戒線</span>
+              <strong id="val-notify-th">20%</strong>
+            </div>
+            <input id="inp-notify-th" type="range" min="5" max="50" step="5" value="20" />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span>自動刷新週期</span>
+              <strong id="val-refresh-sec">120 秒</strong>
+            </div>
+            <input id="inp-refresh-sec" type="range" min="30" max="600" step="30" value="120" />
+          </div>
+
+          <div class="setting-row toggle-row">
+            <span>顯示 Antigravity 次要池 (Argon / 3P)</span>
+            <input id="inp-ag-extra" type="checkbox" />
+          </div>
+
+          <div class="setting-row toggle-row">
+            <span>開機自動啟動</span>
+            <input id="inp-autostart" type="checkbox" />
+          </div>
+
+          <div class="settings-footer">
+            <button id="btn-test-notify" class="secondary-btn">測試通知</button>
+            <button id="btn-quit" class="danger-btn">結束程式</button>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/panel.ts"></script>
+  </body>
+</html>

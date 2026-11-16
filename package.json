@@ -1,0 +1,22 @@
+{
+  "name": "t3-deskcat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Salary-cat desktop pet & multi-account quota monitor for T3 Code (Claude, Antigravity, Codex)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-autostart": "^2.2.0",
+    "@tauri-apps/plugin-notification": "^2.2.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}
