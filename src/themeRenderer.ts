@@ -27,6 +27,10 @@ export function getMuseImage(mood: CatMood): HTMLImageElement | null {
   return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
+export function animSpeedFactor(s: AppSettings): number {
+  return s.petAnimSpeed === "slow" ? 0.6 : s.petAnimSpeed === "fast" ? 1.6 : 1;
+}
+
 /** Muse cat: layered procedural animation (see museAnimator.ts). */
 export function drawMuseCat(
   ctx: CanvasRenderingContext2D,
@@ -34,9 +38,11 @@ export function drawMuseCat(
   mood: CatMood,
   _tick: number,
   effects = true,
+  speed = 1,
 ) {
   const anim = getAnimator(ctx);
   anim.effects = effects;
+  anim.speed = speed;
   anim.render(ctx, size, mood);
 }
 
@@ -289,7 +295,7 @@ export function renderAvatar(
   settings: AppSettings,
 ) {
   if (theme === "desk_cat") {
-    drawMuseCat(ctx, size, mood, tick, settings.petEffects !== false);
+    drawMuseCat(ctx, size, mood, tick, settings.petEffects !== false, animSpeedFactor(settings));
   } else if (theme === "custom") {
     drawCustomAvatar(ctx, size, mood, tick, settings);
   } else {

@@ -278,10 +278,15 @@ export class MuseAnimator {
   private bubbleCycleStart = 0;
   /** Particle effects (notes, Zzz, sweat, sparks, hearts). */
   effects = true;
+  /** Animation speed multiplier (0.6 slow / 1 normal / 1.6 fast). */
+  speed = 1;
+  /** Virtual clock (ms) advanced by real time * speed. */
+  private clock = performance.now();
+  private lastReal = 0;
 
   /** Called on hover / click from the host window. */
   poke(kind: "hop" | "squish" = "hop") {
-    const t = performance.now();
+    const t = this.clock;
     if (this.actions.some((a) => a.kind === kind && t - a.start < a.dur)) return;
     this.actions.push({ kind, start: t, dur: kind === "hop" ? 650 : 380 });
     if (kind === "hop" && this.mood !== "sleeping") {
@@ -291,7 +296,10 @@ export class MuseAnimator {
   }
 
   render(ctx: CanvasRenderingContext2D, size: number, mood: CatMood) {
-    const t = performance.now();
+    const real = performance.now();
+    this.clock += this.lastReal ? Math.min(100, real - this.lastReal) * this.speed : 16;
+    this.lastReal = real;
+    const t = this.clock;
     const dt = Math.min(0.1, this.lastT ? (t - this.lastT) / 1000 : 0.016);
     this.lastT = t;
 

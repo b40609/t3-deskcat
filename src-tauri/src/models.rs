@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +89,18 @@ impl Default for PetTheme {
     }
 }
 
+/// Per-account display / alert preferences, keyed by account id.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AccountPref {
+    pub alias: Option<String>,
+    pub hidden: bool,
+    /// Keep the account visible but leave it out of the overall score / mood.
+    pub exclude_score: bool,
+    /// Low-quota alert line for this account; None = global setting.
+    pub notify_threshold: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -128,6 +141,85 @@ pub struct AppSettings {
     /// Pet particle effects (music notes, Zzz, sweat, sparks)
     #[serde(default = "default_true")]
     pub pet_effects: bool,
+
+    // ---- Accounts
+    #[serde(default)]
+    pub account_prefs: HashMap<String, AccountPref>,
+    /// Display order of account ids (unknown ids go last).
+    #[serde(default)]
+    pub account_order: Vec<String>,
+
+    // ---- Notifications
+    /// Notify when a used-up window resets.
+    #[serde(default = "default_true")]
+    pub notify_on_reset: bool,
+    #[serde(default)]
+    pub quiet_hours_enabled: bool,
+    /// Minutes after local midnight.
+    #[serde(default = "default_quiet_start")]
+    pub quiet_start_min: u32,
+    #[serde(default = "default_quiet_end")]
+    pub quiet_end_min: u32,
+
+    // ---- Pet
+    /// "slow" | "normal" | "fast"
+    #[serde(default = "default_anim_speed")]
+    pub pet_anim_speed: String,
+    /// 30-100 (%)
+    #[serde(default = "default_pet_opacity")]
+    pub pet_opacity: u32,
+    /// Fade the pet out while the mouse is elsewhere.
+    #[serde(default)]
+    pub pet_idle_fade: bool,
+    /// "single" | "double" click to open the panel
+    #[serde(default = "default_click_action")]
+    pub pet_click_action: String,
+    #[serde(default = "default_true")]
+    pub pet_snap_edge: bool,
+
+    // ---- Panel
+    /// "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center"
+    #[serde(default = "default_panel_position")]
+    pub panel_position: String,
+    /// Global shortcut that toggles the panel ("" = off).
+    #[serde(default = "default_hotkey")]
+    pub hotkey: String,
+    /// One (tightest) limit per account.
+    #[serde(default)]
+    pub compact_accounts: bool,
+    /// 24h usage sparkline per account.
+    #[serde(default = "default_true")]
+    pub show_history: bool,
+
+    // ---- Data
+    /// Minimum seconds between Claude usage calls per account.
+    #[serde(default = "default_claude_interval")]
+    pub claude_min_interval_secs: u64,
+}
+
+fn default_quiet_start() -> u32 {
+    23 * 60
+}
+fn default_quiet_end() -> u32 {
+    9 * 60
+}
+fn default_anim_speed() -> String {
+    "normal".to_string()
+}
+fn default_pet_opacity() -> u32 {
+    100
+}
+fn default_click_action() -> String {
+    "single".to_string()
+}
+fn default_panel_position() -> String {
+    "pet".to_string()
+}
+fn default_hotkey() -> String {
+    "Ctrl+Alt+Q".to_string()
+}
+fn default_claude_interval() -> u64 {
+    90
 }
 
 fn default_ui_scale() -> u32 {
@@ -170,6 +262,22 @@ impl Default for AppSettings {
             reset_format: default_reset_format(),
             show_picks: true,
             pet_effects: true,
+            account_prefs: HashMap::new(),
+            account_order: Vec::new(),
+            notify_on_reset: true,
+            quiet_hours_enabled: false,
+            quiet_start_min: default_quiet_start(),
+            quiet_end_min: default_quiet_end(),
+            pet_anim_speed: default_anim_speed(),
+            pet_opacity: default_pet_opacity(),
+            pet_idle_fade: false,
+            pet_click_action: default_click_action(),
+            pet_snap_edge: true,
+            panel_position: default_panel_position(),
+            hotkey: default_hotkey(),
+            compact_accounts: false,
+            show_history: true,
+            claude_min_interval_secs: default_claude_interval(),
         }
     }
 }
@@ -184,4 +292,41 @@ pub struct DashboardSnapshot {
     pub tooltip_text: String,
     pub last_refreshed_at: i64,
     pub settings: AppSettings,
+}
+
+impl AppSettings {
+    pub fn pref(&self, id: &str) -> Option<&AccountPref> {
+        self.account_prefs.get(id)
+    }
+    pub fn is_hidden(&self, id: &str) -> bool {
+        self.pref(id).map(|p| p.hidden).unwrap_or(false)
+    }
+    pub fn counts_in_score(&self, id: &str) -> bool {
+        self.pref(id).map(|p| !p.hidden && !p.exclude_score).unwrap_or(true)
+    }
+    pub fn display_name(&self, acc: &AccountQuota) -> String {
+        self.pref(&acc.id)
+            .and_then(|p| p.alias.as_deref())
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| acc.name.clone())
+    }
+    pub fn low_threshold_for(&self, id: &str) -> i32 {
+        self.pref(id)
+            .and_then(|p| p.notify_threshold)
+            .unwrap_or(self.notify_low_threshold)
+    }
+    /// Whether `minute_of_day` (local) falls in the do-not-disturb window.
+    pub fn in_quiet_hours(&self, minute_of_day: u32) -> bool {
+        if !self.quiet_hours_enabled || self.quiet_start_min == self.quiet_end_min {
+            return false;
+        }
+        let (s, e, m) = (self.quiet_start_min, self.quiet_end_min, minute_of_day);
+        if s < e {
+            m >= s && m < e
+        } else {
+            m >= s || m < e
+        }
+    }
 }

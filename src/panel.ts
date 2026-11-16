@@ -2,10 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { renderAvatar } from "./themeRenderer";
 import type {
+  AccountPref,
   AccountQuota,
   AppSettings,
   CatMood,
   DashboardSnapshot,
+  PanelPosition,
   PetTheme,
   ProviderKind,
 } from "./types";
@@ -58,12 +60,37 @@ const valUiScale = $("val-ui-scale");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
 const inpPetEffects = $<HTMLInputElement>("inp-pet-effects");
 const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
+const inpPetOpacity = $<HTMLInputElement>("inp-pet-opacity");
+const valPetOpacity = $("val-pet-opacity");
+const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
+const inpPetSnap = $<HTMLInputElement>("inp-pet-snap");
+const inpCompact = $<HTMLInputElement>("inp-compact");
+const inpShowHistory = $<HTMLInputElement>("inp-show-history");
+const selPanelPos = $<HTMLSelectElement>("sel-panel-pos");
+const btnHotkey = $<HTMLButtonElement>("btn-hotkey");
+const btnHotkeyClear = $<HTMLButtonElement>("btn-hotkey-clear");
+const hotkeyHint = $("hotkey-hint");
+const accSettingsEl = $("acc-settings");
+const inpNotifyReset = $<HTMLInputElement>("inp-notify-reset");
+const inpQuiet = $<HTMLInputElement>("inp-quiet");
+const rowQuietTimes = $("row-quiet-times");
+const inpQuietStart = $<HTMLInputElement>("inp-quiet-start");
+const inpQuietEnd = $<HTMLInputElement>("inp-quiet-end");
+const inpClaudeInterval = $<HTMLInputElement>("inp-claude-interval");
+const valClaudeInterval = $("val-claude-interval");
 
 let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
 let showingSettings = false;
 let pinned = false;
 let miniTick = 0;
+let historyById: Record<string, [number, number][]> = {};
+let historyFetchedAt = 0;
+let historyForSnap = -1;
+let expandedAcc: string | null = null;
+let accSettingsSig = "";
+let recordingHotkey = false;
+const HOTKEY_HINT = "點快捷鍵後按下新的組合鍵；Esc 取消、Backspace 清除。";
 
 const fallbackSettings: AppSettings = {
   petSize: 64,
@@ -84,7 +111,50 @@ const fallbackSettings: AppSettings = {
   resetFormat: "absolute",
   showPicks: true,
   petEffects: true,
+  accountPrefs: {},
+  accountOrder: [],
+  notifyOnReset: true,
+  quietHoursEnabled: false,
+  quietStartMin: 23 * 60,
+  quietEndMin: 9 * 60,
+  petAnimSpeed: "normal",
+  petOpacity: 100,
+  petIdleFade: false,
+  petClickAction: "single",
+  petSnapEdge: true,
+  panelPosition: "pet",
+  hotkey: "Ctrl+Alt+Q",
+  compactAccounts: false,
+  showHistory: true,
+  claudeMinIntervalSecs: 90,
 };
+
+const cfg = () => currentSettings ?? fallbackSettings;
+
+function prefOf(id: string): AccountPref {
+  return cfg().accountPrefs?.[id] ?? {};
+}
+
+function displayName(acc: AccountQuota): string {
+  return prefOf(acc.id).alias?.trim() || acc.name;
+}
+
+/** Accounts in the user's chosen order (unknown ids keep discovery order, at the end). */
+function orderedAccounts(accounts: AccountQuota[]): AccountQuota[] {
+  const order = cfg().accountOrder ?? [];
+  const rank = (a: AccountQuota, i: number) => {
+    const r = order.indexOf(a.id);
+    return r < 0 ? order.length + i : r;
+  };
+  return accounts
+    .map((a, i) => ({ a, r: rank(a, i) }))
+    .sort((x, y) => x.r - y.r)
+    .map((x) => x.a);
+}
+
+function visibleAccounts(accounts: AccountQuota[]): AccountQuota[] {
+  return orderedAccounts(accounts).filter((a) => !prefOf(a.id).hidden);
+}
 
 // Header avatar: animated, but only while the panel is visible
 function miniFrame() {
@@ -256,9 +326,13 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
   } else if (isCooldown) {
     body = `<span class="status cooldown">${escapeHtml(acc.error ?? "查詢受限，稍後自動重試")}</span>`;
   } else {
-    const wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
+    let wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
+    if (cfg().compactAccounts && wins.length > 1) {
+      const pool = acc.primaryWindows.length ? acc.primaryWindows : wins;
+      wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
+    }
     body = wins.length
-      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
+      ? wins.map((w) => renderWindow(w, acc.provider)).join("") + sparkHtml(acc.id)
       : `<span class="status stale">沒有用量資料</span>`;
     if (isStale) {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
@@ -269,10 +343,63 @@ function renderAccountRow(acc: AccountQuota, showExtra: boolean): string {
     <div class="row acc ${isErr ? "dim" : ""}">
       <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
       <div class="row-main">
-        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(acc.name)}</span>${plan}${note}</div>
+        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${note}</div>
         <div class="wins">${body}</div>
       </div>
     </div>`;
+}
+
+/** 24h sparkline of the account's effective quota (used or remaining, per setting). */
+function sparkHtml(id: string): string {
+  const s = cfg();
+  if (s.showHistory === false) return "";
+  const now = Date.now() / 1000;
+  const start = now - 86400;
+  const pts = (historyById[id] ?? []).filter(([t]) => t >= start);
+  if (pts.length < 2) return "";
+  const used = (s.usageDisplay ?? "used") === "used";
+  const W = 200;
+  const H = 22;
+  const xy = pts.map(([t, v]) => {
+    const val = used ? 100 - v : v;
+    return [((t - start) / 86400) * W, H - 1 - (Math.max(0, Math.min(100, val)) / 100) * (H - 2)];
+  });
+  const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `M${xy[0][0].toFixed(1)},${H} L${line.replace(/ /g, " L")} L${xy[xy.length - 1][0].toFixed(1)},${H} Z`;
+  return `
+    <div class="spark-wrap" title="過去 24 小時${used ? "已使用" : "剩餘"}額度">
+      <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <path class="spark-area" d="${area}" /><polyline class="spark-line" points="${line}" />
+      </svg>
+      <span class="spark-cap">24h</span>
+    </div>`;
+}
+
+async function refreshHistory(force = false) {
+  if (cfg().showHistory === false) return;
+  if (!force && Date.now() - historyFetchedAt < 30_000) return;
+  historyFetchedAt = Date.now();
+  try {
+    historyById = await invoke<Record<string, [number, number][]>>("get_history");
+    if (currentSnapshot) renderAccounts(currentSnapshot);
+  } catch {
+    // command unavailable (preview)
+  }
+}
+
+function renderAccounts(snap: DashboardSnapshot) {
+  const visible = visibleAccounts(snap.accounts);
+  const okCount = visible.filter((a) => a.status === "ok" || a.status === "stale").length;
+  const hiddenCount = snap.accounts.length - visible.length;
+  $("accounts-count").textContent =
+    `${okCount}/${visible.length} 在線` + (hiddenCount ? ` · 隱藏 ${hiddenCount}` : "");
+
+  accountsSection.innerHTML =
+    snap.accounts.length === 0
+      ? `<div class="empty">尚未找到 Claude / Antigravity / ChatGPT 的登入憑證</div>`
+      : visible.length === 0
+        ? `<div class="empty">所有帳號都已隱藏，可在設定 → 帳號中開啟</div>`
+        : visible.map((acc) => renderAccountRow(acc, snap.settings.showAntigravityExtra)).join("");
 }
 
 function renderDashboard(snap: DashboardSnapshot) {
@@ -285,7 +412,7 @@ function renderDashboard(snap: DashboardSnapshot) {
   heroScoreEl.textContent = String(snap.overallScore);
   const modeHint = snap.settings.scoreMode === "max_avg" ? "各家最高平均" : "全部帳號平均";
   scoreHintEl.textContent = `總體剩餘 · ${modeHint}`;
-  renderRings(snap.accounts);
+  renderRings(visibleAccounts(snap.accounts).filter((a) => !prefOf(a.id).excludeScore));
 
   const secPicks = $("sec-picks");
   secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
@@ -303,13 +430,11 @@ function renderDashboard(snap: DashboardSnapshot) {
     )
     .join("");
 
-  const okCount = snap.accounts.filter((a) => a.status === "ok" || a.status === "stale").length;
-  $("accounts-count").textContent = `${okCount}/${snap.accounts.length} 在線`;
-
-  accountsSection.innerHTML =
-    snap.accounts.length === 0
-      ? `<div class="empty">尚未找到 Claude / Antigravity / ChatGPT 的登入憑證</div>`
-      : snap.accounts.map((acc) => renderAccountRow(acc, snap.settings.showAntigravityExtra)).join("");
+  renderAccounts(snap);
+  if (snap.lastRefreshedAt !== historyForSnap) {
+    historyForSnap = snap.lastRefreshedAt;
+    void refreshHistory(true);
+  }
 
   const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString("zh-TW", {
     hour12: false,
@@ -363,6 +488,25 @@ function syncSettingsForm(s: AppSettings) {
   inpAgExtra.checked = s.showAntigravityExtra;
   inpAutostart.checked = s.launchAtStartup;
 
+  setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
+  valPetOpacity.textContent = `${s.petOpacity ?? 100}%`;
+  inpPetIdleFade.checked = !!s.petIdleFade;
+  inpPetSnap.checked = s.petSnapEdge !== false;
+  inpCompact.checked = !!s.compactAccounts;
+  inpShowHistory.checked = s.showHistory !== false;
+  if (document.activeElement !== selPanelPos) selPanelPos.value = s.panelPosition ?? "pet";
+  if (!recordingHotkey) btnHotkey.innerHTML = hotkeyLabel(s.hotkey ?? "");
+  btnHotkeyClear.classList.toggle("hidden", !s.hotkey);
+  inpNotifyReset.checked = s.notifyOnReset !== false;
+  inpQuiet.checked = !!s.quietHoursEnabled;
+  rowQuietTimes.classList.toggle("hidden", !s.quietHoursEnabled);
+  if (document.activeElement !== inpQuietStart) inpQuietStart.value = minToTime(s.quietStartMin ?? 23 * 60);
+  if (document.activeElement !== inpQuietEnd) inpQuietEnd.value = minToTime(s.quietEndMin ?? 9 * 60);
+  const ci = s.claudeMinIntervalSecs ?? 90;
+  setRangeIfIdle(inpClaudeInterval, ci);
+  valClaudeInterval.textContent = ci % 60 ? `${Math.floor(ci / 60)} 分 ${ci % 60} 秒` : `${ci / 60} 分鐘`;
+  if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
+
   setRangeIfIdle(inpUiScale, s.uiScale ?? 90);
   valUiScale.textContent = `${s.uiScale ?? 90}%`;
   inpShowPicks.checked = s.showPicks !== false;
@@ -378,6 +522,87 @@ function syncSettingsForm(s: AppSettings) {
     seg.style.setProperty("--i", String(idx));
   });
   applyDisplay(s);
+}
+
+function minToTime(m: number): string {
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+function timeToMin(v: string): number {
+  const [h, m] = v.split(":").map(Number);
+  return ((h || 0) * 60 + (m || 0)) % 1440;
+}
+
+function hotkeyLabel(hk: string): string {
+  if (!hk) return `<span class="hk-off">未設定</span>`;
+  return hk
+    .split("+")
+    .map((k) => `<kbd>${escapeHtml(k === "Super" ? "Win" : k)}</kbd>`)
+    .join("");
+}
+
+// ------------------------------------------------------------ account settings
+
+function setPref(id: string, patch: Partial<AccountPref>) {
+  const prefs = { ...(cfg().accountPrefs ?? {}) };
+  prefs[id] = { ...(prefs[id] ?? {}), ...patch };
+  commitSettings({ accountPrefs: prefs }, true);
+}
+
+function accSettingRow(acc: AccountQuota): string {
+  const s = cfg();
+  const p = prefOf(acc.id);
+  const open = expandedAcc === acc.id;
+  const tags = [providerLabel(acc.provider)];
+  if (p.alias?.trim()) tags.push(`原名 ${acc.name}`);
+  if (p.hidden) tags.push("已隱藏");
+  else if (p.excludeScore) tags.push("不計分");
+  if (p.notifyThreshold != null) tags.push(`警戒 ${p.notifyThreshold}%`);
+  const thOpts = [
+    `<option value="">跟隨全域（${s.notifyLowThreshold}%）</option>`,
+    ...[5, 10, 15, 20, 25, 30, 40, 50].map(
+      (v) => `<option value="${v}" ${p.notifyThreshold === v ? "selected" : ""}>${v}%</option>`,
+    ),
+  ].join("");
+  const body = open
+    ? `
+      <div class="acc-set-body">
+        <div class="row"><span>顯示名稱</span><input class="text-input" data-f="alias" maxlength="40" placeholder="${escapeHtml(acc.name)}" value="${escapeHtml(p.alias ?? "")}" /></div>
+        <label class="row"><span>在額度頁顯示</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
+        <label class="row ${p.hidden ? "disabled" : ""}"><span>計入總分與心情</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
+        <div class="row"><span>低額度警戒線</span><select class="select" data-f="th">${thOpts}</select></div>
+      </div>`
+    : "";
+  return `
+    <div class="acc-set ${open ? "open" : ""} ${p.hidden ? "is-hidden" : ""}" data-id="${escapeHtml(acc.id)}">
+      <div class="row acc-set-head" data-act="toggle">
+        <span class="grip" title="拖曳排序"><svg><use href="#i-grip" /></svg></span>
+        <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
+        <div class="row-main">
+          <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span>${p.hidden ? `<svg class="tag-ico"><use href="#i-eye-off" /></svg>` : ""}</div>
+          <span class="row-sub">${escapeHtml(tags.join(" · "))}</span>
+        </div>
+        <svg class="chev"><use href="#i-chev" /></svg>
+      </div>${body}
+    </div>`;
+}
+
+function renderAccountSettings(accounts: AccountQuota[]) {
+  const s = cfg();
+  const accs = orderedAccounts(accounts);
+  const sig = JSON.stringify([
+    accs.map((a) => [a.id, a.name, a.provider]),
+    s.accountPrefs ?? {},
+    expandedAcc,
+    s.notifyLowThreshold,
+  ]);
+  if (sig === accSettingsSig) return;
+  const active = document.activeElement as HTMLElement | null;
+  if (active && accSettingsEl.contains(active) && active.classList.contains("text-input")) return; // typing
+  accSettingsSig = sig;
+  accSettingsEl.innerHTML = accs.length
+    ? accs.map(accSettingRow).join("")
+    : `<div class="empty">尚未偵測到帳號</div>`;
 }
 
 function applyDisplay(s: AppSettings) {
@@ -417,6 +642,8 @@ function commitSettings(patch: Partial<AppSettings>, immediate = false) {
 function setSettingsVisible(show: boolean) {
   showingSettings = show;
   shell.classList.toggle("show-settings", show);
+  if (show) void showHotkeyStatus();
+  else if (recordingHotkey) stopRecording();
 }
 btnSettings.addEventListener("click", () => setSettingsVisible(!showingSettings));
 btnBack.addEventListener("click", () => setSettingsVisible(false));
@@ -497,6 +724,181 @@ inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpSho
 inpPetEffects.addEventListener("change", () => commitSettings({ petEffects: inpPetEffects.checked }, true));
 
 inpNotify.addEventListener("change", () => commitSettings({ notifyEnabled: inpNotify.checked }, true));
+inpNotifyReset.addEventListener("change", () => commitSettings({ notifyOnReset: inpNotifyReset.checked }, true));
+inpQuiet.addEventListener("change", () => commitSettings({ quietHoursEnabled: inpQuiet.checked }, true));
+inpQuietStart.addEventListener("change", () => commitSettings({ quietStartMin: timeToMin(inpQuietStart.value) }, true));
+inpQuietEnd.addEventListener("change", () => commitSettings({ quietEndMin: timeToMin(inpQuietEnd.value) }, true));
+inpClaudeInterval.addEventListener("input", () =>
+  commitSettings({ claudeMinIntervalSecs: Number(inpClaudeInterval.value) }),
+);
+inpPetOpacity.addEventListener("input", () => commitSettings({ petOpacity: Number(inpPetOpacity.value) }));
+inpPetIdleFade.addEventListener("change", () => commitSettings({ petIdleFade: inpPetIdleFade.checked }, true));
+inpPetSnap.addEventListener("change", () => commitSettings({ petSnapEdge: inpPetSnap.checked }, true));
+inpCompact.addEventListener("change", () => commitSettings({ compactAccounts: inpCompact.checked }, true));
+inpShowHistory.addEventListener("change", () => {
+  commitSettings({ showHistory: inpShowHistory.checked }, true);
+  if (inpShowHistory.checked) void refreshHistory(true);
+});
+selPanelPos.addEventListener("change", () =>
+  commitSettings({ panelPosition: selPanelPos.value as PanelPosition }, true),
+);
+
+// ---- hotkey recorder
+async function showHotkeyStatus() {
+  try {
+    const err = await invoke<string | null>("hotkey_status");
+    hotkeyHint.textContent = err ?? HOTKEY_HINT;
+    hotkeyHint.classList.toggle("error", !!err);
+  } catch {
+    hotkeyHint.textContent = HOTKEY_HINT;
+  }
+}
+
+function stopRecording() {
+  recordingHotkey = false;
+  btnHotkey.classList.remove("recording");
+  btnHotkey.innerHTML = hotkeyLabel(cfg().hotkey ?? "");
+}
+
+function saveHotkey(hk: string) {
+  stopRecording();
+  commitSettings({ hotkey: hk }, true);
+  btnHotkey.innerHTML = hotkeyLabel(hk);
+  window.setTimeout(() => void showHotkeyStatus(), 400);
+}
+
+/** KeyboardEvent → "Ctrl+Alt+Q"; null = only modifiers so far; "" = missing modifier. */
+function comboFromEvent(e: KeyboardEvent): string | null {
+  const code = e.code;
+  if (/^(Control|Alt|Shift|Meta|OS)/.test(code) || !code) return null;
+  const mods: string[] = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Super");
+  let key = code;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit\d$/.test(code)) key = code.slice(5);
+  else if (code.startsWith("Arrow")) key = code.slice(5);
+  const isFn = /^F\d{1,2}$/.test(key);
+  if (!mods.length && !isFn) return "";
+  return [...mods, key].join("+");
+}
+
+btnHotkey.addEventListener("click", () => {
+  if (recordingHotkey) return stopRecording();
+  recordingHotkey = true;
+  btnHotkey.classList.add("recording");
+  btnHotkey.textContent = "按下組合鍵…";
+  hotkeyHint.textContent = HOTKEY_HINT;
+  hotkeyHint.classList.remove("error");
+});
+btnHotkey.addEventListener("blur", () => recordingHotkey && stopRecording());
+btnHotkeyClear.addEventListener("click", () => saveHotkey(""));
+
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (!recordingHotkey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const plain = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
+    if (plain && e.key === "Escape") return stopRecording();
+    if (plain && (e.key === "Backspace" || e.key === "Delete")) return saveHotkey("");
+    const combo = comboFromEvent(e);
+    if (combo === null) {
+      btnHotkey.textContent = "按下組合鍵…";
+      return;
+    }
+    if (combo === "") {
+      hotkeyHint.textContent = "需要搭配 Ctrl / Alt / Shift / Win（F1～F12 除外）";
+      hotkeyHint.classList.add("error");
+      return;
+    }
+    saveHotkey(combo);
+  },
+  true,
+);
+
+// ---- account settings: expand / edit / drag-sort
+accSettingsEl.addEventListener("click", (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest(".grip")) return;
+  const head = t.closest<HTMLElement>("[data-act='toggle']");
+  if (!head) return;
+  const id = head.closest<HTMLElement>(".acc-set")!.dataset.id!;
+  expandedAcc = expandedAcc === id ? null : id;
+  accSettingsSig = "";
+  if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
+});
+
+accSettingsEl.addEventListener("change", (e) => {
+  const el = e.target as HTMLInputElement | HTMLSelectElement;
+  const f = el.dataset.f;
+  const id = el.closest<HTMLElement>(".acc-set")?.dataset.id;
+  if (!f || !id) return;
+  if (f === "alias") setPref(id, { alias: el.value.trim() || null });
+  else if (f === "visible") setPref(id, { hidden: !(el as HTMLInputElement).checked });
+  else if (f === "score") setPref(id, { excludeScore: !(el as HTMLInputElement).checked });
+  else if (f === "th") setPref(id, { notifyThreshold: el.value ? Number(el.value) : null });
+});
+
+accSettingsEl.addEventListener("keydown", (e) => {
+  const t = e.target as HTMLElement;
+  if (t.classList.contains("text-input") && e.key === "Enter") t.blur();
+});
+
+let drag: { id: string; target: string | null; after: boolean } | null = null;
+
+function clearDropMarks() {
+  accSettingsEl
+    .querySelectorAll(".drop-before, .drop-after, .dragging")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after", "dragging"));
+}
+
+// Coordinate-free: the row under the pointer (browser hit-test) takes the dragged
+// row's slot. Avoids clientY vs. rect mismatches under the font-size `zoom`.
+accSettingsEl.addEventListener("pointerdown", (e) => {
+  const grip = (e.target as HTMLElement).closest<HTMLElement>(".grip");
+  if (!grip || e.button !== 0) return;
+  const row = grip.closest<HTMLElement>(".acc-set")!;
+  e.preventDefault();
+  drag = { id: row.dataset.id!, target: null, after: false };
+  row.classList.add("dragging");
+  accSettingsEl.classList.add("sorting");
+});
+
+accSettingsEl.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const row = (e.target as HTMLElement).closest<HTMLElement>(".acc-set");
+  if (!row) return;
+  const rows = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set"));
+  const from = rows.findIndex((r) => r.dataset.id === drag!.id);
+  const to = rows.indexOf(row);
+  accSettingsEl.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
+  drag.target = row.dataset.id!;
+  drag.after = to > from;
+  if (to !== from) row.classList.add(drag.after ? "drop-after" : "drop-before");
+});
+
+function endDrag() {
+  if (!drag) return;
+  const { id, target, after } = drag;
+  drag = null;
+  clearDropMarks();
+  accSettingsEl.classList.remove("sorting");
+  if (!target || target === id || !currentSnapshot) return;
+  const ids = orderedAccounts(currentSnapshot.accounts).map((a) => a.id).filter((x) => x !== id);
+  const at = ids.indexOf(target) + (after ? 1 : 0);
+  ids.splice(at, 0, id);
+  commitSettings({ accountOrder: ids }, true);
+}
+window.addEventListener("pointerup", endDrag);
+window.addEventListener("pointercancel", () => {
+  drag = null;
+  clearDropMarks();
+  accSettingsEl.classList.remove("sorting");
+});
 inpNotifyTh.addEventListener("input", () => commitSettings({ notifyLowThreshold: Number(inpNotifyTh.value) }));
 inpRefreshSec.addEventListener("input", () => commitSettings({ refreshIntervalSecs: Number(inpRefreshSec.value) }));
 inpAgExtra.addEventListener("change", () => commitSettings({ showAntigravityExtra: inpAgExtra.checked }, true));

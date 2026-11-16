@@ -29,6 +29,16 @@ export interface SmartPick {
   reason: string;
 }
 
+export interface AccountPref {
+  alias?: string | null;
+  hidden?: boolean;
+  excludeScore?: boolean;
+  /** Per-account low-quota alert line; null = use the global one. */
+  notifyThreshold?: number | null;
+}
+
+export type PanelPosition = "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";
+
 export type PetTheme = "hud_gauge" | "desk_cat" | "custom";
 
 export interface AppSettings {
@@ -53,6 +63,27 @@ export interface AppSettings {
   resetFormat?: "absolute" | "relative";
   showPicks?: boolean;
   petEffects?: boolean;
+  // accounts
+  accountPrefs?: Record<string, AccountPref>;
+  accountOrder?: string[];
+  // notifications
+  notifyOnReset?: boolean;
+  quietHoursEnabled?: boolean;
+  quietStartMin?: number;
+  quietEndMin?: number;
+  // pet
+  petAnimSpeed?: "slow" | "normal" | "fast";
+  petOpacity?: number;
+  petIdleFade?: boolean;
+  petClickAction?: "single" | "double";
+  petSnapEdge?: boolean;
+  // panel
+  panelPosition?: PanelPosition;
+  hotkey?: string;
+  compactAccounts?: boolean;
+  showHistory?: boolean;
+  // data
+  claudeMinIntervalSecs?: number;
 }
 
 export interface DashboardSnapshot {

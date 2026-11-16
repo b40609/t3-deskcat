@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { renderAvatar } from "./themeRenderer";
+import { animSpeedFactor, renderAvatar } from "./themeRenderer";
 import { getAnimator } from "./museAnimator";
 import type { AppSettings, CatMood, DashboardSnapshot } from "./types";
 
@@ -41,6 +41,26 @@ function syncCanvasSize(logicalSize: number) {
   }
 }
 
+// ---- opacity / idle fade
+let hovering = false;
+let idle = false;
+let idleTimer: number | undefined;
+
+function applyOpacity() {
+  const s = currentSnapshot?.settings ?? defaultSettings;
+  const base = Math.max(0.3, Math.min(1, (s.petOpacity ?? 100) / 100));
+  const faded = !!s.petIdleFade && idle && !hovering;
+  canvas.style.opacity = String(faded ? base * 0.3 : base);
+}
+
+function scheduleIdle(ms: number) {
+  if (idleTimer) window.clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => {
+    idle = true;
+    applyOpacity();
+  }, ms);
+}
+
 function applySnapshot(snap: DashboardSnapshot) {
   currentSnapshot = snap;
   currentMood = snap.mood;
@@ -48,6 +68,7 @@ function applySnapshot(snap: DashboardSnapshot) {
     canvas.title = snap.tooltipText;
   }
   syncCanvasSize(snap.settings.petSize || 64);
+  applyOpacity();
 }
 
 // Animation loop: requestAnimationFrame, capped at ~50 fps to stay light on CPU
@@ -56,9 +77,9 @@ function frame(now: number) {
   requestAnimationFrame(frame);
   if (now - lastFrame < 19) return;
   lastFrame = now;
-  tick = (tick + 1) % 10000;
-  const effectiveMood = previewMoodOverride ?? currentMood;
   const settings = currentSnapshot?.settings ?? defaultSettings;
+  tick = (tick + animSpeedFactor(settings)) % 10000;
+  const effectiveMood = previewMoodOverride ?? currentMood;
   const theme = settings.petTheme ?? "hud_gauge";
   const score = currentSnapshot?.overallScore ?? 100;
 
@@ -69,10 +90,19 @@ requestAnimationFrame(frame);
 // Hover: the cat notices you and hops
 let lastHover = 0;
 canvas.addEventListener("pointerenter", () => {
+  hovering = true;
+  idle = false;
+  if (idleTimer) window.clearTimeout(idleTimer);
+  applyOpacity();
   const now = performance.now();
   if (now - lastHover < 2500) return;
   lastHover = now;
   getAnimator(ctx).poke("hop");
+});
+
+canvas.addEventListener("pointerleave", () => {
+  hovering = false;
+  scheduleIdle(2500);
 });
 
 // Distinguish click (toggle panel) vs drag (>4px native window move)
@@ -80,6 +110,7 @@ let downX = 0;
 let downY = 0;
 let dragging = false;
 let pointerActive = false;
+let lastClickAt = 0;
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
@@ -119,6 +150,15 @@ canvas.addEventListener("pointerup", (e) => {
   dragging = false;
   if (wasClick) {
     getAnimator(ctx).poke("squish");
+    const mode = (currentSnapshot?.settings ?? defaultSettings).petClickAction ?? "single";
+    const now = performance.now();
+    if (mode === "double") {
+      if (now - lastClickAt > 380) {
+        lastClickAt = now;
+        return;
+      }
+      lastClickAt = 0;
+    }
     invoke("toggle_panel").catch(() => {});
   }
 });
@@ -133,6 +173,8 @@ window.addEventListener("resize", () => {
 });
 
 async function init() {
+  canvas.style.transition = "opacity 0.45s ease";
+  scheduleIdle(4000);
   syncCanvasSize(petSize);
   renderAvatar(ctx, canvas.width, "hud_gauge", 100, currentMood, tick, defaultSettings);
 

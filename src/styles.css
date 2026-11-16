@@ -1142,3 +1142,304 @@ label.row:active {
 #view-settings .theme-name {
   font-size: 11.5px;
 }
+
+/* ---------------------------------------------------------------- inputs: select / text / time */
+
+.select,
+.text-input,
+.time-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--label-2);
+  background: transparent;
+  border: 0;
+  outline: none;
+  text-align: right;
+}
+
+.select {
+  appearance: none;
+  padding: 4px 18px 4px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 10l4-4 4 4M8 14l4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 2px center / 13px;
+}
+
+.select:hover {
+  background-color: var(--fill);
+}
+
+.select option {
+  color: var(--label);
+  background: var(--card);
+}
+
+.text-input {
+  min-width: 0;
+  flex: 1;
+  max-width: 170px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  color: var(--label);
+}
+
+.text-input::placeholder {
+  color: var(--label-3);
+}
+
+.text-input:focus {
+  background: var(--fill);
+  text-align: left;
+}
+
+.time-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.time-input {
+  padding: 3px 6px;
+  border-radius: 7px;
+  background: var(--fill);
+  color: var(--label);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
+.time-sep {
+  font-size: 12px;
+  color: var(--label-2);
+}
+
+.row.disabled {
+  opacity: 0.45;
+}
+
+/* ---------------------------------------------------------------- hotkey recorder */
+
+.hotkey-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hotkey {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 26px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--label-2);
+  transition: background 0.15s ease;
+}
+
+.hotkey:hover {
+  background: var(--fill);
+}
+
+.hotkey kbd {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--fill-strong);
+  color: var(--label);
+  text-align: center;
+  box-shadow: 0 1px 0 var(--sep);
+}
+
+.hotkey.recording {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+  animation: hk-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes hk-pulse {
+  50% {
+    background: color-mix(in srgb, var(--blue) 24%, transparent);
+  }
+}
+
+.hk-off {
+  color: var(--label-3);
+}
+
+.hotkey-clear {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 10px;
+  color: var(--label-2);
+  background: var(--fill);
+}
+
+.group-footer.error {
+  color: var(--red);
+}
+
+/* ---------------------------------------------------------------- account settings list */
+
+.acc-set {
+  position: relative;
+}
+
+.acc-set + .acc-set::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 72px;
+  right: 0;
+  border-top: 0.5px solid var(--sep);
+  z-index: 1;
+}
+
+.acc-set-head {
+  cursor: pointer;
+  gap: 8px;
+  padding-left: 6px;
+}
+
+.acc-set-head:active {
+  background: var(--fill);
+}
+
+.acc-set .p-icon {
+  flex: 0 0 auto;
+}
+
+.grip {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: var(--label-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.grip svg {
+  width: 16px;
+  height: 16px;
+}
+
+.grip:active {
+  cursor: grabbing;
+  color: var(--blue);
+}
+
+.chev {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--label-3);
+  stroke-width: 2.6;
+  transition: transform 0.2s ease;
+}
+
+.acc-set.open .chev {
+  transform: rotate(90deg);
+}
+
+.acc-set.is-hidden .acc-set-head .row-main,
+.acc-set.is-hidden .acc-set-head .p-icon {
+  opacity: 0.45;
+}
+
+.tag-ico {
+  width: 13px;
+  height: 13px;
+  margin-left: 5px;
+  color: var(--label-2);
+  flex: 0 0 auto;
+}
+
+.acc-set-body {
+  margin: 0 10px 10px 36px;
+  border-radius: 10px;
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.acc-set-body .row {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.acc-set-body .row + .row::before {
+  left: 12px;
+}
+
+.acc-set.dragging {
+  opacity: 0.55;
+}
+
+.acc-set.drop-before::after,
+.acc-set.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: var(--blue);
+  z-index: 2;
+}
+
+.acc-set.drop-before::after {
+  top: -1px;
+}
+
+.acc-set.drop-after::after {
+  bottom: -1px;
+}
+
+/* ---------------------------------------------------------------- 24h sparkline */
+
+.spark-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.spark {
+  flex: 1;
+  height: 20px;
+  overflow: visible;
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+}
+
+.spark-area {
+  fill: color-mix(in srgb, var(--blue) 14%, transparent);
+  stroke: none;
+}
+
+.spark-cap {
+  font-size: 10px;
+  color: var(--label-3);
+  line-height: 1;
+}
+
+#acc-settings.sorting,
+#acc-settings.sorting * {
+  cursor: grabbing !important;
+  user-select: none;
+}

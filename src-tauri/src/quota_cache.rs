@@ -20,8 +20,6 @@ use std::path::PathBuf;
 
 const BACKOFF_BASE_SECS: i64 = 120;
 const BACKOFF_MAX_SECS: i64 = 1800;
-/// Minimum spacing between Claude usage calls per account, even for manual refreshes.
-pub const CLAUDE_MIN_INTERVAL_SECS: i64 = 90;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Backoff {

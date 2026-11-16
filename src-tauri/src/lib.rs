@@ -1,4 +1,5 @@
 mod discovery;
+mod history;
 mod models;
 mod providers;
 mod quota_cache;
@@ -11,7 +12,7 @@ use crate::models::{
 use crate::providers::{
     antigravity::fetch_antigravity_quota, claude::fetch_claude_quota, codex::fetch_codex_quota,
 };
-use chrono::Utc;
+use chrono::{Local, Timelike, Utc};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,7 +25,9 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_notification::NotificationExt;
-use quota_cache::{QuotaCache, CLAUDE_MIN_INTERVAL_SECS};
+use history::History;
+use quota_cache::QuotaCache;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct InnerState {
     settings: AppSettings,
@@ -36,6 +39,10 @@ struct InnerState {
     last_toggle: Instant,
     tray_id: String,
     cache: QuotaCache,
+    history: History,
+    /// Used-up windows waiting for their reset: key "id|label" -> reset_at.
+    pending_resets: HashMap<String, (i64, String, String)>,
+    hotkey_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -70,18 +77,14 @@ fn update_settings(
     new_settings: AppSettings,
 ) -> Result<DashboardSnapshot, String> {
     let old_startup;
+    let old_hotkey;
     let updated_snapshot;
     {
         let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
         old_startup = guard.settings.launch_at_startup;
+        old_hotkey = guard.settings.hotkey.clone();
         let mut clean = new_settings;
-        clean.pet_size = clean.pet_size.clamp(48, 128);
-        clean.sleeping_threshold = clean.sleeping_threshold.clamp(0, 90);
-        clean.working_threshold = clean
-            .working_threshold
-            .clamp(clean.sleeping_threshold + 1, 99);
-        clean.notify_low_threshold = clean.notify_low_threshold.clamp(1, 90);
-        clean.refresh_interval_secs = clean.refresh_interval_secs.clamp(30, 3600);
+        settings::sanitize(&mut clean);
 
         // Preserve saved pet coordinates if caller passed None
         if clean.pet_x.is_none() {
@@ -132,6 +135,14 @@ fn update_settings(
         };
     }
 
+    let new_hotkey = state.0.lock().map(|g| g.settings.hotkey.clone()).unwrap_or_default();
+    if new_hotkey != old_hotkey {
+        let err = apply_hotkey(&app, &new_hotkey);
+        if let Ok(mut g) = state.0.lock() {
+            g.hotkey_error = err;
+        }
+    }
+
     if let Some(snap) = updated_snapshot {
         sync_tray_tooltip(&app, &state, &snap.tooltip_text);
         let _ = app.emit("snapshot-updated", &snap);
@@ -142,28 +153,60 @@ fn update_settings(
 }
 
 #[tauri::command]
-fn toggle_panel(app: AppHandle, state: tauri::State<SharedState>) -> Result<bool, String> {
-    {
-        let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
-        if guard.last_toggle.elapsed() < Duration::from_millis(160) {
-            return Ok(false);
+fn toggle_panel(app: AppHandle) -> Result<bool, String> {
+    toggle_panel_window(&app).ok_or_else(|| "Panel window missing".to_string())
+}
+
+/// Show (positioned per settings) or hide the panel. Returns the new visibility.
+fn toggle_panel_window(app: &AppHandle) -> Option<bool> {
+    if let Some(state) = app.try_state::<SharedState>() {
+        if let Ok(mut guard) = state.0.lock() {
+            if guard.last_toggle.elapsed() < Duration::from_millis(160) {
+                return Some(false);
+            }
+            guard.last_toggle = Instant::now();
         }
-        guard.last_toggle = Instant::now();
     }
-
-    let Some(panel) = app.get_webview_window("panel") else {
-        return Err("Panel window missing".to_string());
-    };
-
+    let panel = app.get_webview_window("panel")?;
     if panel.is_visible().unwrap_or(false) {
         let _ = panel.hide();
-        Ok(false)
+        Some(false)
     } else {
-        position_panel_near_pet(&app, &panel);
+        position_panel(app, &panel);
         let _ = panel.show();
         let _ = panel.set_focus();
-        Ok(true)
+        Some(true)
     }
+}
+
+/// (Re)register the global shortcut. Returns a user-facing error, if any.
+fn apply_hotkey(app: &AppHandle, combo: &str) -> Option<String> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    if combo.trim().is_empty() {
+        return None;
+    }
+    match combo.parse::<Shortcut>() {
+        Ok(sc) => gs
+            .register(sc)
+            .err()
+            .map(|_| format!("{combo} 無法註冊，可能已被其他程式佔用")),
+        Err(_) => Some(format!("{combo} 不是有效的快捷鍵")),
+    }
+}
+
+#[tauri::command]
+fn hotkey_status(state: tauri::State<SharedState>) -> Option<String> {
+    state.0.lock().ok().and_then(|g| g.hotkey_error.clone())
+}
+
+#[tauri::command]
+fn get_history(state: tauri::State<SharedState>) -> HashMap<String, Vec<(i64, i32)>> {
+    state
+        .0
+        .lock()
+        .map(|g| g.history.samples.clone())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -189,9 +232,34 @@ fn save_pet_position(app: AppHandle, state: tauri::State<SharedState>) {
     let Some(pet) = app.get_webview_window("pet") else {
         return;
     };
-    let Ok(pos) = pet.outer_position() else {
+    let Ok(mut pos) = pet.outer_position() else {
         return;
     };
+    let snap = state.0.lock().map(|g| g.settings.pet_snap_edge).unwrap_or(false);
+    if snap {
+        if let (Ok(Some(mon)), Ok(size)) = (pet.current_monitor(), pet.outer_size()) {
+            let wa = mon.work_area();
+            let th = (28.0 * mon.scale_factor()).round() as i32;
+            let (l, t) = (wa.position.x, wa.position.y);
+            let (r, b) = (l + wa.size.width as i32, t + wa.size.height as i32);
+            let (w, h) = (size.width as i32, size.height as i32);
+            let (mut x, mut y) = (pos.x, pos.y);
+            if (x - l).abs() < th {
+                x = l;
+            } else if (r - (x + w)).abs() < th {
+                x = r - w;
+            }
+            if (y - t).abs() < th {
+                y = t;
+            } else if (b - (y + h)).abs() < th {
+                y = b - h;
+            }
+            if (x, y) != (pos.x, pos.y) {
+                let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+                pos = PhysicalPosition::new(x, y);
+            }
+        }
+    }
     if let Ok(mut guard) = state.0.lock() {
         guard.settings.pet_x = Some(pos.x);
         guard.settings.pet_y = Some(pos.y);
@@ -296,7 +364,10 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         let allowed = state
             .0
             .lock()
-            .map(|g| g.cache.may_fetch(&id, now, CLAUDE_MIN_INTERVAL_SECS))
+            .map(|g| {
+                let min = g.settings.claude_min_interval_secs as i64;
+                g.cache.may_fetch(&id, now, min)
+            })
             .unwrap_or(true);
         if !allowed {
             let placeholder = AccountQuota {
@@ -353,6 +424,12 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
             })
             .collect();
         guard.cache.save();
+
+        for acc in accounts.iter().filter(|a| a.status == "ok") {
+            guard.history.record(&acc.id, now, acc.effective_remaining);
+        }
+        guard.history.prune(now);
+        guard.history.save();
     }
 
     let now = Utc::now().timestamp();
@@ -374,51 +451,98 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         recompute_snapshot_metrics(&mut snap, &cfg);
 
         if cfg.notify_enabled {
-            for acc in &snap.accounts {
+            for acc in snap.accounts.iter().filter(|a| !cfg.is_hidden(&a.id)) {
+                let name = cfg.display_name(acc);
+                let who = format!("{} ({})", acc.provider.short_label(), name);
+
+                // Remember windows that are mostly used, so their reset can be announced
+                // even when the reset happens between fetches (or while rate-limited).
+                if cfg.notify_on_reset && is_usable(acc) {
+                    for w in &acc.primary_windows {
+                        if let (Some(r), true) = (w.reset_at, w.remaining_percent < 50) {
+                            guard
+                                .pending_resets
+                                .insert(format!("{}|{}", acc.id, w.label), (r, acc.id.clone(), w.label.clone()));
+                        }
+                    }
+                }
+
                 if acc.status != "ok" {
-                    continue; // notifications only on fresh data
+                    continue; // threshold alerts only on fresh data
                 }
                 let rem = acc.effective_remaining;
                 let prev = guard.prev_effective.get(&acc.id).copied();
+                let has_reset_times = acc.primary_windows.iter().any(|w| w.reset_at.is_some());
 
-                // Reset / recovery detection
-                if let Some(prev_val) = prev {
-                    if prev_val < 80 && rem >= 98 {
-                        notifications.push((
-                            format!("✨ {} ({}) 額度已重置", acc.provider.short_label(), acc.name),
-                            format!("已恢復至 {rem}%，小貓繼續上工！"),
-                        ));
+                // Fallback reset detection for providers without reset timestamps
+                if cfg.notify_on_reset && !has_reset_times {
+                    if let Some(prev_val) = prev {
+                        if prev_val < 80 && rem >= 98 {
+                            notifications.push((
+                                format!("✨ {who} 額度已恢復"),
+                                format!("已恢復至 {rem}%，小貓繼續上工！"),
+                            ));
+                        }
                     }
                 }
                 guard.prev_effective.insert(acc.id.clone(), rem);
 
-                // Exhausted detection
+                let low = cfg.low_threshold_for(&acc.id);
                 if rem == 0 {
                     if !guard.zero_notified.get(&acc.id).copied().unwrap_or(false) {
                         guard.zero_notified.insert(acc.id.clone(), true);
                         guard.low_notified.insert(acc.id.clone(), true);
                         notifications.push((
-                            format!("😴 {} ({}) 額度已見底", acc.provider.short_label(), acc.name),
-                            "剩餘 0%，請切換推薦帳號或等待重置。".to_string(),
+                            format!("😴 {who} 額度已見底"),
+                            "剩餘 0%，請切換推薦帳號或等待重設。".to_string(),
                         ));
                     }
                 } else {
                     if rem > 10 {
                         guard.zero_notified.insert(acc.id.clone(), false);
                     }
-                    if rem <= cfg.notify_low_threshold {
+                    if rem <= low {
                         if !guard.low_notified.get(&acc.id).copied().unwrap_or(false) {
                             guard.low_notified.insert(acc.id.clone(), true);
                             notifications.push((
-                                format!("⚠️ {} ({}) 額度偏低", acc.provider.short_label(), acc.name),
-                                format!("目前僅剩 {rem}%（警戒線 {}%）。", cfg.notify_low_threshold),
+                                format!("⚠️ {who} 額度偏低"),
+                                format!("目前僅剩 {rem}%（警戒線 {low}%）。"),
                             ));
                         }
-                    } else if rem >= cfg.notify_low_threshold + 10 {
+                    } else if rem >= low + 10 {
                         guard.low_notified.insert(acc.id.clone(), false);
                     }
                 }
             }
+
+            // Announce windows whose reset time has passed.
+            let due: Vec<String> = guard
+                .pending_resets
+                .iter()
+                .filter(|(_, (r, _, _))| *r <= now)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in due {
+                if let Some((_, id, label)) = guard.pending_resets.remove(&key) {
+                    if !cfg.notify_on_reset || cfg.is_hidden(&id) {
+                        continue;
+                    }
+                    if let Some(acc) = snap.accounts.iter().find(|a| a.id == id) {
+                        notifications.push((
+                            format!("✨ {} 的{}已重設", cfg.display_name(acc), window_label_zh(&label)),
+                            format!("{} 額度已恢復，可以繼續使用了。", acc.provider.short_label()),
+                        ));
+                    }
+                }
+            }
+        } else {
+            guard.pending_resets.clear();
+        }
+
+        // Do-not-disturb: drop (not queue) alerts inside quiet hours.
+        let local = Local::now();
+        if cfg.in_quiet_hours(local.hour() * 60 + local.minute()) {
+            notifications.clear();
         }
 
         guard.snapshot = Some(snap.clone());
@@ -435,9 +559,25 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
 }
 
 fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettings) {
-    let picks = compute_picks(&snap.accounts);
-    let tooltip = format_tooltip(&picks, &snap.accounts);
-    let score = compute_overall_score(&snap.accounts, settings.score_mode);
+    // Hidden accounts drop out entirely; aliases replace names in picks / tooltip.
+    let visible: Vec<AccountQuota> = snap
+        .accounts
+        .iter()
+        .filter(|a| !settings.is_hidden(&a.id))
+        .cloned()
+        .map(|mut a| {
+            a.name = settings.display_name(&a);
+            a
+        })
+        .collect();
+    let scored: Vec<AccountQuota> = visible
+        .iter()
+        .filter(|a| settings.counts_in_score(&a.id))
+        .cloned()
+        .collect();
+    let picks = compute_picks(&visible);
+    let tooltip = format_tooltip(&picks, &visible);
+    let score = compute_overall_score(&scored, settings.score_mode);
     let mood = if score == 0 || score < settings.sleeping_threshold {
         CatMood::Sleeping
     } else if score <= settings.working_threshold {
@@ -581,6 +721,24 @@ fn compute_overall_score(accounts: &[AccountQuota], mode: ScoreMode) -> i32 {
     }
 }
 
+fn window_label_zh(label: &str) -> String {
+    let mut parts = label.splitn(2, ' ');
+    let base = parts.next().unwrap_or("");
+    let pool = parts.next().unwrap_or("");
+    let span = match base {
+        "5h" => "5 小時限制".to_string(),
+        "Wk" | "週" => "每週限制".to_string(),
+        "Mo" => "每月限制".to_string(),
+        "Argon" | "3P" => return format!("{base} {}", window_label_zh(pool)),
+        other => other.to_string(),
+    };
+    if pool.is_empty() {
+        span
+    } else {
+        format!("{span}（{pool}）")
+    }
+}
+
 fn sync_tray_tooltip(app: &AppHandle, state: &SharedState, text: &str) {
     let tray_id = state
         .0
@@ -615,6 +773,39 @@ fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
         let y = wa.position.y + wa.size.height as i32 - size_px - margin;
         let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
     }
+}
+
+/// Place the panel according to the "panel position" setting.
+fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
+    let where_ = app
+        .try_state::<SharedState>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.settings.panel_position.clone()))
+        .unwrap_or_else(|| "pet".to_string());
+    if where_ == "pet" {
+        position_panel_near_pet(app, panel);
+        return;
+    }
+    let monitor = app
+        .get_webview_window("pet")
+        .and_then(|p| p.current_monitor().ok().flatten())
+        .or_else(|| panel.primary_monitor().ok().flatten());
+    let (Some(mon), Ok(size)) = (monitor, panel.outer_size()) else {
+        position_panel_near_pet(app, panel);
+        return;
+    };
+    let wa = mon.work_area();
+    let m = (12.0 * mon.scale_factor()).round() as i32;
+    let (l, t) = (wa.position.x, wa.position.y);
+    let (r, b) = (l + wa.size.width as i32, t + wa.size.height as i32);
+    let (w, h) = (size.width as i32, size.height as i32);
+    let (x, y) = match where_.as_str() {
+        "top_left" => (l + m, t + m),
+        "bottom_left" => (l + m, b - h - m),
+        "top_right" => (r - w - m, t + m),
+        "bottom_right" => (r - w - m, b - h - m),
+        _ => (l + (r - l - w) / 2, t + (b - t - h) / 2),
+    };
+    let _ = panel.set_position(Position::Physical(PhysicalPosition::new(x, y)));
 }
 
 fn position_panel_near_pet(app: &AppHandle, panel: &tauri::WebviewWindow) {
@@ -680,6 +871,9 @@ pub fn run() {
         last_toggle: Instant::now() - Duration::from_secs(5),
         tray_id: "main-tray".to_string(),
         cache: QuotaCache::load(),
+        history: History::load(),
+        pending_resets: HashMap::new(),
+        hotkey_error: None,
     })));
 
     tauri::Builder::default()
@@ -688,6 +882,15 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let _ = toggle_panel_window(app);
+                    }
+                })
+                .build(),
+        )
         .manage(shared.clone())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -702,12 +905,18 @@ pub fn run() {
             preview_mood,
             clear_custom_images,
             quit_app,
+            hotkey_status,
+            get_history,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
             position_pet_initial(&handle, &loaded_settings);
+            let hk_err = apply_hotkey(&handle, &loaded_settings.hotkey);
+            if let Ok(mut g) = shared.0.lock() {
+                g.hotkey_error = hk_err;
+            }
             if let Some(ref panel) = app.get_webview_window("panel") {
-                position_panel_near_pet(&handle, panel);
+                position_panel(&handle, panel);
                 let _ = panel.show();
                 let _ = panel.set_focus();
             }
@@ -759,15 +968,7 @@ pub fn run() {
                     let state_c = shared.clone();
                     move |app, event| match event.id.as_ref() {
                         "toggle" => {
-                            if let Some(panel) = app.get_webview_window("panel") {
-                                if panel.is_visible().unwrap_or(false) {
-                                    let _ = panel.hide();
-                                } else {
-                                    position_panel_near_pet(app, &panel);
-                                    let _ = panel.show();
-                                    let _ = panel.set_focus();
-                                }
-                            }
+                            let _ = toggle_panel_window(app);
                         }
                         "refresh" => {
                             let h = app.clone();
@@ -795,16 +996,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
-                        if let Some(panel) = app.get_webview_window("panel") {
-                            if panel.is_visible().unwrap_or(false) {
-                                let _ = panel.hide();
-                            } else {
-                                position_panel_near_pet(app, &panel);
-                                let _ = panel.show();
-                                let _ = panel.set_focus();
-                            }
-                        }
+                        let _ = toggle_panel_window(tray.app_handle());
                     }
                 });
 
@@ -879,6 +1071,46 @@ mod tests {
 
         let tip = format_tooltip(&picks, &accounts);
         assert_eq!(tip, "Claude: Beta 94%｜AG: Delta 88%");
+    }
+
+    #[test]
+    fn hidden_and_excluded_accounts_and_aliases() {
+        use crate::models::AccountPref;
+        let accounts = vec![
+            mock_acc("c1", ProviderKind::Claude, "Alpha", 90),
+            mock_acc("c2", ProviderKind::Claude, "Beta", 40),
+            mock_acc("a1", ProviderKind::Antigravity, "Gamma", 10),
+        ];
+        let mut settings = AppSettings::default();
+        settings.score_mode = ScoreMode::AllAvg;
+        settings
+            .account_prefs
+            .insert("c1".into(), AccountPref { hidden: true, ..Default::default() });
+        settings.account_prefs.insert(
+            "a1".into(),
+            AccountPref { exclude_score: true, alias: Some("Work".into()), ..Default::default() },
+        );
+        let mut snap = DashboardSnapshot {
+            accounts,
+            picks: Vec::new(),
+            overall_score: 0,
+            mood: CatMood::Working,
+            tooltip_text: String::new(),
+            last_refreshed_at: 0,
+            settings: settings.clone(),
+        };
+        recompute_snapshot_metrics(&mut snap, &settings);
+        assert_eq!(snap.overall_score, 40); // only Beta counts
+        assert_eq!(snap.picks[0].account_name, "Beta"); // hidden Alpha not picked
+        assert_eq!(snap.picks[1].account_name, "Work"); // alias, still pickable
+        assert_eq!(snap.accounts.len(), 3); // raw list kept for the settings UI
+    }
+
+    #[test]
+    fn window_labels_in_chinese() {
+        assert_eq!(window_label_zh("5h"), "5 小時限制");
+        assert_eq!(window_label_zh("Wk Sonnet"), "每週限制（Sonnet）");
+        assert_eq!(window_label_zh("Argon 5h"), "Argon 5 小時限制");
     }
 
     #[test]
