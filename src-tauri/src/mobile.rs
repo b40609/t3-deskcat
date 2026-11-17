@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const PAGE: &str = include_str!("mobile.html");
-const ICON: &[u8] = include_bytes!("../icons/128x128@2x.png");
+const ICON: &[u8] = include_bytes!("../icons/touch-icon.png");
 
 /// This PC's Tailscale IPv4 (CGNAT range 100.64.0.0/10), if Tailscale is up.
 pub fn tailscale_ip() -> Option<Ipv4Addr> {
