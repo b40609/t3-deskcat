@@ -326,7 +326,7 @@ function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   const when = mins < 60 ? `${Math.max(1, mins)}m 後` : shortWhen(f.exhaustAt);
   const gap = forecastGap(f);
   const text =
-    `⚠ ${short} ${when} 耗盡`;
+    `⚠ ${short} ${when} 耗盡` + (gap != null ? ` · ${fmtGap(gap)}` : "") + ` · ${f.ratePerHour}%/h`;
   const tip =
     `依近期用量推算，${name} 預計 ${when} 耗盡` +
     (gap != null ? `，早於重設 ${fmtGap(gap)}` : "") +

@@ -190,7 +190,8 @@ function accountHtml(a) {
       : `${d.toDateString() === tmr.toDateString() ? "明天" : "日一二三四五六".split("").map((c) => "週" + c)[d.getDay()]} ${hm}`;
     const gap = f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
     const lv = (gap != null && gap >= 7200) || mins < 60 ? "bad" : "warn";
-    body += `<div class="line ${lv}">⚠ ${n} ${at} 耗盡</div>`;
+    const gs = gap == null ? "" : gap < 3600 ? ` · ${Math.max(1, Math.round(gap / 60))}m` : ` · ${Math.round(gap / 1800) / 2}h`;
+    body += `<div class="line ${lv}">⚠ ${n} ${at} 耗盡${gs} · ${f.ratePerHour}%/h</div>`;
   }
   return `<div class="row ${lastKnown ? "last-known" : ""}">${icon(a.id, a.provider)}
     <div class="main"><div class="title"><span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}</div></div>`;
