@@ -169,7 +169,7 @@ function resetText(resetAt) {
 function windowName(label, provider) {
   const [base, ...rest] = label.split(" ");
   const pool = rest.join(" ");
-  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
+  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base === "3P" ? "Claude/GPT" : base} · ${windowName(pool, provider)}`;
   const b = base === "週" ? "Wk" : base;
   return pool ? `${b} · ${pool}` : b;
 }

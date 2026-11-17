@@ -251,7 +251,7 @@ function formatResetAt(resetAt: number | null): string {
 function windowName(label: string, provider: ProviderKind): string {
   const [base, ...rest] = label.split(" ");
   const pool = rest.join(" ");
-  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
+  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base === "3P" ? "Claude/GPT" : base} · ${windowName(pool, provider)}`;
   return pool ? `${base === "週" ? "Wk" : base} · ${pool}` : base === "週" ? "Wk" : base;
 }
 

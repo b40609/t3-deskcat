@@ -914,7 +914,10 @@ fn window_label_zh(label: &str) -> String {
     let pool = parts.next().unwrap_or("");
     let span = match base {
         "週" => "Wk".to_string(),
-        "Argon" | "3P" => return format!(" {base} {}", window_label_zh(pool).trim_start()),
+        "Argon" | "3P" => {
+            let name = if base == "3P" { "Claude/GPT" } else { base };
+            return format!(" {name} {}", window_label_zh(pool).trim_start());
+        }
         other => other.to_string(),
     };
     if pool.is_empty() {
