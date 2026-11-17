@@ -306,18 +306,30 @@ function fmtGap(secs: number): string {
   return h < 10 ? `${(Math.round(h * 2) / 2).toString()}h` : `${Math.round(h)}h`;
 }
 
+/** "11:18", "明天 11:18", "週四 11:18" (24h, compact). */
+function shortWhen(ts: number): string {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const tmr = new Date(now);
+  tmr.setDate(now.getDate() + 1);
+  return `${d.toDateString() === tmr.toDateString() ? "明天" : WEEKDAYS[d.getDay()]} ${hm}`;
+}
+
 function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   if (!f || cfg().showForecast === false) return "";
   const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
   if (mins < 0) return "";
   const name = escapeHtml(windowName(f.label, provider));
   const short = name.split(" · ")[0];
-  const when = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : formatWhen(f.exhaustAt);
+  const when = mins < 60 ? `${Math.max(1, mins)}m 後` : shortWhen(f.exhaustAt);
   const gap = forecastGap(f);
   const text =
-    gap != null ? `⚠ ${short} 預計 ${when}耗盡（早於重設 ${fmtGap(gap)}）` : `⚠ ${short} 預計 ${when}耗盡`;
+    `⚠ ${short} ${when} 耗盡`;
   const tip =
-    `依近期用量推算，${name} 預計 ${when}耗盡` +
+    `依近期用量推算，${name} 預計 ${when} 耗盡` +
+    (gap != null ? `，早於重設 ${fmtGap(gap)}` : "") +
     (f.resetAt ? `；${formatResetAt(f.resetAt)}` : "") +
     `。消耗速率 ${f.ratePerHour}%/h`;
   return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}">${text}</div>`;
@@ -333,7 +345,7 @@ function fmtTokens(n: number): string {
 function usageHtml(u: UsageToday | undefined): string {
   if (!u || cfg().showUsageStats === false || u.requests === 0) return "";
   const parts = [`今日 ${fmtTokens(u.totalTokens)}`, `${u.requests} 次`];
-  if (u.costUsd != null) parts.push(`約 US$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
+  if (u.costUsd != null) parts.push(`$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
   const tip = [
     `輸入 ${fmtTokens(u.inputTokens)}`,
     `輸出 ${fmtTokens(u.outputTokens)}`,
@@ -362,7 +374,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   const isLastKnown = isExpired && acc.primaryWindows.length > 0;
   const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
-  const extras = forecastHtml(snap.forecasts?.[acc.id], acc.provider) + usageHtml(snap.usageToday?.[acc.id]);
+  const extras = usageHtml(snap.usageToday?.[acc.id]) + forecastHtml(snap.forecasts?.[acc.id], acc.provider);
 
   let body: string;
   let note = "";

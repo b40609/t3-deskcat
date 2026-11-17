@@ -172,21 +172,25 @@ function accountHtml(a) {
     if (lastKnown) note = `<span class="note warn">憑證過期 · ${age(a.updatedAt)}</span>`;
     else if (a.status === "stale") note = `<span class="note">${age(a.updatedAt)}</span>`;
   }
+  const u = a.usage;
+  if (u && u.requests > 0) {
+    const parts = [`今日 ${tokens(u.totalTokens)}`, `${u.requests} 次`];
+    if (u.costUsd != null) parts.push(`$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
+    body += `<div class="line">${parts.join(" · ")}</div>`;
+  }
   const f = a.forecast;
   if (f && f.exhaustAt > nowSec()) {
     const mins = Math.round((f.exhaustAt - nowSec()) / 60);
-    const n = esc(windowName(f.label, a.provider));
-    const at = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : when(f.exhaustAt);
+    const n = esc(windowName(f.label, a.provider).split(" · ")[0]);
+    const d = new Date(f.exhaustAt * 1000), now = new Date(), tmr = new Date(now);
+    tmr.setDate(now.getDate() + 1);
+    const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const at = mins < 60 ? `${Math.max(1, mins)}m 後`
+      : d.toDateString() === now.toDateString() ? hm
+      : `${d.toDateString() === tmr.toDateString() ? "明天" : "日一二三四五六".split("").map((c) => "週" + c)[d.getDay()]} ${hm}`;
     const gap = f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
-    const gs = gap == null ? "" : gap < 3600 ? `${Math.max(1, Math.round(gap / 60))}m` : `${Math.round(gap / 1800) / 2}h`;
     const lv = (gap != null && gap >= 7200) || mins < 60 ? "bad" : "warn";
-    body += `<div class="line ${lv}">⚠ ${n} 預計 ${at}耗盡${gs ? `（早於重設 ${gs}）` : ""}</div>`;
-  }
-  const u = a.usage;
-  if (u && u.requests > 0) {
-    const parts = [`今日 ${tokens(u.totalTokens)} tokens`, `${u.requests} 次`];
-    if (u.costUsd != null) parts.push(`約 ${usd(u.costUsd)}`);
-    body += `<div class="line">${parts.join(" · ")}</div>`;
+    body += `<div class="line ${lv}">⚠ ${n} ${at} 耗盡</div>`;
   }
   return `<div class="row ${lastKnown ? "last-known" : ""}">${icon(a.id, a.provider)}
     <div class="main"><div class="title"><span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}</div></div>`;
