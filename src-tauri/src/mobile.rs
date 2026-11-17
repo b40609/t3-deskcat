@@ -49,6 +49,8 @@ struct MobileAccount {
     error: Option<String>,
     updated_at: i64,
     windows: Vec<MobileWindow>,
+    /// Secondary pools (Antigravity Argon / 3P), always sent for the detail view.
+    extra_windows: Vec<MobileWindow>,
     forecast: Option<Forecast>,
     usage: Option<UsageToday>,
 }
@@ -96,10 +98,8 @@ fn view(snap: &DashboardSnapshot) -> MobileView {
     let accounts: Vec<MobileAccount> = accs
         .into_iter()
         .map(|(_, a)| {
-            let mut windows: Vec<MobileWindow> = a.primary_windows.iter().map(win).collect();
-            if s.show_antigravity_extra {
-                windows.extend(a.extra_windows.iter().map(win));
-            }
+            let windows: Vec<MobileWindow> = a.primary_windows.iter().map(win).collect();
+            let extra_windows: Vec<MobileWindow> = a.extra_windows.iter().map(win).collect();
             MobileAccount {
                 id: a.id.clone(),
                 provider: a.provider,
@@ -109,6 +109,7 @@ fn view(snap: &DashboardSnapshot) -> MobileView {
                 error: a.error.clone(),
                 updated_at: a.updated_at,
                 windows,
+                extra_windows,
                 forecast: s.show_forecast.then(|| snap.forecasts.get(&a.id).cloned()).flatten(),
                 usage: s.show_usage_stats.then(|| snap.usage_today.get(&a.id).cloned()).flatten(),
             }
@@ -260,7 +261,8 @@ mod tests {
         let names: Vec<&str> = v.accounts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["Work", "A"]);
         assert_eq!(v.hidden, 1);
-        assert_eq!(v.accounts[0].windows.len(), 1); // extra pools off by default
+        assert_eq!(v.accounts[0].windows.len(), 1);
+        assert_eq!(v.accounts[0].extra_windows.len(), 1);
         let json = serde_json::to_string(&v).unwrap();
         assert!(!json.contains("base64"));
     }

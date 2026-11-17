@@ -97,8 +97,18 @@ h1 { font-size: 32px; font-weight: 700; letter-spacing: 0.2px; }
 .last-known .rings { opacity: 0.5; }
 .note { font-size: 11px; color: var(--label-3); flex: 0 0 auto; }
 .note.warn { color: var(--orange); }
+.acc.open .more { display: none; }
 .detail { display: none; margin-top: 10px; border-top: 0.5px solid var(--sep); padding-top: 6px; }
 .acc.open .detail { display: block; }
+.wins { padding: 4px 0 8px; border-bottom: 0.5px solid var(--sep); margin-bottom: 4px; }
+.wrow { padding: 5px 0; }
+.wl { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.wl b { font-weight: 600; }
+.wl span { flex: 1; text-align: right; color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.wl i { font-style: normal; font-weight: 700; min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+.bar { height: 5px; border-radius: 3px; background: var(--fill); margin-top: 5px; overflow: hidden; }
+.bar span { display: block; height: 100%; border-radius: 3px; }
+.b-good { background: var(--green); } .b-warn { background: var(--orange); } .b-bad { background: var(--red); }
 .dl { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 13px; }
 .dl span:first-child { color: var(--label-2); }
 .dl span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
@@ -222,7 +232,11 @@ function accountHtml(a) {
   else if (a.status === "cooldown") body = `<div class="status cool">${esc(a.error || "查詢受限，稍後自動重試")}</div>`;
   else if (a.status !== "ok" && a.status !== "stale" && !lastKnown) body = `<div class="status">${esc(a.error || "讀取失敗")}</div>`;
   else {
-    body = a.windows.length ? `<div class="rings">${a.windows.map((w) => miniRing(w, a.provider)).join("")}</div>` : `<div class="status cool">沒有用量資料</div>`;
+    const main = a.windows.filter((w) => !w.label.includes(" "));
+    const ringWins = main.length ? main : a.windows;
+    body = ringWins.length ? `<div class="rings">${ringWins.map((w) => miniRing(w, a.provider)).join("")}</div>` : `<div class="status cool">沒有用量資料</div>`;
+    const more = a.windows.length + (a.extraWindows || []).length - ringWins.length;
+    if (more > 0) note = `<span class="note more">+${more} 項</span>` + note;
     if (lastKnown) note = `<span class="note warn">憑證過期</span>`;
     else if (a.status === "stale" && nowSec() - a.updatedAt >= 600) note = `<span class="note">${age(a.updatedAt)}</span>`;
   }
@@ -231,8 +245,13 @@ function accountHtml(a) {
   const right = fi ? `<span class="fc ${fi.lv}">⚠ ${esc(windowName(a.forecast.label, a.provider).split(" · ")[0])} ${fi.at}</span>` : "";
   const foot = left || right ? `<div class="acc-foot"><span>${left}</span>${right}</div>` : "";
 
+  const allWins = [...a.windows, ...(a.extraWindows || [])];
+  const bars = allWins.map((w) => {
+    const rem = Math.max(0, Math.min(100, w.remainingPercent));
+    return `<div class="wrow"><div class="wl"><b>${esc(windowName(w.label, a.provider))}</b><span>${w.resetAt ? esc(resetText(w.resetAt)) : ""}</span><i class="tone-${tone(rem)}">${rem}%</i></div>
+      <div class="bar"><span class="b-${tone(rem)}" style="width:${rem}%"></span></div></div>`;
+  }).join("");
   const rows = [];
-  for (const w of a.windows) rows.push([windowName(w.label, a.provider), `剩 ${w.remainingPercent}%${w.resetAt ? " · " + resetText(w.resetAt) : ""}`]);
   if (fi) {
     rows.push(["預計耗盡", `${windowName(a.forecast.label, a.provider)} · ${fi.at}`, true]);
     if (fi.gap != null) rows.push(["早於重設", gapText(fi.gap), true]);
@@ -243,7 +262,7 @@ function accountHtml(a) {
     if (u.costUsd != null) rows.push(["API 牌價估算", money(u.costUsd)]);
   }
   if (a.updatedAt) rows.push(["資料時間", age(a.updatedAt)]);
-  const detail = `<div class="detail">${rows.map(([k, v, al]) => `<div class="dl ${al ? "alert fc " + fi.lv : ""}"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>`;
+  const detail = `<div class="detail">${bars ? `<div class="wins">${bars}</div>` : ""}${rows.map(([k, v, al]) => `<div class="dl ${al ? "alert fc " + fi.lv : ""}"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>`;
 
   return `<div class="card acc ${fi ? "lv-" + fi.lv : ""} ${lastKnown ? "last-known" : ""} ${open.has(a.id) ? "open" : ""}" data-id="${esc(a.id)}">
     <div class="acc-head">${icon(a.id, a.provider)}<span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}${foot}${detail}</div>`;

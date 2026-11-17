@@ -147,6 +147,8 @@ pub async fn fetch_claude_quota(
     if let Some(w) = parse_window("Wk Opus", body.get("seven_day_opus")) {
         windows.push(w);
     }
+    // Newer per-model limits ("Fable" weekly, ...) come in the `limits` array.
+    windows.extend(scoped_limits(&body, &windows));
 
     AccountQuota {
         id,
@@ -160,6 +162,42 @@ pub async fn fetch_claude_quota(
         error: None,
         updated_at: now,
     }
+}
+
+/// Model-scoped entries of `limits`: `{kind, group, percent (used), resets_at,
+/// scope.model.display_name}` -> "Wk Fable" / "5h Fable".
+fn scoped_limits(body: &Value, existing: &[QuotaWindow]) -> Vec<QuotaWindow> {
+    let mut out: Vec<QuotaWindow> = Vec::new();
+    for l in body.get("limits").and_then(Value::as_array).into_iter().flatten() {
+        let Some(model) = l
+            .pointer("/scope/model/display_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        else {
+            continue;
+        };
+        let Some(used) = l.get("percent").and_then(Value::as_f64) else { continue };
+        let span = match l.get("group").and_then(Value::as_str) {
+            Some("session") => "5h",
+            _ => "Wk",
+        };
+        let label = format!("{span} {model}");
+        if existing.iter().chain(out.iter()).any(|w| w.label == label) {
+            continue;
+        }
+        let reset_at = l
+            .get("resets_at")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.timestamp());
+        out.push(QuotaWindow {
+            label,
+            remaining_percent: (100.0 - used).round().clamp(0.0, 100.0) as i32,
+            reset_at,
+        });
+    }
+    out
 }
 
 fn parse_window(label: &str, block: Option<&Value>) -> Option<QuotaWindow> {
@@ -234,5 +272,25 @@ mod tests {
         assert!(token_expired(&serde_json::json!({"expiresAt": (now - 1) * 1000}), now));
         assert!(!token_expired(&serde_json::json!({"expiresAt": (now + 60) * 1000}), now));
         assert!(!token_expired(&serde_json::json!({}), now));
+    }
+}
+
+#[cfg(test)]
+mod scoped_tests {
+    use super::*;
+
+    #[test]
+    fn model_scoped_limits() {
+        let body = serde_json::json!({"limits": [
+            {"group": "session", "kind": "session", "percent": 39, "scope": null},
+            {"group": "weekly", "kind": "weekly_scoped", "percent": 78,
+             "resets_at": "2026-11-18T04:59:59.779999+08:00",
+             "scope": {"model": {"display_name": "Fable", "id": null}}}
+        ]});
+        let w = scoped_limits(&body, &[]);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].label, "Wk Fable");
+        assert_eq!(w[0].remaining_percent, 22);
+        assert!(w[0].reset_at.is_some());
     }
 }
