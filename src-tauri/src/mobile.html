@@ -33,73 +33,104 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   background: var(--bg); color: var(--label);
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica Neue", sans-serif;
-  padding: calc(env(safe-area-inset-top) + 8px) max(16px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 24px) max(16px, env(safe-area-inset-left));
-  -webkit-tap-highlight-color: transparent;
+  padding: calc(env(safe-area-inset-top) + 8px) max(14px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 24px) max(14px, env(safe-area-inset-left));
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
 }
-header { display: flex; align-items: flex-end; justify-content: space-between; margin: 8px 4px 14px; }
-h1 { font-size: 30px; font-weight: 700; letter-spacing: 0.2px; }
-#summary { font-size: 13px; color: var(--label-2); text-align: right; font-variant-numeric: tabular-nums; }
-.group-header { font-size: 13px; color: var(--label-2); margin: 18px 16px 6px; display: flex; justify-content: space-between; }
-.list { background: var(--card); border-radius: 12px; overflow: hidden; }
-.row { display: flex; gap: 12px; padding: 12px 16px; align-items: flex-start; position: relative; }
-.row + .row::before { content: ""; position: absolute; top: 0; left: 60px; right: 0; height: 0.5px; background: var(--sep); }
-.icon { flex: 0 0 32px; height: 32px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 15px; display: grid; place-items: center; }
-.icon.claude { background: var(--claude); } .icon.antigravity { background: var(--ag); } .icon.codex { background: var(--codex); }
-.main { flex: 1; min-width: 0; }
-.title { display: flex; align-items: center; gap: 6px; min-height: 32px; }
-.name { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plan { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: var(--fill); color: var(--label-2); }
-.note { margin-left: auto; font-size: 12px; color: var(--label-3); white-space: nowrap; }
-.note.warn { color: var(--orange); }
-.sub { font-size: 13px; color: var(--label-2); }
-.sub.soon { color: var(--orange); }
-.pct { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; align-self: center; }
-.pct small { font-size: 13px; }
-.pct .cap { font-size: 11px; color: var(--label-2); margin-right: 3px; font-weight: 400; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 4px 12px; }
+h1 { font-size: 32px; font-weight: 700; letter-spacing: 0.2px; }
+#updated { font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.card { background: var(--card); border-radius: 18px; }
+.sec { font-size: 13px; font-weight: 600; color: var(--label-2); margin: 20px 6px 8px; display: flex; justify-content: space-between; }
+.sec span:last-child { font-weight: 400; }
 .tone-good { color: var(--green); } .tone-warn { color: var(--orange); } .tone-bad { color: var(--red); }
-.win { margin-top: 8px; }
-.win-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
-.win-name { font-weight: 500; }
-.win-meta { color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.win-meta b { color: var(--label); font-weight: 600; margin-left: 8px; }
-.bar { height: 6px; border-radius: 3px; background: var(--fill); margin-top: 5px; overflow: hidden; }
-.bar span { display: block; height: 100%; border-radius: 3px; }
-.bar .good { background: var(--green); } .bar .warn { background: var(--orange); } .bar .bad { background: var(--red); }
-.bar .used-good { background: var(--blue); } .bar .used-warn { background: var(--blue); } .bar .used-bad { background: var(--red); }
-.last-known .win { opacity: 0.5; }
-.line { margin-top: 6px; font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
-.line.warn { color: var(--orange); font-weight: 500; }
+.s-good { stroke: var(--green); } .s-warn { stroke: var(--orange); } .s-bad { stroke: var(--red); } .s-used { stroke: var(--blue); }
+.ring { display: block; transform: rotate(-90deg); }
+.ring .track { stroke: var(--fill); }
+.ring-wrap { position: relative; display: grid; place-items: center; }
+.ring-wrap .ring-txt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.ring-txt .cap { font-size: 11px; color: var(--label-2); font-weight: 500; margin-top: 2px; }
+
+/* hero */
+.hero { display: flex; align-items: center; gap: 20px; padding: 18px 20px; }
+.hero .ring-txt { font-size: 32px; }
+.hero .ring-txt small { font-size: 15px; font-weight: 600; }
+.stats { flex: 1; display: grid; gap: 12px; }
+.stat { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; color: var(--label-2); }
+.stat b { font-size: 20px; color: var(--label); font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat b.tone-bad { color: var(--red); } .stat b.tone-warn { color: var(--orange); }
+
+/* picks */
+.picks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.pick { padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
+.pick .pn { flex: 1; min-width: 0; }
+.pick .pn b { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick .pn span { font-size: 12px; color: var(--label-2); }
+.pick .pn span.soon { color: var(--orange); }
+.pick .big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pick .big small { font-size: 13px; }
+
+/* accounts */
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; grid-auto-flow: row dense; }
+.acc { padding: 12px; position: relative; border: 1.5px solid transparent; transition: transform .15s; cursor: pointer; }
+.acc:active { transform: scale(0.98); }
+.acc.lv-warn { border-color: color-mix(in srgb, var(--orange) 55%, transparent); }
+.acc.lv-bad { border-color: color-mix(in srgb, var(--red) 60%, transparent); background: color-mix(in srgb, var(--red) 7%, var(--card)); }
+.acc.open { grid-column: 1 / -1; }
+.acc-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.acc-head .name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.plan { font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 5px; background: var(--fill); color: var(--label-2); flex: 0 0 auto; }
+.icon { flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; color: #fff; font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.icon.claude { background: var(--claude); } .icon.antigravity { background: var(--ag); } .icon.codex { background: var(--codex); }
 .icon.has-img { background: none; overflow: hidden; }
 .icon.has-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.line.bad { color: var(--red); font-weight: 600; }
-.status { margin-top: 4px; font-size: 13px; color: var(--red); }
+.rings { display: flex; justify-content: space-around; margin: 12px 0 4px; gap: 6px; flex-wrap: wrap; }
+.mini { display: grid; justify-items: center; gap: 3px; min-width: 58px; }
+.mini .ring-txt { font-size: 15px; }
+.mini .ring-txt small { font-size: 9px; }
+.mini .lbl { font-size: 12px; font-weight: 600; }
+.mini .rst { font-size: 11px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.acc-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; color: var(--label-2); margin-top: 6px; font-variant-numeric: tabular-nums; min-height: 16px; white-space: nowrap; }
+.acc-foot .fc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.fc.warn { color: var(--orange); } .fc.bad { color: var(--red); }
+.status { margin-top: 10px; font-size: 13px; color: var(--red); }
 .status.cool { color: var(--orange); }
-.notice { margin: 0 0 4px; padding: 10px 14px; border-radius: 12px; font-size: 14px; background: color-mix(in srgb, var(--orange) 16%, transparent); }
-.foot { text-align: center; font-size: 12px; color: var(--label-3); margin-top: 18px; line-height: 1.6; }
-.empty { padding: 28px 16px; text-align: center; color: var(--label-2); }
-.hidden { display: none; }
+.last-known .rings { opacity: 0.5; }
+.note { font-size: 11px; color: var(--label-3); flex: 0 0 auto; }
+.note.warn { color: var(--orange); }
+.detail { display: none; margin-top: 10px; border-top: 0.5px solid var(--sep); padding-top: 6px; }
+.acc.open .detail { display: block; }
+.dl { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 13px; }
+.dl span:first-child { color: var(--label-2); }
+.dl span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
+.dl.alert span:last-child { font-weight: 600; }
+.notice { margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; font-size: 14px; background: color-mix(in srgb, var(--orange) 16%, transparent); }
+.foot { text-align: center; font-size: 12px; color: var(--label-3); margin-top: 20px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--label-2); grid-column: 1 / -1; }
+.hidden { display: none !important; }
 </style>
 </head>
 <body>
 <header>
   <h1>額度</h1>
-  <div id="summary"></div>
+  <span id="updated"></span>
 </header>
 <div id="notice" class="notice hidden"></div>
+<div class="card hero" id="hero"></div>
 <section id="sec-picks" class="hidden">
-  <div class="group-header"><span>推薦使用</span></div>
-  <div class="list" id="picks"></div>
+  <div class="sec"><span>推薦使用</span></div>
+  <div class="picks" id="picks"></div>
 </section>
 <section>
-  <div class="group-header"><span>所有帳號</span><span id="count"></span></div>
-  <div class="list" id="accounts"><div class="empty">載入中…</div></div>
+  <div class="sec"><span>所有帳號</span><span id="count"></span></div>
+  <div class="grid" id="accounts"><div class="empty">載入中…</div></div>
 </section>
-<div class="foot" id="foot"></div>
+<div class="foot">點卡片看明細</div>
 <script>
 "use strict";
 let data = null;
 let fetchedAt = 0;
 let lastError = null;
+const open = new Set();
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const nowSec = () => Date.now() / 1000;
@@ -120,14 +151,8 @@ function resetText(resetAt) {
   if (!resetAt) return "";
   const diff = resetAt - nowSec();
   if (diff <= 0) return "即將重設";
-  if (data.resetFormat === "relative") {
-    const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
-    if (h >= 24) return `${Math.floor(h / 24)} 天 ${h % 24} 小時後重設`;
-    if (h > 0) return `${h} 小時 ${m} 分後重設`;
-    return `${Math.max(1, m)} 分鐘後重設`;
-  }
   const d = new Date(resetAt * 1000), now = new Date();
-  if (d.toDateString() === now.toDateString()) return `於 ${timeOf(d)} 重設`;
+  if (d.toDateString() === now.toDateString()) return `${timeOf(d)} 重設`;
   if (diff < 6.5 * 86400) return `${when(resetAt)} 重設`;
   return `${d.getMonth() + 1}/${d.getDate()} ${timeOf(d)} 重設`;
 }
@@ -145,56 +170,83 @@ function age(ts) {
 function tokens(n) {
   return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
 }
-function usd(v) { return `US$${v < 10 ? v.toFixed(2) : v.toFixed(1)}`; }
+function money(v) { return `$${v < 10 ? v.toFixed(2) : v.toFixed(1)}`; }
 
-function windowHtml(w, provider) {
+function ring(pct, size, stroke, cls) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, v = Math.max(0, Math.min(100, pct));
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle class="track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}"/>
+    <circle class="${cls}" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}" stroke-linecap="round"
+      stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${(c * (1 - v / 100)).toFixed(2)}"/></svg>`;
+}
+function shortDur(secs) {
+  if (secs <= 0) return "即將重設";
+  const m = Math.floor(secs / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `${d}d ${h % 24}h`;
+  if (h >= 1) return `${h}h ${m % 60}m`;
+  return `${Math.max(1, m)}m`;
+}
+function hm(ts) {
+  const d = new Date(ts * 1000), now = new Date(), tmr = new Date(now);
+  tmr.setDate(now.getDate() + 1);
+  const t = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return t;
+  return `${d.toDateString() === tmr.toDateString() ? "明天" : WEEKDAYS[d.getDay()]} ${t}`;
+}
+function fcInfo(f) {
+  if (!f || f.exhaustAt <= nowSec()) return null;
+  const mins = (f.exhaustAt - nowSec()) / 60;
+  const gap = f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
+  const lv = (gap != null && gap >= 7200) || mins < 60 ? "bad" : "warn";
+  return { lv, at: mins < 60 ? `${Math.max(1, Math.round(mins))}m 後` : hm(f.exhaustAt), gap };
+}
+function gapText(g) { return g < 3600 ? `${Math.max(1, Math.round(g / 60))}m` : `${Math.round(g / 1800) / 2}h`; }
+
+function miniRing(w, provider) {
   const used = data.usageDisplay === "used";
   const rem = Math.max(0, Math.min(100, w.remainingPercent));
   const val = used ? 100 - rem : rem;
   const t = tone(rem);
-  return `<div class="win"><div class="win-line"><span class="win-name">${esc(windowName(w.label, provider))}</span>
-    <span class="win-meta">${resetText(w.resetAt)}<b>${val}%</b></span></div>
-    <div class="bar"><span class="${used ? "used-" + t : t}" style="width:${val}%"></span></div></div>`;
+  const cls = used && t !== "bad" ? "s-used" : `s-${t}`;
+  const lbl = windowName(w.label, provider);
+  return `<div class="mini"><div class="ring-wrap">${ring(val, 58, 6, cls)}<span class="ring-txt"><span>${val}<small>%</small></span></span></div>
+    <span class="lbl">${esc(lbl.length > 10 ? lbl.split(" · ")[0] : lbl)}</span><span class="rst">${w.resetAt ? shortDur(w.resetAt - nowSec()) : ""}</span></div>`;
 }
 
 function accountHtml(a) {
   const lastKnown = a.status === "expired" && a.windows.length > 0;
   const plan = a.plan ? `<span class="plan">${esc(a.plan)}</span>` : "";
+  const fi = fcInfo(a.forecast);
   let note = "", body = "";
-  if (a.status === "expired" && !lastKnown) {
-    body = `<div class="status">${esc(a.error || "授權已過期，請在 T3 重新登入")}</div>`;
-  } else if (a.status === "cooldown") {
-    body = `<div class="status cool">${esc(a.error || "查詢受限，稍後自動重試")}</div>`;
-  } else if (a.status !== "ok" && a.status !== "stale" && !lastKnown) {
-    body = `<div class="status">${esc(a.error || "讀取失敗")}</div>`;
-  } else {
-    body = a.windows.length ? a.windows.map((w) => windowHtml(w, a.provider)).join("") : `<div class="sub">沒有用量資料</div>`;
-    if (lastKnown) note = `<span class="note warn">憑證過期 · ${age(a.updatedAt)}</span>`;
-    else if (a.status === "stale") note = `<span class="note">${age(a.updatedAt)}</span>`;
+  if (a.status === "expired" && !lastKnown) body = `<div class="status">${esc(a.error || "授權已過期，請在 T3 重新登入")}</div>`;
+  else if (a.status === "cooldown") body = `<div class="status cool">${esc(a.error || "查詢受限，稍後自動重試")}</div>`;
+  else if (a.status !== "ok" && a.status !== "stale" && !lastKnown) body = `<div class="status">${esc(a.error || "讀取失敗")}</div>`;
+  else {
+    body = a.windows.length ? `<div class="rings">${a.windows.map((w) => miniRing(w, a.provider)).join("")}</div>` : `<div class="status cool">沒有用量資料</div>`;
+    if (lastKnown) note = `<span class="note warn">憑證過期</span>`;
+    else if (a.status === "stale" && nowSec() - a.updatedAt >= 600) note = `<span class="note">${age(a.updatedAt)}</span>`;
   }
-  const u = a.usage;
-  if (u && u.requests > 0) {
-    const parts = [`今日 ${tokens(u.totalTokens)}`, `${u.requests} 次`];
-    if (u.costUsd != null) parts.push(`$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
-    body += `<div class="line">${parts.join(" · ")}</div>`;
+  const u = a.usage && a.usage.requests > 0 ? a.usage : null;
+  const left = u ? (u.costUsd != null ? money(u.costUsd) : tokens(u.totalTokens)) : "";
+  const right = fi ? `<span class="fc ${fi.lv}">⚠ ${esc(windowName(a.forecast.label, a.provider).split(" · ")[0])} ${fi.at}</span>` : "";
+  const foot = left || right ? `<div class="acc-foot"><span>${left}</span>${right}</div>` : "";
+
+  const rows = [];
+  for (const w of a.windows) rows.push([windowName(w.label, a.provider), `剩 ${w.remainingPercent}%${w.resetAt ? " · " + resetText(w.resetAt) : ""}`]);
+  if (fi) {
+    rows.push(["預計耗盡", `${windowName(a.forecast.label, a.provider)} · ${fi.at}`, true]);
+    if (fi.gap != null) rows.push(["早於重設", gapText(fi.gap), true]);
+    rows.push(["消耗速率", `${a.forecast.ratePerHour}%/h`]);
   }
-  const f = a.forecast;
-  if (f && f.exhaustAt > nowSec()) {
-    const mins = Math.round((f.exhaustAt - nowSec()) / 60);
-    const n = esc(windowName(f.label, a.provider).split(" · ")[0]);
-    const d = new Date(f.exhaustAt * 1000), now = new Date(), tmr = new Date(now);
-    tmr.setDate(now.getDate() + 1);
-    const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
-    const at = mins < 60 ? `${Math.max(1, mins)}m 後`
-      : d.toDateString() === now.toDateString() ? hm
-      : `${d.toDateString() === tmr.toDateString() ? "明天" : "日一二三四五六".split("").map((c) => "週" + c)[d.getDay()]} ${hm}`;
-    const gap = f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
-    const lv = (gap != null && gap >= 7200) || mins < 60 ? "bad" : "warn";
-    const gs = gap == null ? "" : gap < 3600 ? ` · ${Math.max(1, Math.round(gap / 60))}m` : ` · ${Math.round(gap / 1800) / 2}h`;
-    body += `<div class="line ${lv}">⚠ ${n} ${at} 耗盡${gs} · ${f.ratePerHour}%/h</div>`;
+  if (u) {
+    rows.push(["今日用量", `${tokens(u.totalTokens)} tokens · ${u.requests} 次`]);
+    if (u.costUsd != null) rows.push(["API 牌價估算", money(u.costUsd)]);
   }
-  return `<div class="row ${lastKnown ? "last-known" : ""}">${icon(a.id, a.provider)}
-    <div class="main"><div class="title"><span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}</div></div>`;
+  if (a.updatedAt) rows.push(["資料時間", age(a.updatedAt)]);
+  const detail = `<div class="detail">${rows.map(([k, v, al]) => `<div class="dl ${al ? "alert fc " + fi.lv : ""}"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>`;
+
+  return `<div class="card acc ${fi ? "lv-" + fi.lv : ""} ${lastKnown ? "last-known" : ""} ${open.has(a.id) ? "open" : ""}" data-id="${esc(a.id)}">
+    <div class="acc-head">${icon(a.id, a.provider)}<span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}${foot}${detail}</div>`;
 }
 
 function icon(id, provider) {
@@ -207,27 +259,39 @@ function render() {
   if (!data) return;
   const n = $("notice");
   const stale = lastError && nowSec() - fetchedAt > 90;
-  if (stale) { n.textContent = `連不到電腦（${lastError}）。請確認電腦開著、iPhone 的 Tailscale 已連線。`; n.classList.remove("hidden"); }
-  else if (data.offline) { n.textContent = "電腦暫時抓不到最新額度，下面是最後一次成功取得的數字。"; n.classList.remove("hidden"); }
+  if (stale) { n.textContent = `連不到電腦（${lastError}）。請確認電腦開著、Tailscale 已連線。`; n.classList.remove("hidden"); }
+  else if (data.offline) { n.textContent = "電腦暫時抓不到最新額度，顯示的是最後一次取得的數字。"; n.classList.remove("hidden"); }
   else n.classList.add("hidden");
 
-  $("summary").innerHTML = `總剩餘 <b class="tone-${tone(data.overallScore)}">${data.overallScore}%</b>` +
-    (data.totalCostUsd >= 0.01 ? `<br>今日約 ${usd(data.totalCostUsd)}` : "");
+  const live = data.accounts.filter((a) => a.status === "ok" || a.status === "stale").length;
+  const fcs = data.accounts.map((a) => fcInfo(a.forecast)).filter(Boolean);
+  const fcTone = fcs.some((f) => f.lv === "bad") ? "tone-bad" : fcs.length ? "tone-warn" : "";
+  const sc = data.overallScore;
+  $("hero").innerHTML = `<div class="ring-wrap">${ring(sc, 118, 11, "s-" + tone(sc))}<span class="ring-txt"><span>${sc}<small>%</small></span><span class="cap">總剩餘</span></span></div>
+    <div class="stats">
+      <div class="stat"><span>今日花費</span><b>${data.totalCostUsd != null ? money(data.totalCostUsd) : "—"}</b></div>
+      <div class="stat"><span>在線帳號</span><b>${live}/${data.accounts.length}</b></div>
+      <div class="stat"><span>將提前耗盡</span><b class="${fcTone}">${fcs.length}</b></div>
+    </div>`;
 
   $("sec-picks").classList.toggle("hidden", !data.picks.length);
   $("picks").innerHTML = data.picks.map((p) => `
-    <div class="row">${icon(p.accountId, p.provider)}
-      <div class="main"><div class="title"><span class="name">${esc(p.accountName)}</span></div>
-        <div class="sub ${p.useBeforeReset ? "soon" : ""}">${PROVIDER[p.provider] || ""} · ${esc(p.reason)}</div>
-        ${p.note ? `<div class="sub">${esc(p.note)}</div>` : ""}</div>
-      <span class="pct tone-${tone(p.effectiveRemaining)}"><span class="cap">剩餘</span>${p.effectiveRemaining}<small>%</small></span></div>`).join("");
+    <div class="card pick">${icon(p.accountId, p.provider)}
+      <div class="pn"><b>${esc(p.accountName)}</b><span class="${p.useBeforeReset ? "soon" : ""}">${p.useBeforeReset ? "即將重設 · 優先使用" : PROVIDER[p.provider] || ""}</span></div>
+      <span class="big tone-${tone(p.effectiveRemaining)}">${p.effectiveRemaining}<small>%</small></span></div>`).join("");
 
-  const live = data.accounts.filter((a) => a.status === "ok" || a.status === "stale").length;
   $("count").textContent = `${live}/${data.accounts.length} 在線` + (data.hidden ? ` · 隱藏 ${data.hidden}` : "");
   $("accounts").innerHTML = data.accounts.length ? data.accounts.map(accountHtml).join("") : `<div class="empty">電腦上沒有找到帳號</div>`;
-  const t = new Date(data.updatedAt * 1000).toLocaleTimeString("zh-TW", { hour12: false, hour: "2-digit", minute: "2-digit" });
-  $("foot").innerHTML = `電腦更新於 ${t} · 每 ${data.refreshIntervalSecs} 秒<br>切回這個 App 時會立即重新整理`;
+  $("updated").textContent = `更新 ${new Date(data.updatedAt * 1000).toLocaleTimeString("zh-TW", { hour12: false, hour: "2-digit", minute: "2-digit" })}`;
 }
+
+$("accounts").addEventListener("click", (e) => {
+  const c = e.target.closest(".acc");
+  if (!c) return;
+  const id = c.dataset.id;
+  if (open.has(id)) open.delete(id); else open.add(id);
+  c.classList.toggle("open");
+});
 
 async function load() {
   try {
@@ -239,7 +303,7 @@ async function load() {
     lastError = null;
   } catch (e) {
     lastError = e.message === "Load failed" || e.message === "Failed to fetch" ? "網路錯誤" : e.message;
-    if (!data) $("accounts").innerHTML = `<div class="empty">連不到電腦（${esc(lastError)}）<br>請確認電腦開著、iPhone 的 Tailscale 已連線。</div>`;
+    if (!data) $("accounts").innerHTML = `<div class="empty">連不到電腦（${esc(lastError)}）<br>請確認電腦開著、Tailscale 已連線。</div>`;
   } finally {
     render();
   }
