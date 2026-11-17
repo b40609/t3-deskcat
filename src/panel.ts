@@ -264,11 +264,12 @@ function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
   if (mins < 0) return "";
   const name = escapeHtml(windowName(f.label, provider));
+  const short = name.split(" · ")[0];
   const text =
     mins < 60
-      ? `照目前速度，${Math.max(1, mins)} 分鐘後就會用完 ${name}`
-      : `照目前速度，約 ${formatWhen(f.exhaustAt)} 用完 ${name}`;
-  const tip = `每小時約用 ${f.ratePerHour}%` + (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "");
+      ? `⚠ ${Math.max(1, mins)} 分鐘後用完${short}`
+      : `⚠ ${formatWhen(f.exhaustAt)} 用完${short}`;
+  const tip = `照目前速度會在重設前用完 ${name}。每小時約用 ${f.ratePerHour}%` + (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "");
   return `<div class="acc-line warn" title="${escapeHtml(tip)}">${text}</div>`;
 }
 
@@ -281,7 +282,7 @@ function fmtTokens(n: number): string {
 
 function usageHtml(u: UsageToday | undefined): string {
   if (!u || cfg().showUsageStats === false || u.requests === 0) return "";
-  const parts = [`今日 ${fmtTokens(u.totalTokens)} tokens`, `${u.requests} 次`];
+  const parts = [`今日 ${fmtTokens(u.totalTokens)}`, `${u.requests} 次`];
   if (u.costUsd != null) parts.push(`約 US$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
   const tip = [
     `輸入 ${fmtTokens(u.inputTokens)}`,
@@ -332,7 +333,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       : `<span class="status stale">沒有用量資料</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
-    } else if (isStale) {
+    } else if (isStale && Date.now() / 1000 - acc.updatedAt >= 600) {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
     }
   }
