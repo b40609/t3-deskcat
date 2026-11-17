@@ -1404,39 +1404,6 @@ label.row:active {
   bottom: -1px;
 }
 
-/* ---------------------------------------------------------------- 24h sparkline */
-
-.spark-wrap {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.spark {
-  flex: 1;
-  height: 20px;
-  overflow: visible;
-}
-
-.spark-line {
-  fill: none;
-  stroke: var(--blue);
-  stroke-width: 1.4;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.85;
-}
-
-.spark-area {
-  fill: color-mix(in srgb, var(--blue) 14%, transparent);
-  stroke: none;
-}
-
-.spark-cap {
-  font-size: 10px;
-  color: var(--label-3);
-  line-height: 1;
-}
 
 #acc-settings.sorting,
 #acc-settings.sorting * {
@@ -1465,8 +1432,7 @@ label.row:active {
   font-weight: 500;
 }
 
-.acc.last-known .win,
-.acc.last-known .spark-wrap {
+.acc.last-known .win {
   opacity: 0.5;
 }
 
@@ -1496,3 +1462,20 @@ label.row:active {
 .notice.hidden {
   display: none;
 }
+
+/* forecast / usage lines sit in the title row's free space */
+.head-extras {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+.head-extras .acc-line {
+  margin-top: 0;
+  max-width: 100%;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+.head-extras + .acc-note { margin-left: 6px; }

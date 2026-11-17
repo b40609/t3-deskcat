@@ -59,7 +59,6 @@ const valPetOpacity = $("val-pet-opacity");
 const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
 const inpPetSnap = $<HTMLInputElement>("inp-pet-snap");
 const inpCompact = $<HTMLInputElement>("inp-compact");
-const inpShowHistory = $<HTMLInputElement>("inp-show-history");
 const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
 const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
 const offlineNote = $("offline-note");
@@ -84,9 +83,6 @@ let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
 let showingSettings = false;
 let pinned = false;
-let historyById: Record<string, [number, number][]> = {};
-let historyFetchedAt = 0;
-let historyForSnap = -1;
 let expandedAcc: string | null = null;
 let accSettingsSig = "";
 let recordingHotkey = false;
@@ -332,7 +328,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
     }
     body = wins.length
-      ? wins.map((w) => renderWindow(w, acc.provider)).join("") + sparkHtml(acc.id)
+      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
       : `<span class="status stale">沒有用量資料</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
@@ -340,54 +336,15 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
     }
   }
-  body += extras;
 
   return `
     <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}">
       <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
       <div class="row-main">
-        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${note}</div>
+        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${extras ? `<span class="head-extras">${extras}</span>` : ""}${note}</div>
         <div class="wins">${body}</div>
       </div>
     </div>`;
-}
-
-/** 24h sparkline of the account's effective quota (used or remaining, per setting). */
-function sparkHtml(id: string): string {
-  const s = cfg();
-  if (s.showHistory === false) return "";
-  const now = Date.now() / 1000;
-  const start = now - 86400;
-  const pts = (historyById[id] ?? []).filter(([t]) => t >= start);
-  if (pts.length < 2) return "";
-  const used = (s.usageDisplay ?? "used") === "used";
-  const W = 200;
-  const H = 22;
-  const xy = pts.map(([t, v]) => {
-    const val = used ? 100 - v : v;
-    return [((t - start) / 86400) * W, H - 1 - (Math.max(0, Math.min(100, val)) / 100) * (H - 2)];
-  });
-  const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  const area = `M${xy[0][0].toFixed(1)},${H} L${line.replace(/ /g, " L")} L${xy[xy.length - 1][0].toFixed(1)},${H} Z`;
-  return `
-    <div class="spark-wrap" title="過去 24 小時${used ? "已使用" : "剩餘"}額度">
-      <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <path class="spark-area" d="${area}" /><polyline class="spark-line" points="${line}" />
-      </svg>
-      <span class="spark-cap">24h</span>
-    </div>`;
-}
-
-async function refreshHistory(force = false) {
-  if (cfg().showHistory === false) return;
-  if (!force && Date.now() - historyFetchedAt < 30_000) return;
-  historyFetchedAt = Date.now();
-  try {
-    historyById = await invoke<Record<string, [number, number][]>>("get_history");
-    if (currentSnapshot) renderAccounts(currentSnapshot);
-  } catch {
-    // command unavailable (preview)
-  }
 }
 
 function renderAccounts(snap: DashboardSnapshot) {
@@ -432,10 +389,6 @@ ${formatResetAt(pick.resetAt)}` : "";
     .join("");
 
   renderAccounts(snap);
-  if (snap.lastRefreshedAt !== historyForSnap) {
-    historyForSnap = snap.lastRefreshedAt;
-    void refreshHistory(true);
-  }
 
   const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString("zh-TW", {
     hour12: false,
@@ -494,7 +447,6 @@ function syncSettingsForm(s: AppSettings) {
   inpPetIdleFade.checked = !!s.petIdleFade;
   inpPetSnap.checked = s.petSnapEdge !== false;
   inpCompact.checked = !!s.compactAccounts;
-  inpShowHistory.checked = s.showHistory !== false;
   inpShowForecast.checked = s.showForecast !== false;
   inpShowUsage.checked = s.showUsageStats !== false;
   inpMobile.checked = s.mobileEnabled !== false;
@@ -742,10 +694,6 @@ inpPetOpacity.addEventListener("input", () => commitSettings({ petOpacity: Numbe
 inpPetIdleFade.addEventListener("change", () => commitSettings({ petIdleFade: inpPetIdleFade.checked }, true));
 inpPetSnap.addEventListener("change", () => commitSettings({ petSnapEdge: inpPetSnap.checked }, true));
 inpCompact.addEventListener("change", () => commitSettings({ compactAccounts: inpCompact.checked }, true));
-inpShowHistory.addEventListener("change", () => {
-  commitSettings({ showHistory: inpShowHistory.checked }, true);
-  if (inpShowHistory.checked) void refreshHistory(true);
-});
 inpShowForecast.addEventListener("change", () => commitSettings({ showForecast: inpShowForecast.checked }, true));
 inpShowUsage.addEventListener("change", () => {
   commitSettings({ showUsageStats: inpShowUsage.checked }, true);
