@@ -1481,3 +1481,6 @@ label.row:active {
 .head-extras + .acc-note { margin-left: 6px; }
 
 #sec-picks { margin-top: 4px; }
+
+.fc-warn { color: var(--orange); font-weight: 500; }
+.fc-bad { color: var(--red); font-weight: 600; }

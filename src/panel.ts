@@ -231,7 +231,11 @@ function windowName(label: string, provider: ProviderKind): string {
   return name;
 }
 
-function renderWindow(w: { label: string; remainingPercent: number; resetAt: number | null }, provider: ProviderKind) {
+function renderWindow(
+  w: { label: string; remainingPercent: number; resetAt: number | null },
+  provider: ProviderKind,
+  fc?: Forecast,
+) {
   const showUsed = ((currentSettings ?? fallbackSettings).usageDisplay ?? "used") === "used";
   const remaining = Math.max(0, Math.min(100, w.remainingPercent));
   const value = showUsed ? 100 - remaining : remaining;
@@ -240,7 +244,7 @@ function renderWindow(w: { label: string; remainingPercent: number; resetAt: num
   return `
     <div class="win">
       <div class="win-line">
-        <span class="win-name">${escapeHtml(windowName(w.label, provider))}</span>
+        <span class="win-name">${escapeHtml(windowName(w.label, provider))}${fc && fc.label === w.label && cfg().showForecast !== false ? ` <span class="fc-${forecastLevel(fc)}" title="照目前速度會在重設前用完">⚠</span>` : ""}</span>
         <span class="win-meta">${reset ? `<span class="win-reset">${reset}</span>` : ""}<span class="win-val">${value}%</span></span>
       </div>
       <div class="bar"><span class="${showUsed ? `used-${tone}` : tone}" style="width:${value}%"></span></div>
@@ -259,18 +263,39 @@ function formatWhen(ts: number): string {
   return `${WEEKDAYS[d.getDay()]}${time}`;
 }
 
+/** Idle time between running out and the reset, in seconds (null when unknown). */
+function forecastGap(f: Forecast): number | null {
+  return f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
+}
+
+/** Red when you'd sit idle 2h+ (or run dry within the hour), else orange. */
+function forecastLevel(f: Forecast): "bad" | "warn" {
+  const gap = forecastGap(f);
+  const mins = (f.exhaustAt - Date.now() / 1000) / 60;
+  return (gap != null && gap >= 2 * 3600) || mins < 60 ? "bad" : "warn";
+}
+
+function fmtGap(secs: number): string {
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${Math.max(1, m)} 分鐘`;
+  const h = secs / 3600;
+  return h < 10 ? `${(Math.round(h * 2) / 2).toString()} 小時` : `${Math.round(h)} 小時`;
+}
+
 function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   if (!f || cfg().showForecast === false) return "";
   const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
   if (mins < 0) return "";
   const name = escapeHtml(windowName(f.label, provider));
   const short = name.split(" · ")[0];
-  const text =
-    mins < 60
-      ? `⚠ ${Math.max(1, mins)} 分鐘後用完${short}`
-      : `⚠ ${formatWhen(f.exhaustAt)} 用完${short}`;
-  const tip = `照目前速度會在重設前用完 ${name}。每小時約用 ${f.ratePerHour}%` + (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "");
-  return `<div class="acc-line warn" title="${escapeHtml(tip)}">${text}</div>`;
+  const when = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : formatWhen(f.exhaustAt);
+  const gap = forecastGap(f);
+  const text = gap != null ? `⚠ ${short}撐不到重設，會空等 ${fmtGap(gap)}` : `⚠ ${when}用完${short}`;
+  const tip =
+    `照目前速度，${when}用完 ${name}` +
+    (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "") +
+    `。每小時約用 ${f.ratePerHour}%`;
+  return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}">${text}</div>`;
 }
 
 function fmtTokens(n: number): string {
@@ -329,7 +354,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
     }
     body = wins.length
-      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
+      ? wins.map((w) => renderWindow(w, acc.provider, snap.forecasts?.[acc.id])).join("")
       : `<span class="status stale">沒有用量資料</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
