@@ -69,6 +69,9 @@ h1 { font-size: 30px; font-weight: 700; letter-spacing: 0.2px; }
 .last-known .win { opacity: 0.5; }
 .line { margin-top: 6px; font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
 .line.warn { color: var(--orange); font-weight: 500; }
+.icon.has-img { background: none; overflow: hidden; }
+.icon.has-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.line.bad { color: var(--red); font-weight: 600; }
 .status { margin-top: 4px; font-size: 13px; color: var(--red); }
 .status.cool { color: var(--orange); }
 .notice { margin: 0 0 4px; padding: 10px 14px; border-radius: 12px; font-size: 14px; background: color-mix(in srgb, var(--orange) 16%, transparent); }
@@ -132,10 +135,8 @@ function windowName(label, provider) {
   const [base, ...rest] = label.split(" ");
   const pool = rest.join(" ");
   if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
-  const span = { "5h": "5 小時限制", Wk: "每週", "週": "每週", Mo: "每月" };
-  let name = span[base] ?? (/^\d+h$/.test(base) ? `${base.slice(0, -1)} 小時限制` : /^\d+d$/.test(base) ? `${base.slice(0, -1)} 天限制` : base);
-  if (name === "每週" || name === "每月") name += pool ? ` · ${pool}` : provider === "claude" ? " · 所有模型" : "限制";
-  return name;
+  const b = base === "週" ? "Wk" : base;
+  return pool ? `${b} · ${pool}` : b;
 }
 function age(ts) {
   const m = Math.max(0, Math.round((nowSec() - ts) / 60));
@@ -175,7 +176,11 @@ function accountHtml(a) {
   if (f && f.exhaustAt > nowSec()) {
     const mins = Math.round((f.exhaustAt - nowSec()) / 60);
     const n = esc(windowName(f.label, a.provider));
-    body += `<div class="line warn">${mins < 60 ? `照目前速度，${Math.max(1, mins)} 分鐘後就會用完 ${n}` : `照目前速度，約 ${when(f.exhaustAt)} 用完 ${n}`}</div>`;
+    const at = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : when(f.exhaustAt);
+    const gap = f.resetAt ? Math.max(0, f.resetAt - f.exhaustAt) : null;
+    const gs = gap == null ? "" : gap < 3600 ? `${Math.max(1, Math.round(gap / 60))}m` : `${Math.round(gap / 1800) / 2}h`;
+    const lv = (gap != null && gap >= 7200) || mins < 60 ? "bad" : "warn";
+    body += `<div class="line ${lv}">⚠ ${n} 預計 ${at}耗盡${gs ? `（早於重設 ${gs}）` : ""}</div>`;
   }
   const u = a.usage;
   if (u && u.requests > 0) {
@@ -183,8 +188,14 @@ function accountHtml(a) {
     if (u.costUsd != null) parts.push(`約 ${usd(u.costUsd)}`);
     body += `<div class="line">${parts.join(" · ")}</div>`;
   }
-  return `<div class="row ${lastKnown ? "last-known" : ""}"><span class="icon ${a.provider}">${GLYPH[a.provider] || "?"}</span>
+  return `<div class="row ${lastKnown ? "last-known" : ""}">${icon(a.id, a.provider)}
     <div class="main"><div class="title"><span class="name">${esc(a.name)}</span>${plan}${note}</div>${body}</div></div>`;
+}
+
+function icon(id, provider) {
+  const av = data?.avatars?.[id];
+  if (av && /^data:image\//.test(av)) return `<span class="icon has-img"><img src="${esc(av)}" alt=""></span>`;
+  return `<span class="icon ${provider}">${GLYPH[provider] || "?"}</span>`;
 }
 
 function render() {
@@ -200,7 +211,7 @@ function render() {
 
   $("sec-picks").classList.toggle("hidden", !data.picks.length);
   $("picks").innerHTML = data.picks.map((p) => `
-    <div class="row"><span class="icon ${p.provider}">${GLYPH[p.provider] || "?"}</span>
+    <div class="row">${icon(p.accountId, p.provider)}
       <div class="main"><div class="title"><span class="name">${esc(p.accountName)}</span></div>
         <div class="sub ${p.useBeforeReset ? "soon" : ""}">${PROVIDER[p.provider] || ""} · ${esc(p.reason)}</div>
         ${p.note ? `<div class="sub">${esc(p.note)}</div>` : ""}</div>

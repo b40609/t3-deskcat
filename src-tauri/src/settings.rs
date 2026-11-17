@@ -79,6 +79,9 @@ pub fn sanitize(s: &mut AppSettings) {
             p.alias = None;
         }
         p.notify_threshold = p.notify_threshold.map(|t| t.clamp(1, 90));
+        if p.avatar.as_ref().is_some_and(|a| !a.starts_with("data:image/") || a.len() > 300_000) {
+            p.avatar = None;
+        }
     }
     // Drop prefs that carry no information.
     s.account_prefs.retain(|_, p| *p != AccountPref::default());

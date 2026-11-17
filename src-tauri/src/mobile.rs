@@ -68,6 +68,8 @@ struct MobileView {
     accounts: Vec<MobileAccount>,
     total_cost_usd: Option<f64>,
     hidden: usize,
+    /// Custom avatars by account id (picks reference accounts by id).
+    avatars: std::collections::HashMap<String, String>,
 }
 
 fn win(w: &QuotaWindow) -> MobileWindow {
@@ -130,6 +132,12 @@ fn view(snap: &DashboardSnapshot) -> MobileView {
         accounts,
         total_cost_usd,
         hidden,
+        avatars: s
+            .account_prefs
+            .iter()
+            .filter(|(id, _)| !s.is_hidden(id))
+            .filter_map(|(id, p)| Some((id.clone(), p.avatar.clone()?)))
+            .collect(),
     }
 }
 

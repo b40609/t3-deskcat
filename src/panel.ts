@@ -173,6 +173,38 @@ function providerGlyph(p: ProviderKind): string {
   return "G";
 }
 
+/** Custom avatar if set, else the provider letter tile. */
+function avatarHtml(id: string, provider: ProviderKind): string {
+  const av = cfg().accountPrefs?.[id]?.avatar;
+  if (av && av.startsWith("data:image/")) {
+    return `<span class="p-icon has-img"><img src="${escapeHtml(av)}" alt="" /></span>`;
+  }
+  return `<span class="p-icon ${provider}">${providerGlyph(provider)}</span>`;
+}
+
+/** Downscale a picked image to a 96px square JPEG/PNG data URL. */
+function loadAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const S = 96;
+      const c = document.createElement("canvas");
+      c.width = c.height = S;
+      const g = c.getContext("2d")!;
+      const side = Math.min(img.width, img.height);
+      g.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, S, S);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/png"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("無法讀取圖片"));
+    };
+    img.src = url;
+  });
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -219,16 +251,8 @@ function formatResetAt(resetAt: number | null): string {
 function windowName(label: string, provider: ProviderKind): string {
   const [base, ...rest] = label.split(" ");
   const pool = rest.join(" ");
-  // AG secondary pools come as "Argon 5h" / "3P Wk"
   if (/^(Argon|3P)$/.test(base) && rest.length) return `${base} · ${windowName(pool, provider)}`;
-  const span: Record<string, string> = { "5h": "5 小時限制", Wk: "每週", "週": "每週", Mo: "每月" };
-  let name =
-    span[base] ??
-    (/^\d+h$/.test(base) ? `${base.slice(0, -1)} 小時限制` : /^\d+d$/.test(base) ? `${base.slice(0, -1)} 天限制` : base);
-  if (name === "每週" || name === "每月") {
-    name += pool ? ` · ${pool}` : provider === "claude" ? " · 所有模型" : "限制";
-  }
-  return name;
+  return pool ? `${base === "週" ? "Wk" : base} · ${pool}` : base === "週" ? "Wk" : base;
 }
 
 function renderWindow(
@@ -244,7 +268,7 @@ function renderWindow(
   return `
     <div class="win">
       <div class="win-line">
-        <span class="win-name">${escapeHtml(windowName(w.label, provider))}${fc && fc.label === w.label && cfg().showForecast !== false ? ` <span class="fc-${forecastLevel(fc)}" title="照目前速度會在重設前用完">⚠</span>` : ""}</span>
+        <span class="win-name">${escapeHtml(windowName(w.label, provider))}${fc && fc.label === w.label && cfg().showForecast !== false ? ` <span class="fc-${forecastLevel(fc)}" title="預計於重設前耗盡">⚠</span>` : ""}</span>
         <span class="win-meta">${reset ? `<span class="win-reset">${reset}</span>` : ""}<span class="win-val">${value}%</span></span>
       </div>
       <div class="bar"><span class="${showUsed ? `used-${tone}` : tone}" style="width:${value}%"></span></div>
@@ -277,9 +301,9 @@ function forecastLevel(f: Forecast): "bad" | "warn" {
 
 function fmtGap(secs: number): string {
   const m = Math.round(secs / 60);
-  if (m < 60) return `${Math.max(1, m)} 分鐘`;
+  if (m < 60) return `${Math.max(1, m)}m`;
   const h = secs / 3600;
-  return h < 10 ? `${(Math.round(h * 2) / 2).toString()} 小時` : `${Math.round(h)} 小時`;
+  return h < 10 ? `${(Math.round(h * 2) / 2).toString()}h` : `${Math.round(h)}h`;
 }
 
 function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
@@ -290,11 +314,12 @@ function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   const short = name.split(" · ")[0];
   const when = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : formatWhen(f.exhaustAt);
   const gap = forecastGap(f);
-  const text = gap != null ? `⚠ ${short}撐不到重設，會空等 ${fmtGap(gap)}` : `⚠ ${when}用完${short}`;
+  const text =
+    gap != null ? `⚠ ${short} 預計 ${when}耗盡（早於重設 ${fmtGap(gap)}）` : `⚠ ${short} 預計 ${when}耗盡`;
   const tip =
-    `照目前速度，${when}用完 ${name}` +
-    (f.resetAt ? `，${formatResetAt(f.resetAt)}` : "") +
-    `。每小時約用 ${f.ratePerHour}%`;
+    `依近期用量推算，${name} 預計 ${when}耗盡` +
+    (f.resetAt ? `；${formatResetAt(f.resetAt)}` : "") +
+    `。消耗速率 ${f.ratePerHour}%/h`;
   return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}">${text}</div>`;
 }
 
@@ -365,7 +390,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
 
   return `
     <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}">
-      <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
+      ${avatarHtml(acc.id, acc.provider)}
       <div class="row-main">
         <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${extras ? `<span class="head-extras">${extras}</span>` : ""}${note}</div>
         <div class="wins">${body}</div>
@@ -403,7 +428,7 @@ ${formatResetAt(pick.resetAt)}` : "";
       const sub = `${providerLabel(pick.provider)} · ${escapeHtml(pick.reason)}`;
       return `
       <div class="row ${pick.useBeforeReset ? "pick-soon" : ""}">
-        <span class="p-icon ${pick.provider}">${providerGlyph(pick.provider)}</span>
+        ${avatarHtml(pick.accountId, pick.provider)}
         <div class="row-main">
           <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
           <span class="row-sub" title="${escapeHtml(pick.reason + reset)}">${sub}</span>
@@ -553,13 +578,14 @@ function accSettingRow(acc: AccountQuota): string {
         <label class="row"><span>在額度頁顯示</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
         <label class="row ${p.hidden ? "disabled" : ""}"><span>計入總分與心情</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
         <div class="row"><span>低額度警戒線</span><select class="select" data-f="th">${thOpts}</select></div>
+        <div class="row"><span>頭像</span><span class="av-actions">${p.avatar ? `<button class="link-btn" data-act="av-clear">還原預設</button>` : ""}<label class="link-btn">選擇圖片<input type="file" accept="image/*" class="hidden-file-input" data-f="avatar" /></label></span></div>
       </div>`
     : "";
   return `
     <div class="acc-set ${open ? "open" : ""} ${p.hidden ? "is-hidden" : ""}" data-id="${escapeHtml(acc.id)}">
       <div class="row acc-set-head" data-act="toggle">
         <span class="grip" title="拖曳排序"><svg><use href="#i-grip" /></svg></span>
-        <span class="p-icon ${acc.provider}">${providerGlyph(acc.provider)}</span>
+        ${avatarHtml(acc.id, acc.provider)}
         <div class="row-main">
           <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span>${p.hidden ? `<svg class="tag-ico"><use href="#i-eye-off" /></svg>` : ""}</div>
           <span class="row-sub">${escapeHtml(tags.join(" · "))}</span>
@@ -845,6 +871,11 @@ window.addEventListener(
 accSettingsEl.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;
   if (t.closest(".grip")) return;
+  const clear = t.closest<HTMLElement>("[data-act='av-clear']");
+  if (clear) {
+    setPref(clear.closest<HTMLElement>(".acc-set")!.dataset.id!, { avatar: null });
+    return;
+  }
   const head = t.closest<HTMLElement>("[data-act='toggle']");
   if (!head) return;
   const id = head.closest<HTMLElement>(".acc-set")!.dataset.id!;
@@ -858,6 +889,11 @@ accSettingsEl.addEventListener("change", (e) => {
   const f = el.dataset.f;
   const id = el.closest<HTMLElement>(".acc-set")?.dataset.id;
   if (!f || !id) return;
+  if (f === "avatar") {
+    const file = (el as HTMLInputElement).files?.[0];
+    if (file) void loadAvatar(file).then((avatar) => setPref(id, { avatar })).catch(() => {});
+    return;
+  }
   if (f === "alias") setPref(id, { alias: el.value.trim() || null });
   else if (f === "visible") setPref(id, { hidden: !(el as HTMLInputElement).checked });
   else if (f === "score") setPref(id, { excludeScore: !(el as HTMLInputElement).checked });

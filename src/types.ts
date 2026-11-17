@@ -62,6 +62,8 @@ export interface AccountPref {
   excludeScore?: boolean;
   /** Per-account low-quota alert line; null = use the global one. */
   notifyThreshold?: number | null;
+  /** Custom avatar (data URL); null = provider letter. */
+  avatar?: string | null;
 }
 
 export type PanelPosition = "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";

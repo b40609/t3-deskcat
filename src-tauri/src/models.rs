@@ -119,6 +119,8 @@ pub struct AccountPref {
     pub exclude_score: bool,
     /// Low-quota alert line for this account; None = global setting.
     pub notify_threshold: Option<i32>,
+    /// Custom avatar as a small `data:image/...` URL; None = provider letter.
+    pub avatar: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

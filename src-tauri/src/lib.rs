@@ -794,7 +794,7 @@ fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
         let reset_at = binding_window(best).and_then(|w| w.reset_at).filter(|r| *r > now);
         let reason = if use_before_reset {
             let mins = ((reset_at.unwrap_or(now) - now) + 59) / 60;
-            format!("{} 分鐘後重設，先用它", mins.max(1))
+            format!("{} 分鐘後重設，建議優先使用", mins.max(1))
         } else {
             build_pick_reason(best)
         };
@@ -913,16 +913,14 @@ fn window_label_zh(label: &str) -> String {
     let base = parts.next().unwrap_or("");
     let pool = parts.next().unwrap_or("");
     let span = match base {
-        "5h" => "5 小時限制".to_string(),
-        "Wk" | "週" => "每週限制".to_string(),
-        "Mo" => "每月限制".to_string(),
-        "Argon" | "3P" => return format!("{base} {}", window_label_zh(pool)),
+        "週" => "Wk".to_string(),
+        "Argon" | "3P" => return format!(" {base} {}", window_label_zh(pool).trim_start()),
         other => other.to_string(),
     };
     if pool.is_empty() {
-        span
+        format!(" {span} ")
     } else {
-        format!("{span}（{pool}）")
+        format!(" {span} · {pool} ")
     }
 }
 
@@ -1357,7 +1355,7 @@ mod tests {
         let picks = compute_picks(&[soon.clone(), full.clone()], now);
         assert_eq!(picks[0].account_name, "Kai");
         assert!(picks[0].use_before_reset);
-        assert_eq!(picks[0].reason, "20 分鐘後重設，先用它");
+        assert_eq!(picks[0].reason, "20 分鐘後重設，建議優先使用");
         assert_eq!(picks[0].reset_at, Some(now + 20 * 60));
 
         // Under 10% left is not worth recommending first.
@@ -1424,9 +1422,9 @@ mod tests {
 
     #[test]
     fn window_labels_in_chinese() {
-        assert_eq!(window_label_zh("5h"), "5 小時限制");
-        assert_eq!(window_label_zh("Wk Sonnet"), "每週限制（Sonnet）");
-        assert_eq!(window_label_zh("Argon 5h"), "Argon 5 小時限制");
+        assert_eq!(window_label_zh("5h"), " 5h ");
+        assert_eq!(window_label_zh("Wk Sonnet"), " Wk · Sonnet ");
+        assert_eq!(window_label_zh("Argon 5h"), " Argon 5h ");
     }
 
     #[test]
