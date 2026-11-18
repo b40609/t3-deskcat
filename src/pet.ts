@@ -73,14 +73,18 @@ function applySnapshot(snap: DashboardSnapshot) {
   applyOpacity();
 }
 
-// Animation loop: requestAnimationFrame, capped at ~50 fps to stay light on CPU
+// Animation loop: capped at ~24 fps, and paused while the window is being dragged
+// (repainting a transparent window during the native move loop makes dragging stutter).
+const FRAME_MS = 1000 / 24;
 let lastFrame = 0;
+let moving = false;
 function frame(now: number) {
   requestAnimationFrame(frame);
-  if (now - lastFrame < 19) return;
+  if (moving || document.hidden || now - lastFrame < FRAME_MS) return;
   lastFrame = now;
   const settings = currentSnapshot?.settings ?? defaultSettings;
-  tick = (tick + animSpeedFactor(settings)) % 10000;
+  // Keep animation speed the same as the old 50 fps loop.
+  tick = (tick + animSpeedFactor(settings) * (50 / 24)) % 10000;
   const effectiveMood = previewMoodOverride ?? currentMood;
   const theme = settings.petTheme ?? "hud_gauge";
   const score = currentSnapshot?.overallScore ?? 100;
@@ -139,8 +143,10 @@ canvas.addEventListener("pointermove", async (e) => {
 
 let moveSaveTimer: number | undefined;
 void appWindow.onMoved(() => {
+  moving = true;
   if (moveSaveTimer) window.clearTimeout(moveSaveTimer);
   moveSaveTimer = window.setTimeout(() => {
+    moving = false;
     invoke("save_pet_position").catch(() => {});
   }, 300);
 });
