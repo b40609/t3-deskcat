@@ -164,6 +164,9 @@ pub struct AppSettings {
     /// UI language: "system" | "en" | "zh-TW" | "zh-CN" | "ja" | "ko".
     #[serde(default = "default_language")]
     pub language: String,
+    /// Per-model price overrides (USD per million tokens), keyed by model id.
+    #[serde(default)]
+    pub model_prices: HashMap<String, crate::usage_stats::Price>,
     #[serde(default = "default_true")]
     pub show_picks: bool,
     /// Pet particle effects (music notes, Zzz, sweat, sparks)
@@ -328,6 +331,7 @@ impl Default for AppSettings {
             reset_format: default_reset_format(),
             pace_tick: default_pace_tick(),
             language: default_language(),
+            model_prices: HashMap::new(),
             show_picks: true,
             pet_effects: true,
             account_prefs: HashMap::new(),

@@ -1,13 +1,11 @@
 import { mainWindows } from "./focus";
 import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call as invoke, isRemote, subscribe } from "./bridge";
 import { getVersion } from "@tauri-apps/api/app";
 import type {
   AccountPref,
   AccountQuota,
   AppSettings,
-  CatMood,
   DashboardSnapshot,
   Forecast,
   PanelPosition,
@@ -475,7 +473,7 @@ ${formatResetAt(pick.resetAt)}` : "";
     .join("");
 
   renderAccounts(snap);
-  btnMobilePromo.classList.toggle("hidden", snap.settings.mobileEnabled === true || snap.accounts.length === 0);
+  $("mobile-summary").textContent = snap.settings.mobileEnabled ? t("已開啟") : t("未開啟");
 
   const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString(locale(), {
     hour12: false,
@@ -697,6 +695,7 @@ function commitSettings(patch: Partial<AppSettings>, immediate = false) {
 function setSettingsVisible(show: boolean) {
   showingSettings = show;
   shell.classList.toggle("show-settings", show);
+  if (!show) closeSub();
   if (show) {
     void showHotkeyStatus();
     void showMobileStatus();
@@ -813,7 +812,6 @@ function showTab(name: string) {
   });
   document.querySelectorAll<HTMLElement>(".pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
   settingsScroll.scrollTop = 0;
-  if (name === "accounts") void loadSources();
 }
 document.querySelectorAll<HTMLElement>(".tab").forEach((t) =>
   t.addEventListener("click", () => showTab(t.dataset.tab ?? "general")),
@@ -994,12 +992,94 @@ btnMobileUrl.addEventListener("click", async () => {
   }
 });
 
-// Dashboard entry point, until the phone page is turned on.
-const btnMobilePromo = $("btn-mobile-promo");
-btnMobilePromo.addEventListener("click", () => {
-  setSettingsVisible(true);
-  showTab("general");
-  window.setTimeout(() => $("sec-mobile").scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+// ---- sub pages: phone, advanced, support, add account
+let showingSub = "";
+function openSub(name: string) {
+  showingSub = name;
+  document.querySelectorAll<HTMLElement>(".subpane").forEach((p) => p.classList.toggle("hidden", p.dataset.subpane !== name));
+  const pane = document.querySelector<HTMLElement>(`.subpane[data-subpane="${name}"]`);
+  $("sub-title").textContent = t(pane?.dataset.title ?? "");
+  $("sub-scroll").scrollTop = 0;
+  shell.classList.add("show-sub");
+  if (name === "mobile") void showMobileStatus();
+  if (name === "advanced") void loadSources();
+  if (name === "add-account") resetAddAccount();
+}
+function closeSub() {
+  showingSub = "";
+  shell.classList.remove("show-sub");
+  stopLoginWatch();
+}
+document.querySelectorAll<HTMLElement>("[data-sub]").forEach((el) => el.addEventListener("click", () => openSub(el.dataset.sub!)));
+$("btn-sub-back").addEventListener("click", closeSub);
+
+// ---- add account: make a fresh config folder, run the CLI's own login in a
+// terminal, then pick the new account up when the login file appears.
+type AddProvider = "claude" | "codex" | "antigravity";
+let addProvider: AddProvider = "claude";
+let loginWatch: number | undefined;
+const inpAccName = $<HTMLInputElement>("inp-acc-name");
+function stopLoginWatch() {
+  if (loginWatch) window.clearInterval(loginWatch);
+  loginWatch = undefined;
+}
+function accSlug(): string {
+  return inpAccName.value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function renderAddAccount() {
+  document.querySelectorAll<HTMLElement>(".provider-btn").forEach((b) => b.classList.toggle("active", b.dataset.provider === addProvider));
+  const ag = addProvider === "antigravity";
+  inpAccName.closest(".group")!.querySelector(".list")!.classList.toggle("hidden", ag);
+  inpAccName.closest(".group")!.querySelector(".group-header")!.classList.toggle("hidden", ag);
+  const slug = accSlug();
+  const folder = addProvider === "claude" ? `.claude-${slug || "…"}` : `.codex-${slug || "…"}`;
+  $("add-acc-hint").textContent = ag
+    ? t("在終端機開啟 agy，照畫面登入 Google 帳號。登入後會自動出現")
+    : t("會在使用者資料夾建立 {folder}，再開終端機執行官方登入。登入完成後會自動出現", { folder });
+  ($("btn-acc-login") as HTMLButtonElement).disabled = !ag && !slug;
+}
+function resetAddAccount() {
+  stopLoginWatch();
+  inpAccName.value = "";
+  $("add-acc-status").textContent = "";
+  renderAddAccount();
+}
+document.querySelectorAll<HTMLElement>(".provider-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    addProvider = b.dataset.provider as AddProvider;
+    renderAddAccount();
+  }),
+);
+inpAccName.addEventListener("input", renderAddAccount);
+$("btn-acc-login").addEventListener("click", async () => {
+  const status = $("add-acc-status");
+  status.classList.remove("error");
+  try {
+    const before = new Set((currentSnapshot?.accounts ?? []).map((a) => a.id));
+    await invoke<string>("add_account_login", { provider: addProvider, name: accSlug() });
+    status.textContent = t("已開啟終端機，請在那裡完成登入");
+    stopLoginWatch();
+    let n = 0;
+    loginWatch = window.setInterval(async () => {
+      if (++n > 100 || showingSub !== "add-account") return stopLoginWatch();
+      const snap = await invoke<DashboardSnapshot>("refresh_now").catch(() => null);
+      if (!snap) return;
+      renderDashboard(snap);
+      const added = snap.accounts.find((a) => !before.has(a.id) && a.provider === addProvider);
+      if (added) {
+        stopLoginWatch();
+        status.textContent = t("已加入 {name}", { name: added.name });
+      }
+    }, 6000);
+  } catch (e) {
+    status.textContent = String((e as Error)?.message ?? e);
+    status.classList.add("error");
+  }
+});
+
+$("btn-analytics").addEventListener("click", () => {
+  if (isRemote) window.location.href = "/analytics.html";
+  else invoke("open_analytics").catch(() => {});
 });
 
 // ---- hotkey recorder
@@ -1173,12 +1253,6 @@ inpRefreshSec.addEventListener("input", () => commitSettings({ refreshIntervalSe
 inpAgExtra.addEventListener("change", () => commitSettings({ showAntigravityExtra: inpAgExtra.checked }, true));
 inpAutostart.addEventListener("change", () => commitSettings({ launchAtStartup: inpAutostart.checked }, true));
 
-document.querySelectorAll<HTMLButtonElement>("[data-preview]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    invoke("preview_mood", { mood: btn.dataset.preview as CatMood }).catch(() => {});
-  });
-});
-
 $("btn-test-notify").addEventListener("click", () => {
   invoke("test_notification").catch(() => {});
 });
@@ -1186,8 +1260,9 @@ $("btn-test-notify").addEventListener("click", () => {
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (showingSettings) setSettingsVisible(false);
-  else invoke("hide_panel").catch(() => {});
+  if (showingSub) closeSub();
+  else if (showingSettings) setSettingsVisible(false);
+  else if (!isRemote) invoke("hide_panel").catch(() => {});
 });
 
 selLanguage.addEventListener("change", () =>
@@ -1197,7 +1272,9 @@ selLanguage.addEventListener("change", () =>
 async function init() {
   setLang(null);
   applyI18n();
-  await listen<DashboardSnapshot>("snapshot-updated", (event) => renderDashboard(event.payload));
+  document.body.classList.toggle("remote", isRemote);
+  document.documentElement.classList.toggle("remote", isRemote);
+  await subscribe<DashboardSnapshot>("snapshot-updated", (snap) => renderDashboard(snap), { cmd: "get_snapshot", everyMs: 30000 });
 
   const existing = await invoke<DashboardSnapshot | null>("get_snapshot");
   if (existing) {

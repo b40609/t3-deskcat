@@ -14,6 +14,7 @@ export default defineConfig({
         pet: resolve(__dirname, "pet.html"),
         panel: resolve(__dirname, "panel.html"),
         bubble: resolve(__dirname, "bubble.html"),
+        analytics: resolve(__dirname, "analytics.html"),
       },
     },
   },

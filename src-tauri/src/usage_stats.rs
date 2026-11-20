@@ -1,23 +1,35 @@
-//! Today's token usage per account, read from the local CLI logs (read-only):
+//! Token usage ledger, read from the local CLI logs (read-only):
 //!
 //! * Claude Code: `<config dir>/projects/**/*.jsonl`, assistant messages with
 //!   `message.usage`; deduplicated by `message.id + requestId` (streamed messages
-//!   are written more than once). Cost = equivalent Anthropic API list price.
+//!   are written more than once, resumed sessions copy earlier turns).
 //! * Codex: `<codex home>/sessions/YYYY/MM/DD/*.jsonl`, `token_count` events
-//!   (`last_token_usage`).
+//!   (`last_token_usage`); the model comes from the preceding `turn_context`.
 //!
-//! Files are parsed incrementally (append-only logs): each file remembers the byte
-//! offset it was read up to, so a refresh only parses newly appended lines.
+//! Usage is summed into hourly buckets per (account, model) and kept for
+//! `KEEP_DAYS`, persisted to `%APPDATA%\t3-deskcat\usage-ledger.json` together
+//! with how far each log file was read. Logs are append-only, so a refresh only
+//! parses newly appended lines; the first run backfills older files on a
+//! background thread so the dashboard is not held up.
+//!
+//! Cost is the equivalent API list price (see `price`), overridable per model in
+//! the settings.
 
-use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock, RwLock};
+use std::time::{Duration, SystemTime};
+
+const KEEP_DAYS: i64 = 92;
+const HOUR: i64 = 3600;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,111 +41,236 @@ pub struct UsageToday {
     pub cache_write_tokens: u64,
     pub total_tokens: u64,
     pub requests: u64,
-    /// Equivalent API cost in USD (Claude only).
+    /// Equivalent API cost in USD (None when no model used today has a price).
     pub cost_usd: Option<f64>,
 }
 
+#[derive(Clone)]
 pub enum Source {
     Claude { account_id: String, config_dir: PathBuf },
     Codex { account_id: String, codex_home: PathBuf },
 }
 
-#[derive(Clone)]
-struct Entry {
-    key: String,
-    model: String,
-    input: u64,
-    output: u64,
-    cache_read: u64,
-    cache_write_5m: u64,
-    cache_write_1h: u64,
+impl Source {
+    fn account(&self) -> &str {
+        match self {
+            Source::Claude { account_id, .. } | Source::Codex { account_id, .. } => account_id,
+        }
+    }
 }
 
-#[derive(Default)]
-struct FileState {
-    offset: u64,
-    entries: Vec<Entry>,
-    /// Codex: last cumulative total, to skip repeated token_count events.
-    last_total: u64,
+/// Tokens of one kind of work, summed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct Agg {
+    #[serde(rename = "i")]
+    pub input: u64,
+    #[serde(rename = "o")]
+    pub output: u64,
+    #[serde(rename = "r")]
+    pub cache_read: u64,
+    #[serde(rename = "w")]
+    pub cache_write_5m: u64,
+    #[serde(rename = "W", default)]
+    pub cache_write_1h: u64,
+    #[serde(rename = "n")]
+    pub requests: u64,
 }
 
-#[derive(Default)]
-struct Scanner {
-    day: Option<NaiveDate>,
-    files: HashMap<PathBuf, FileState>,
+impl Agg {
+    fn add(&mut self, o: &Agg) {
+        self.input += o.input;
+        self.output += o.output;
+        self.cache_read += o.cache_read;
+        self.cache_write_5m += o.cache_write_5m;
+        self.cache_write_1h += o.cache_write_1h;
+        self.requests += o.requests;
+    }
+    pub fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_write_5m + self.cache_write_1h
+    }
 }
 
-fn scanner() -> &'static Mutex<Scanner> {
-    static S: OnceLock<Mutex<Scanner>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Scanner::default()))
+/// USD per million tokens.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Price {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    /// 5-minute cache write; the 1-hour write is billed at 2x input.
+    pub cache_write: f64,
 }
 
-/// USD per million tokens: (input, output, cache read). Cache writes are billed at
-/// 1.25x (5 min) / 2x (1 h) of input.
-fn price(model: &str) -> (f64, f64, f64) {
+impl Price {
+    const fn claude(i: f64, o: f64, r: f64) -> Self {
+        Price { input: i, output: o, cache_read: r, cache_write: i * 1.25 }
+    }
+    const fn openai(i: f64, o: f64, r: f64) -> Self {
+        Price { input: i, output: o, cache_read: r, cache_write: i }
+    }
+}
+
+/// Built-in list prices, matched by substring (first match wins).
+const PRICES: &[(&str, Price)] = &[
+    ("fable-5-2", Price::claude(8.0, 40.0, 0.20)),
+    ("mythos-5-2", Price::claude(8.0, 40.0, 0.20)),
+    ("fable-5", Price::claude(10.0, 50.0, 1.0)),
+    ("mythos", Price::claude(10.0, 50.0, 1.0)),
+    ("opus-5-5", Price::claude(4.0, 20.0, 0.20)),
+    ("opus-5", Price::claude(5.0, 25.0, 0.50)),
+    ("opus-4-8", Price::claude(5.0, 25.0, 0.50)),
+    ("opus-4-7", Price::claude(5.0, 25.0, 0.50)),
+    ("opus-4-6", Price::claude(5.0, 25.0, 0.50)),
+    ("opus-4-5", Price::claude(5.0, 25.0, 0.50)),
+    ("opus", Price::claude(15.0, 75.0, 1.50)),
+    ("sonnet-5-5", Price::claude(2.0, 10.0, 0.10)),
+    ("sonnet-5", Price::claude(2.0, 10.0, 0.20)),
+    ("sonnet", Price::claude(3.0, 15.0, 0.30)),
+    ("haiku-5-5", Price::claude(0.10, 0.50, 0.01)),
+    ("haiku-4-5", Price::claude(1.0, 5.0, 0.10)),
+    ("haiku", Price::claude(0.80, 4.0, 0.08)),
+    // developers.openai.com/api/docs/models/gpt-5.6-terra (2026-11-20)
+    ("gpt-5.6-terra", Price::openai(2.0, 12.0, 0.20)),
+];
+
+fn overrides() -> &'static RwLock<HashMap<String, Price>> {
+    static O: OnceLock<RwLock<HashMap<String, Price>>> = OnceLock::new();
+    O.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Per-model prices set by the user (exact model id, lower case).
+pub fn set_price_overrides(map: &HashMap<String, Price>) {
+    if let Ok(mut o) = overrides().write() {
+        *o = map.iter().map(|(k, v)| (k.to_ascii_lowercase(), *v)).collect();
+    }
+}
+
+/// The price used for a model, and whether it is the user's own.
+pub fn price_of(model: &str) -> Option<(Price, bool)> {
     let m = model.to_ascii_lowercase();
-    let table: &[(&str, (f64, f64, f64))] = &[
-        ("fable-5-2", (8.0, 40.0, 0.20)),
-        ("mythos-5-2", (8.0, 40.0, 0.20)),
-        ("fable-5", (10.0, 50.0, 1.0)),
-        ("mythos", (10.0, 50.0, 1.0)),
-        ("opus-5-5", (4.0, 20.0, 0.20)),
-        ("opus-5", (5.0, 25.0, 0.50)),
-        ("opus-4-8", (5.0, 25.0, 0.50)),
-        ("opus-4-7", (5.0, 25.0, 0.50)),
-        ("opus-4-6", (5.0, 25.0, 0.50)),
-        ("opus-4-5", (5.0, 25.0, 0.50)),
-        ("opus", (15.0, 75.0, 1.50)),
-        ("sonnet-5-5", (2.0, 10.0, 0.10)),
-        ("sonnet-5", (2.0, 10.0, 0.20)),
-        ("sonnet", (3.0, 15.0, 0.30)),
-        ("haiku-5-5", (0.10, 0.50, 0.01)),
-        ("haiku-4-5", (1.0, 5.0, 0.10)),
-        ("haiku", (0.80, 4.0, 0.08)),
-    ];
-    table
-        .iter()
-        .find(|(k, _)| m.contains(k))
-        .map(|(_, p)| *p)
-        .unwrap_or((4.0, 20.0, 0.20))
+    if let Some(p) = overrides().read().ok().and_then(|o| o.get(&m).copied()) {
+        return Some((p, true));
+    }
+    if m.is_empty() {
+        return None;
+    }
+    if m.contains("claude") || ["opus", "sonnet", "haiku", "fable", "mythos"].iter().any(|k| m.contains(k)) {
+        return PRICES.iter().find(|(k, _)| m.contains(k)).map(|(_, p)| (*p, false)).or(Some((Price::claude(4.0, 20.0, 0.20), false)));
+    }
+    PRICES.iter().find(|(k, _)| m.contains(k)).map(|(_, p)| (*p, false))
 }
 
-fn entry_cost(e: &Entry) -> f64 {
-    let (i, o, r) = price(&e.model);
-    (e.input as f64 * i
-        + e.output as f64 * o
-        + e.cache_read as f64 * r
-        + e.cache_write_5m as f64 * i * 1.25
-        + e.cache_write_1h as f64 * i * 2.0)
-        / 1_000_000.0
+/// Cost split by token type, USD.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cost {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
+    /// What the cache reads would have cost as plain input.
+    pub cache_savings: f64,
 }
 
-fn is_today(ts: &str, today: NaiveDate) -> bool {
-    DateTime::parse_from_rfc3339(ts)
-        .map(|t| t.with_timezone(&Local).date_naive() == today)
-        .unwrap_or(false)
+pub fn cost_of(model: &str, a: &Agg) -> Option<Cost> {
+    let (p, _) = price_of(model)?;
+    let m = 1_000_000.0;
+    Some(Cost {
+        input: a.input as f64 * p.input / m,
+        output: a.output as f64 * p.output / m,
+        cache_read: a.cache_read as f64 * p.cache_read / m,
+        cache_write: (a.cache_write_5m as f64 * p.cache_write + a.cache_write_1h as f64 * p.input * 2.0) / m,
+        cache_savings: a.cache_read as f64 * (p.input - p.cache_read).max(0.0) / m,
+    })
 }
 
-fn modified_today(path: &Path, midnight: SystemTime) -> bool {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| t >= midnight)
-        .unwrap_or(false)
+// ---------------------------------------------------------------------------
+
+#[derive(Default, Clone, Serialize, Deserialize)]
+struct FileState {
+    #[serde(rename = "a")]
+    account: String,
+    #[serde(rename = "o")]
+    offset: u64,
+    /// Codex: last cumulative total, to skip repeated token_count events.
+    #[serde(rename = "t", default)]
+    last_total: u64,
+    /// Codex: model of the current turn.
+    #[serde(rename = "m", default)]
+    model: String,
 }
 
-fn collect_jsonl(dir: &Path, midnight: SystemTime, depth: u32, out: &mut Vec<PathBuf>) {
-    if depth == 0 {
+#[derive(Default, Serialize, Deserialize)]
+struct Ledger {
+    #[serde(default)]
+    version: u32,
+    /// "account\u{1f}hour\u{1f}model" -> tokens
+    #[serde(default)]
+    buckets: HashMap<String, Agg>,
+    #[serde(default)]
+    files: HashMap<String, FileState>,
+    /// Claude message-key hash -> hour it was seen (for dedup across files).
+    #[serde(default)]
+    seen: HashMap<u64, i64>,
+    #[serde(default)]
+    backfilled: bool,
+    #[serde(skip)]
+    dirty: bool,
+}
+
+const VERSION: u32 = 1;
+const SEP: char = '\u{1f}';
+
+fn bucket_key(acc: &str, hour: i64, model: &str) -> String {
+    format!("{acc}{SEP}{hour}{SEP}{model}")
+}
+
+fn split_key(k: &str) -> Option<(&str, i64, &str)> {
+    let mut it = k.splitn(3, SEP);
+    let a = it.next()?;
+    let h = it.next()?.parse().ok()?;
+    Some((a, h, it.next().unwrap_or("")))
+}
+
+fn ledger_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("t3-deskcat").join("usage-ledger.json"))
+}
+
+fn ledger() -> &'static Mutex<Ledger> {
+    static L: OnceLock<Mutex<Ledger>> = OnceLock::new();
+    L.get_or_init(|| {
+        let loaded: Ledger = ledger_path()
+            .and_then(|p| fs::read_to_string(p).ok())
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .filter(|l: &Ledger| l.version == VERSION)
+            .unwrap_or(Ledger { version: VERSION, ..Default::default() });
+        Mutex::new(loaded)
+    })
+}
+
+fn save(l: &mut Ledger) {
+    if !l.dirty {
         return;
     }
-    let Ok(rd) = fs::read_dir(dir) else { return };
-    for ent in rd.flatten() {
-        let p = ent.path();
-        let Ok(ft) = ent.file_type() else { continue };
-        if ft.is_dir() {
-            collect_jsonl(&p, midnight, depth - 1, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("jsonl") && modified_today(&p, midnight) {
-            out.push(p);
+    let Some(path) = ledger_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(body) = serde_json::to_string(&*l) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, body).is_ok() && fs::rename(&tmp, &path).is_ok() {
+            l.dirty = false;
         }
+    }
+}
+
+fn prune(l: &mut Ledger, now: i64) {
+    let cut = now - KEEP_DAYS * 24 * HOUR;
+    let before = (l.buckets.len(), l.seen.len());
+    l.buckets.retain(|k, _| split_key(k).map(|(_, h, _)| h >= cut).unwrap_or(false));
+    l.seen.retain(|_, h| *h >= cut);
+    if before != (l.buckets.len(), l.seen.len()) {
+        l.dirty = true;
     }
 }
 
@@ -141,7 +278,20 @@ fn u(v: &Value, k: &str) -> u64 {
     v.get(k).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn parse_claude_line(line: &str, today: NaiveDate) -> Option<Entry> {
+fn hour_of(ts: &str) -> Option<i64> {
+    let t = DateTime::parse_from_rfc3339(ts).ok()?.timestamp();
+    Some(t - t.rem_euclid(HOUR))
+}
+
+/// One usage record parsed from a log line.
+struct Rec {
+    hour: i64,
+    model: String,
+    agg: Agg,
+    dedup: Option<u64>,
+}
+
+fn parse_claude_line(line: &str) -> Option<Rec> {
     if !line.contains("\"usage\"") {
         return None;
     }
@@ -149,9 +299,7 @@ fn parse_claude_line(line: &str, today: NaiveDate) -> Option<Entry> {
     if o.get("type").and_then(Value::as_str) != Some("assistant") {
         return None;
     }
-    if !is_today(o.get("timestamp")?.as_str()?, today) {
-        return None;
-    }
+    let hour = hour_of(o.get("timestamp")?.as_str()?)?;
     let msg = o.get("message")?;
     let usage = msg.get("usage")?;
     let model = msg.get("model").and_then(Value::as_str).unwrap_or("").to_string();
@@ -165,24 +313,41 @@ fn parse_claude_line(line: &str, today: NaiveDate) -> Option<Entry> {
     } else {
         format!("{id}|{req}")
     };
+    let dedup = (!key.is_empty()).then(|| {
+        let mut h = DefaultHasher::new();
+        key.hash(&mut h);
+        h.finish()
+    });
     let cw_total = u(usage, "cache_creation_input_tokens");
     let (cw5, cw1) = match usage.get("cache_creation") {
         Some(c) => (u(c, "ephemeral_5m_input_tokens"), u(c, "ephemeral_1h_input_tokens")),
         None => (cw_total, 0),
     };
     let (cw5, cw1) = if cw5 + cw1 == 0 { (cw_total, 0) } else { (cw5, cw1) };
-    Some(Entry {
-        key,
+    Some(Rec {
+        hour,
         model,
-        input: u(usage, "input_tokens"),
-        output: u(usage, "output_tokens"),
-        cache_read: u(usage, "cache_read_input_tokens"),
-        cache_write_5m: cw5,
-        cache_write_1h: cw1,
+        dedup,
+        agg: Agg {
+            input: u(usage, "input_tokens"),
+            output: u(usage, "output_tokens"),
+            cache_read: u(usage, "cache_read_input_tokens"),
+            cache_write_5m: cw5,
+            cache_write_1h: cw1,
+            requests: 1,
+        },
     })
 }
 
-fn parse_codex_line(line: &str, today: NaiveDate, st: &mut FileState) -> Option<Entry> {
+fn parse_codex_line(line: &str, st: &mut FileState) -> Option<Rec> {
+    if line.contains("\"turn_context\"") {
+        if let Ok(o) = serde_json::from_str::<Value>(line) {
+            if let Some(m) = o.pointer("/payload/model").and_then(Value::as_str) {
+                st.model = m.to_string();
+            }
+        }
+        return None;
+    }
     if !line.contains("token_count") {
         return None;
     }
@@ -197,34 +362,76 @@ fn parse_codex_line(line: &str, today: NaiveDate, st: &mut FileState) -> Option<
         return None; // repeated event, nothing new
     }
     st.last_total = total;
-    if !is_today(o.get("timestamp")?.as_str()?, today) {
-        return None;
-    }
+    let hour = hour_of(o.get("timestamp")?.as_str()?)?;
     let last = info.get("last_token_usage")?;
     let input = u(last, "input_tokens");
     let cached = u(last, "cached_input_tokens");
-    Some(Entry {
-        key: String::new(),
-        model: String::new(),
-        input: input.saturating_sub(cached),
-        output: u(last, "output_tokens"),
-        cache_read: cached,
-        cache_write_5m: u(last, "cache_write_input_tokens"),
-        cache_write_1h: 0,
+    Some(Rec {
+        hour,
+        model: st.model.clone(),
+        dedup: None,
+        agg: Agg {
+            input: input.saturating_sub(cached),
+            output: u(last, "output_tokens"),
+            cache_read: cached,
+            cache_write_5m: u(last, "cache_write_input_tokens"),
+            cache_write_1h: 0,
+            requests: 1,
+        },
     })
 }
 
-fn read_new_lines(path: &Path, st: &mut FileState, mut f: impl FnMut(&str, &mut FileState) -> Option<Entry>) {
-    let Ok(file) = File::open(path) else { return };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    if len < st.offset {
-        *st = FileState::default(); // truncated / rewritten
-    }
-    let mut reader = BufReader::new(file);
-    if reader.seek(SeekFrom::Start(st.offset)).is_err() {
+fn collect_jsonl(dir: &Path, since: SystemTime, depth: u32, out: &mut Vec<PathBuf>) {
+    if depth == 0 {
         return;
     }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for ent in rd.flatten() {
+        let p = ent.path();
+        let Ok(ft) = ent.file_type() else { continue };
+        if ft.is_dir() {
+            collect_jsonl(&p, since, depth - 1, out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            let fresh = ent.metadata().and_then(|m| m.modified()).map(|t| t >= since).unwrap_or(false);
+            if fresh {
+                out.push(p);
+            }
+        }
+    }
+}
+
+fn files_of(src: &Source, since: SystemTime) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    match src {
+        Source::Claude { config_dir, .. } => collect_jsonl(&config_dir.join("projects"), since, 6, &mut files),
+        Source::Codex { codex_home, .. } => collect_jsonl(&codex_home.join("sessions"), since, 4, &mut files),
+    }
+    files
+}
+
+/// Reads what was appended to `path` since last time and adds it to the ledger.
+/// The file is read without holding the ledger lock.
+fn scan_file(src: &Source, path: &Path) {
+    let key = path.to_string_lossy().to_string();
+    let acc = src.account().to_string();
+    let len = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let start = {
+        let Ok(l) = ledger().lock() else { return };
+        match l.files.get(&key) {
+            Some(st) if st.account == acc && st.offset == len => return, // nothing new
+            Some(st) if st.account == acc && st.offset < len => st.clone(),
+            _ => FileState { account: acc.clone(), ..Default::default() }, // new, rewritten or moved
+        }
+    };
+    let Ok(file) = File::open(path) else { return };
+    let mut reader = BufReader::new(file);
+    if reader.seek(SeekFrom::Start(start.offset)).is_err() {
+        return;
+    }
+    let mut st = start.clone();
+    let mut recs = Vec::new();
     let mut buf = Vec::new();
+    let codex = matches!(src, Source::Codex { .. });
     loop {
         buf.clear();
         match reader.read_until(b'\n', &mut buf) {
@@ -235,84 +442,230 @@ fn read_new_lines(path: &Path, st: &mut FileState, mut f: impl FnMut(&str, &mut 
                 }
                 st.offset += n as u64;
                 if let Ok(line) = std::str::from_utf8(&buf) {
-                    if let Some(e) = f(line, st) {
-                        st.entries.push(e);
+                    let rec = if codex { parse_codex_line(line, &mut st) } else { parse_claude_line(line) };
+                    if let Some(r) = rec {
+                        recs.push(r);
                     }
                 }
             }
         }
     }
+    let cut = Local::now().timestamp() - KEEP_DAYS * 24 * HOUR;
+    let Ok(mut l) = ledger().lock() else { return };
+    // Another scan got here first: drop ours.
+    let current = l.files.get(&key).map(|s| s.offset);
+    if current.is_some_and(|o| o != start.offset) {
+        return;
+    }
+    for r in recs {
+        if r.hour < cut {
+            continue;
+        }
+        if let Some(h) = r.dedup {
+            // Per account: the same log re-attributed to another account counts there.
+            let mut hs = DefaultHasher::new();
+            (h, acc.as_str()).hash(&mut hs);
+            if l.seen.insert(hs.finish(), r.hour).is_some() {
+                continue;
+            }
+        }
+        l.buckets.entry(bucket_key(&acc, r.hour, &r.model)).or_default().add(&r.agg);
+    }
+    l.files.insert(key, st);
+    l.dirty = true;
 }
 
-/// Today's usage for every source. Blocking (file IO) — call from a blocking task.
+static BACKFILLING: AtomicBool = AtomicBool::new(false);
+
+fn backfill(sources: Vec<Source>) {
+    if BACKFILLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let since = SystemTime::now() - Duration::from_secs((KEEP_DAYS * 24 * HOUR) as u64);
+        for src in &sources {
+            for p in files_of(src, since) {
+                scan_file(src, &p);
+            }
+        }
+        if let Ok(mut l) = ledger().lock() {
+            l.backfilled = true;
+            l.dirty = true;
+            prune(&mut l, Local::now().timestamp());
+            save(&mut l);
+        }
+        BACKFILLING.store(false, Ordering::SeqCst);
+    });
+}
+
+fn known() -> &'static Mutex<Vec<String>> {
+    static K: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    K.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Scans recent logs and returns today's usage per source. Blocking (file IO).
+/// The first time (or when an account appears) it also starts a background
+/// backfill of the last `KEEP_DAYS` days.
 pub fn compute(sources: &[Source]) -> Vec<UsageToday> {
     let now = Local::now();
-    let today = now.date_naive();
-    let midnight: SystemTime = Local
-        .from_local_datetime(&today.and_hms_opt(0, 0, 0).unwrap())
+    let midnight_ts = Local
+        .from_local_datetime(&now.date_naive().and_hms_opt(0, 0, 0).unwrap())
         .earliest()
-        .map(SystemTime::from)
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-
-    let Ok(mut sc) = scanner().lock() else { return Vec::new() };
-    if sc.day != Some(today) {
-        sc.files.clear();
-        sc.day = Some(today);
+        .map(|t| t.timestamp())
+        .unwrap_or(0);
+    // Files touched in the last two days cover anything that can still change.
+    let since = SystemTime::now() - Duration::from_secs(2 * 24 * HOUR as u64);
+    for src in sources {
+        for p in files_of(src, since) {
+            scan_file(src, &p);
+        }
     }
 
-    let mut out = Vec::new();
-    for src in sources {
-        match src {
-            Source::Claude { account_id, config_dir } => {
-                let mut files = Vec::new();
-                collect_jsonl(&config_dir.join("projects"), midnight, 6, &mut files);
-                let mut seen: HashSet<String> = HashSet::new();
-                let mut acc = UsageToday { account_id: account_id.clone(), cost_usd: Some(0.0), ..Default::default() };
-                for p in files {
-                    let st = sc.files.entry(p.clone()).or_default();
-                    read_new_lines(&p, st, |l, _| parse_claude_line(l, today));
-                    for e in &st.entries {
-                        if !e.key.is_empty() && !seen.insert(e.key.clone()) {
-                            continue;
-                        }
-                        add(&mut acc, e);
-                        *acc.cost_usd.as_mut().unwrap() += entry_cost(e);
-                    }
-                }
-                out.push(acc);
+    let ids: Vec<String> = sources.iter().map(|s| s.account().to_string()).collect();
+    let new_account = known().lock().map(|mut k| {
+        let fresh = ids.iter().any(|i| !k.contains(i));
+        *k = ids.clone();
+        fresh
+    });
+    let need_backfill = ledger().lock().map(|l| !l.backfilled).unwrap_or(false);
+    if need_backfill || new_account.unwrap_or(false) {
+        backfill(sources.to_vec());
+    }
+
+    let Ok(mut l) = ledger().lock() else { return Vec::new() };
+    prune(&mut l, now.timestamp());
+    if !BACKFILLING.load(Ordering::SeqCst) {
+        save(&mut l);
+    }
+    let mut out: HashMap<String, UsageToday> = HashMap::new();
+    for (k, a) in &l.buckets {
+        let Some((acc, h, model)) = split_key(k) else { continue };
+        if h + HOUR <= midnight_ts || !ids.iter().any(|i| i == acc) {
+            continue;
+        }
+        let t = out.entry(acc.to_string()).or_insert_with(|| UsageToday { account_id: acc.to_string(), ..Default::default() });
+        t.input_tokens += a.input;
+        t.output_tokens += a.output;
+        t.cache_read_tokens += a.cache_read;
+        t.cache_write_tokens += a.cache_write_5m + a.cache_write_1h;
+        t.total_tokens += a.total();
+        t.requests += a.requests;
+        if let Some(c) = cost_of(model, a) {
+            *t.cost_usd.get_or_insert(0.0) += c.input + c.output + c.cache_read + c.cache_write;
+        }
+    }
+    ids.into_iter().map(|i| out.remove(&i).unwrap_or(UsageToday { account_id: i, ..Default::default() })).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Report for the analytics view.
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportRow {
+    /// Start of the slot (unix seconds): an hour for "day", a local day otherwise.
+    pub t: i64,
+    pub account_id: String,
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub requests: u64,
+    pub cost: Option<Cost>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPrice {
+    pub model: String,
+    pub price: Option<Price>,
+    pub custom: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageReport {
+    pub period: String,
+    pub from: i64,
+    pub to: i64,
+    /// "hour" or "day"
+    pub slot: String,
+    pub rows: Vec<ReportRow>,
+    pub models: Vec<ModelPrice>,
+    /// Still reading older logs: totals may grow.
+    pub backfilling: bool,
+}
+
+fn local_day_start(ts: i64) -> i64 {
+    let d = Local.timestamp_opt(ts, 0).single().unwrap_or_else(Local::now);
+    Local
+        .from_local_datetime(&d.date_naive().and_hms_opt(0, 0, 0).unwrap())
+        .earliest()
+        .map(|t| t.timestamp())
+        .unwrap_or(ts - ts.rem_euclid(24 * HOUR))
+}
+
+/// period: "day" (24 h, hourly), "week" (7 d), "month" (30 d), "quarter" (90 d).
+pub fn report(period: &str) -> UsageReport {
+    let now = Local::now();
+    let now_ts = now.timestamp();
+    let (from, slot) = match period {
+        "day" => {
+            let cur = now_ts - (now.minute() as i64 * 60 + now.second() as i64);
+            (cur - 23 * HOUR, "hour")
+        }
+        "month" => (local_day_start(now_ts - 29 * 24 * HOUR), "day"),
+        "quarter" => (local_day_start(now_ts - 89 * 24 * HOUR), "day"),
+        _ => (local_day_start(now_ts - 6 * 24 * HOUR), "day"),
+    };
+    let mut agg: HashMap<(i64, String, String), Agg> = HashMap::new();
+    let mut models: Vec<String> = Vec::new();
+    let ids = known().lock().map(|k| k.clone()).unwrap_or_default();
+    if let Ok(l) = ledger().lock() {
+        for (k, a) in &l.buckets {
+            let Some((acc, h, model)) = split_key(k) else { continue };
+            if h < from || (!ids.is_empty() && !ids.iter().any(|i| i == acc)) {
+                continue;
             }
-            Source::Codex { account_id, codex_home } => {
-                let mut files = Vec::new();
-                for d in [today, today.pred_opt().unwrap_or(today)] {
-                    let dir = codex_home
-                        .join("sessions")
-                        .join(d.format("%Y").to_string())
-                        .join(d.format("%m").to_string())
-                        .join(d.format("%d").to_string());
-                    collect_jsonl(&dir, midnight, 1, &mut files);
-                }
-                let mut acc = UsageToday { account_id: account_id.clone(), ..Default::default() };
-                for p in files {
-                    let st = sc.files.entry(p.clone()).or_default();
-                    read_new_lines(&p, st, |l, s| parse_codex_line(l, today, s));
-                    for e in &st.entries {
-                        add(&mut acc, e);
-                    }
-                }
-                out.push(acc);
+            let t = if slot == "hour" { h } else { local_day_start(h) };
+            agg.entry((t, acc.to_string(), model.to_string())).or_default().add(a);
+            if !models.iter().any(|m| m == model) {
+                models.push(model.to_string());
             }
         }
     }
-    out
-}
-
-fn add(acc: &mut UsageToday, e: &Entry) {
-    acc.input_tokens += e.input;
-    acc.output_tokens += e.output;
-    acc.cache_read_tokens += e.cache_read;
-    acc.cache_write_tokens += e.cache_write_5m + e.cache_write_1h;
-    acc.total_tokens += e.input + e.output + e.cache_read + e.cache_write_5m + e.cache_write_1h;
-    acc.requests += 1;
+    let mut rows: Vec<ReportRow> = agg
+        .into_iter()
+        .map(|((t, account_id, model), a)| ReportRow {
+            t,
+            cost: cost_of(&model, &a),
+            account_id,
+            model,
+            input: a.input,
+            output: a.output,
+            cache_read: a.cache_read,
+            cache_write: a.cache_write_5m + a.cache_write_1h,
+            requests: a.requests,
+        })
+        .collect();
+    rows.sort_by(|a, b| a.t.cmp(&b.t).then(a.account_id.cmp(&b.account_id)));
+    models.sort();
+    UsageReport {
+        period: period.to_string(),
+        from,
+        to: now_ts,
+        slot: slot.to_string(),
+        rows,
+        models: models
+            .into_iter()
+            .map(|m| {
+                let p = price_of(&m);
+                ModelPrice { price: p.map(|x| x.0), custom: p.map(|x| x.1).unwrap_or(false), model: m }
+            })
+            .collect(),
+        backfilling: BACKFILLING.load(Ordering::SeqCst) || ledger().lock().map(|l| !l.backfilled).unwrap_or(true),
+    }
 }
 
 #[cfg(test)]
@@ -321,26 +674,74 @@ mod tests {
 
     #[test]
     fn claude_line_parses_and_prices() {
-        let today = Local::now().date_naive();
         let ts = Local::now().to_rfc3339();
         let line = format!(
-            r#"{{"type":"assistant","timestamp":"{ts}","requestId":"r1","message":{{"id":"m1","model":"claude-opus-5-5","usage":{{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}}}"#
+            r#"{{"type":"assistant","timestamp":"{ts}","requestId":"r1","message":{{"id":"m1","model":"claude-opus-5-5","usage":{{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":0}}}}}}"#
         );
-        let e = parse_claude_line(&line, today).unwrap();
-        assert_eq!(e.key, "m1|r1");
-        assert!((entry_cost(&e) - 4.0).abs() < 1e-9);
+        let r = parse_claude_line(&line).unwrap();
+        assert!(r.dedup.is_some());
+        let c = cost_of(&r.model, &r.agg).unwrap();
+        assert!((c.input - 4.0).abs() < 1e-9);
+        assert!((c.cache_read - 0.2).abs() < 1e-9);
+        assert!((c.cache_savings - 3.8).abs() < 1e-9);
     }
 
     #[test]
-    fn codex_skips_repeated_totals() {
-        let today = Local::now().date_naive();
+    fn codex_skips_repeated_totals_and_tracks_model() {
         let ts = Local::now().to_rfc3339();
+        let mut st = FileState::default();
+        let ctx = r#"{"type":"turn_context","payload":{"model":"gpt-5.6-terra"}}"#;
+        assert!(parse_codex_line(ctx, &mut st).is_none());
         let line = format!(
             r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"total_tokens":150}},"last_token_usage":{{"input_tokens":100,"cached_input_tokens":40,"output_tokens":50}}}}}}}}"#
         );
-        let mut st = FileState::default();
-        let e = parse_codex_line(&line, today, &mut st).unwrap();
-        assert_eq!((e.input, e.cache_read, e.output), (60, 40, 50));
-        assert!(parse_codex_line(&line, today, &mut st).is_none());
+        let r = parse_codex_line(&line, &mut st).unwrap();
+        assert_eq!((r.agg.input, r.agg.cache_read, r.agg.output), (60, 40, 50));
+        assert_eq!(r.model, "gpt-5.6-terra");
+        assert!(cost_of(&r.model, &r.agg).is_some());
+        assert!(parse_codex_line(&line, &mut st).is_none());
+    }
+
+    #[test]
+    fn unknown_model_has_no_price_until_overridden() {
+        assert!(price_of("some-new-model").is_none());
+        let mut m = HashMap::new();
+        m.insert("Some-New-Model".to_string(), Price { input: 1.0, output: 2.0, cache_read: 0.1, cache_write: 1.0 });
+        set_price_overrides(&m);
+        assert_eq!(price_of("some-new-model").map(|p| p.1), Some(true));
+        set_price_overrides(&HashMap::new());
+    }
+
+    #[test]
+    fn bucket_keys_round_trip() {
+        let k = bucket_key("claude:a b", 1_800_000_000, "claude-opus-5-5");
+        assert_eq!(split_key(&k), Some(("claude:a b", 1_800_000_000, "claude-opus-5-5")));
+    }
+}
+
+#[cfg(test)]
+mod real_logs {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn backfill_real_logs() {
+        let home = dirs::home_dir().unwrap();
+        let srcs = vec![
+            Source::Claude { account_id: "claude:main".into(), config_dir: home.join(".claude") },
+            Source::Codex { account_id: "codex:main".into(), codex_home: home.join(".codex") },
+        ];
+        let t0 = std::time::Instant::now();
+        let today = compute(&srcs);
+        eprintln!("today scan {:?}: {:?}", t0.elapsed(), today.iter().map(|u| (u.account_id.clone(), u.total_tokens, u.cost_usd)).collect::<Vec<_>>());
+        while BACKFILLING.load(Ordering::SeqCst) { std::thread::sleep(Duration::from_millis(200)); }
+        eprintln!("backfill done {:?}", t0.elapsed());
+        for p in ["day", "week", "month", "quarter"] {
+            let r = report(p);
+            let tok: u64 = r.rows.iter().map(|x| x.input + x.output + x.cache_read + x.cache_write).sum();
+            let cost: f64 = r.rows.iter().filter_map(|x| x.cost).map(|c| c.input + c.output + c.cache_read + c.cache_write).sum();
+            eprintln!("{p}: rows {} tokens {} cost {:.2} models {:?}", r.rows.len(), tok, cost, r.models.iter().map(|m| (&m.model, m.price.is_some())).collect::<Vec<_>>());
+        }
+        let sz = fs::metadata(ledger_path().unwrap()).map(|m| m.len()).unwrap_or(0);
+        eprintln!("ledger file {} KB", sz / 1024);
     }
 }

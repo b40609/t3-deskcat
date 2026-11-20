@@ -72,7 +72,7 @@ fn mobile_status(state: tauri::State<SharedState>) -> MobileStatus {
 
 /// Keep the phone page server matching the settings and the Tailscale address
 /// (Tailscale may start after DeskCat, or its address may change).
-fn spawn_mobile_supervisor(state: SharedState) {
+fn spawn_mobile_supervisor(app: AppHandle, state: SharedState) {
     tauri::async_runtime::spawn(async move {
         let mut running: Option<(std::net::SocketAddr, tauri::async_runtime::JoinHandle<()>)> = None;
         loop {
@@ -90,11 +90,10 @@ fn spawn_mobile_supervisor(state: SharedState) {
                 }
                 let mut status = MobileStatus::default();
                 if let Some(addr) = want {
-                    let st = state.clone();
+                    let remote = std::sync::Arc::new(make_remote(app.clone(), state.clone()));
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     let handle = tauri::async_runtime::spawn(async move {
-                        let snap = move || st.0.lock().ok().and_then(|g| g.snapshot.clone());
-                        let res = mobile::serve(addr, snap).await;
+                        let res = mobile::serve(addr, remote).await;
                         let _ = tx.send(res.err().map(|e| e.to_string()));
                     });
                     // Give bind a moment so a port clash is reported right away.
@@ -120,9 +119,146 @@ fn spawn_mobile_supervisor(state: SharedState) {
 #[derive(Clone)]
 struct SharedState(Arc<Mutex<InnerState>>);
 
+/// The phone page's view of the app: embedded frontend files and the few
+/// commands a phone may run.
+fn make_remote(app: AppHandle, state: SharedState) -> mobile::Remote {
+    let snap_state = state.clone();
+    let asset_app = app.clone();
+    mobile::Remote {
+        snapshot: Box::new(move || snap_state.0.lock().ok().and_then(|g| g.snapshot.clone())),
+        asset: Box::new(move |path| {
+            let a = asset_app.asset_resolver().get(path.to_string())?;
+            Some((a.bytes().to_vec(), a.mime_type().to_string()))
+        }),
+        invoke: Box::new(move |cmd, args| {
+            let app = app.clone();
+            let state = state.clone();
+            Box::pin(async move { remote_invoke(app, state, cmd, args).await })
+        }),
+    }
+}
+
+/// Commands the phone may run. Settings that only make sense on this PC (start
+/// with Windows, hotkey, folders, pet position, the phone server itself) are
+/// kept as they are, whatever the phone sends.
+async fn remote_invoke(
+    app: AppHandle,
+    state: SharedState,
+    cmd: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, (u16, String)> {
+    let json = |v: serde_json::Result<serde_json::Value>| v.map_err(|e| (500u16, e.to_string()));
+    match cmd.as_str() {
+        "get_snapshot" => json(serde_json::to_value(state.0.lock().ok().and_then(|g| g.snapshot.clone()))),
+        "get_settings" => json(serde_json::to_value(state.0.lock().map(|g| g.settings.clone()).unwrap_or_default())),
+        "refresh_now" => json(serde_json::to_value(run_refresh(&app, &state).await)),
+        "usage_report" => {
+            let period = args.get("period").and_then(|v| v.as_str()).unwrap_or("week").to_string();
+            let r = tokio::task::spawn_blocking(move || usage_stats::report(&period)).await.map_err(|e| (500, e.to_string()))?;
+            json(serde_json::to_value(r))
+        }
+        "account_sources" => json(serde_json::to_value(account_sources())),
+        "update_settings" => {
+            let mut next: AppSettings = serde_json::from_value(args.get("newSettings").cloned().unwrap_or_default())
+                .map_err(|e| (400u16, e.to_string()))?;
+            let cur = state.0.lock().map(|g| g.settings.clone()).map_err(|_| (500u16, "state".to_string()))?;
+            next.launch_at_startup = cur.launch_at_startup;
+            next.hotkey = cur.hotkey.clone();
+            next.panel_position = cur.panel_position.clone();
+            next.pet_x = cur.pet_x;
+            next.pet_y = cur.pet_y;
+            next.extra_account_dirs = cur.extra_account_dirs.clone();
+            next.mobile_enabled = cur.mobile_enabled;
+            next.mobile_port = cur.mobile_port;
+            next.custom_image_working = cur.custom_image_working.clone();
+            next.custom_image_sweating = cur.custom_image_sweating.clone();
+            next.custom_image_sleeping = cur.custom_image_sleeping.clone();
+            let snap = update_settings(app.clone(), app.state::<SharedState>(), next).map_err(|e| (400u16, e))?;
+            let _ = app.emit("snapshot-updated", &snap);
+            json(serde_json::to_value(snap))
+        }
+        _ => Err((403, "not allowed from the phone".to_string())),
+    }
+}
+
 #[tauri::command]
 fn get_snapshot(state: tauri::State<SharedState>) -> Option<DashboardSnapshot> {
     state.0.lock().ok().and_then(|s| s.snapshot.clone())
+}
+
+/// Add an account: create `~/.claude-<name>` / `~/.codex-<name>` and open a
+/// terminal running that CLI's own login against it (Antigravity: `agy`, which
+/// asks to sign in on first run). Discovery picks the account up once the
+/// login file is written; DeskCat never sees the password.
+#[tauri::command]
+fn add_account_login(provider: String, name: String) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or_else(|| tr!("找不到使用者資料夾"))?;
+    let slug: String = name.trim().to_ascii_lowercase();
+    let valid = !slug.is_empty() && slug.len() <= 24 && slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let (var, dir, cmd, marker) = match provider.as_str() {
+        "claude" => ("CLAUDE_CONFIG_DIR", Some(home.join(format!(".claude-{slug}"))), "claude auth login", ".credentials.json"),
+        "codex" => ("CODEX_HOME", Some(home.join(format!(".codex-{slug}"))), "codex login", "auth.json"),
+        "antigravity" => ("", None, "agy", ""),
+        _ => return Err(tr!("不支援的供應商")),
+    };
+    if let Some(dir) = &dir {
+        if !valid {
+            return Err(tr!("名稱只能用英文字母、數字、- 或 _"));
+        }
+        if dir.join(marker).exists() {
+            return Err(tr!("已經有叫這個名稱的帳號"));
+        }
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("cmd");
+        // `start` opens a new console window that inherits this environment.
+        c.args(["/C", "start", "", "cmd", "/K", cmd]);
+        if let Some(dir) = &dir {
+            c.env(var, dir);
+        }
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW for the outer cmd
+        c.spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (var, cmd);
+        return Err(tr!("這個系統請在終端機自行執行登入指令"));
+    }
+    #[allow(unreachable_code)]
+    Ok(dir.map(|d| d.to_string_lossy().to_string()).unwrap_or_default())
+}
+
+/// Opens (or brings back) the usage analytics window.
+fn show_analytics(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(w) = app.get_webview_window("analytics") {
+        let _ = w.unminimize();
+        w.show()?;
+        return w.set_focus();
+    }
+    let w = tauri::WebviewWindowBuilder::new(app, "analytics", tauri::WebviewUrl::App("analytics.html".into()))
+        .title(tr!("用量分析"))
+        .inner_size(1080.0, 760.0)
+        .min_inner_size(380.0, 480.0)
+        .resizable(true)
+        .center()
+        .build()?;
+    w.set_focus()
+}
+
+#[tauri::command]
+fn open_analytics(app: AppHandle) -> Result<(), String> {
+    show_analytics(&app).map_err(|e| e.to_string())
+}
+
+/// Token and cost history for the analytics view.
+#[tauri::command]
+async fn usage_report(period: String) -> usage_stats::UsageReport {
+    tokio::task::spawn_blocking(move || usage_stats::report(&period))
+        .await
+        .unwrap_or_else(|_| usage_stats::report("week"))
 }
 
 #[tauri::command]
@@ -177,6 +313,7 @@ fn update_settings(
 
         settings::save_settings(&clean)?;
         guard.settings = clean.clone();
+        usage_stats::set_price_overrides(&clean.model_prices);
         if i18n::set_lang(&clean.language) {
             if let (Some(tray), Ok(menu)) = (app.tray_by_id("main-tray"), build_tray_menu(&app)) {
                 let _ = tray.set_menu(Some(menu));
@@ -1129,10 +1266,11 @@ fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
 
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle_item = MenuItem::with_id(app, "toggle", tr!("展開 / 收合面板"), true, None::<&str>)?;
+    let analytics_item = MenuItem::with_id(app, "analytics", tr!("用量分析"), true, None::<&str>)?;
     let refresh_item = MenuItem::with_id(app, "refresh", tr!("立即更新額度"), true, None::<&str>)?;
     let reset_pos_item = MenuItem::with_id(app, "reset_pos", tr!("重設小貓位置"), true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", tr!("結束 T3 DeskCat"), true, None::<&str>)?;
-    Menu::with_items(app, &[&toggle_item, &refresh_item, &reset_pos_item, &quit_item])
+    Menu::with_items(app, &[&toggle_item, &analytics_item, &refresh_item, &reset_pos_item, &quit_item])
 }
 
 fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
@@ -1257,6 +1395,7 @@ pub fn run() {
     }
     let loaded_settings = settings::load_settings();
     i18n::set_lang(&loaded_settings.language);
+    usage_stats::set_price_overrides(&loaded_settings.model_prices);
     let shared = SharedState(Arc::new(Mutex::new(InnerState {
         settings: loaded_settings.clone(),
         snapshot: None,
@@ -1323,6 +1462,9 @@ pub fn run() {
             get_activity,
             show_bubble,
             hide_bubble,
+            usage_report,
+            open_analytics,
+            add_account_login,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1380,6 +1522,9 @@ pub fn run() {
                         "toggle" => {
                             let _ = toggle_panel_window(app);
                         }
+                        "analytics" => {
+                            let _ = show_analytics(app);
+                        }
                         "refresh" => {
                             let h = app.clone();
                             let s = state_c.clone();
@@ -1412,7 +1557,7 @@ pub fn run() {
 
             let _ = tray_builder.build(app)?;
 
-            spawn_mobile_supervisor(shared.clone());
+            spawn_mobile_supervisor(handle.clone(), shared.clone());
 
             // Background polling loop
             let poll_app = handle.clone();

@@ -1,10 +1,16 @@
-//! Read-only quota page for the phone, reachable only over Tailscale.
+//! Quota page for the phone, reachable only over Tailscale.
 //!
 //! The server binds to this PC's Tailscale address (100.64.0.0/10) only, so it
 //! is invisible on the LAN / internet; only devices on your tailnet can open it.
-//! It serves percentages and names, never credentials.
+//! It never serves credentials.
 //!
-//! Routes: `/` (page), `/api/snapshot` (JSON), `/manifest.webmanifest`, `/icon.png`.
+//! The phone gets the same panel and analytics pages as the desktop (the built
+//! frontend assets), talking back through `POST /api/invoke/<command>`; only the
+//! commands `remote_invoke` in lib.rs allows are answered.
+//!
+//! Routes: `/` (panel), `/analytics.html`, `/assets/*`, `/api/invoke/<cmd>`,
+//! `/api/snapshot` (compact JSON, kept for older home-screen shortcuts),
+//! `/manifest.webmanifest`, `/icon.png`.
 
 use crate::models::{AppSettings, DashboardSnapshot, Forecast, QuotaWindow, SmartPick};
 use crate::usage_stats::UsageToday;
@@ -14,7 +20,22 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+/// Fallback page when the built panel is not embedded (dev builds).
 const PAGE: &str = include_str!("mobile.html");
+const MAX_BODY: usize = 12 * 1024 * 1024;
+
+/// What the server needs from the app.
+pub struct Remote {
+    pub snapshot: Box<dyn Fn() -> Option<DashboardSnapshot> + Send + Sync>,
+    /// Embedded frontend file by path ("panel.html", "assets/x.js") -> (bytes, mime).
+    pub asset: Box<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>,
+    /// Runs an allowed command: Ok(json) or Err((http status, message)).
+    pub invoke: Box<
+        dyn Fn(String, serde_json::Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, (u16, String)>> + Send>>
+            + Send
+            + Sync,
+    >,
+}
 const ICON: &[u8] = include_bytes!("../icons/touch-icon.png");
 
 /// This PC's Tailscale IPv4 (CGNAT range 100.64.0.0/10), if Tailscale is up.
@@ -142,7 +163,7 @@ fn view(snap: &DashboardSnapshot) -> MobileView {
     }
 }
 
-const MANIFEST: &str = r##"{"name":"T3 DeskCat","short_name":"額度","start_url":"/","display":"standalone","background_color":"#f2f2f7","theme_color":"#f2f2f7","icons":[{"src":"/icon.png","sizes":"256x256","type":"image/png"}]}"##;
+const MANIFEST: &str = r##"{"name":"T3 DeskCat","short_name":"額度","start_url":"/","display":"standalone","background_color":"#f3f3f3","theme_color":"#f3f3f3","icons":[{"src":"/icon.png","sizes":"256x256","type":"image/png"}]}"##;
 
 async fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) {
     let head = format!(
@@ -154,31 +175,73 @@ async fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8])
     let _ = stream.shutdown().await;
 }
 
-async fn handle(mut stream: TcpStream, snapshot: impl Fn() -> Option<DashboardSnapshot>) {
-    let mut buf = vec![0u8; 4096];
-    let mut n = 0;
-    // Read just the request head (GET only, no body).
-    while n < buf.len() {
-        match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf[n..])).await {
+async fn handle(mut stream: TcpStream, remote: std::sync::Arc<Remote>) {
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
+    let mut chunk = vec![0u8; 16384];
+    let mut head_end = None;
+    // Read the request head.
+    while head_end.is_none() && buf.len() < 16384 {
+        match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk)).await {
             Ok(Ok(0)) | Err(_) | Ok(Err(_)) => break,
             Ok(Ok(k)) => {
-                n += k;
-                if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
+                buf.extend_from_slice(&chunk[..k]);
+                head_end = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
             }
         }
     }
-    let head = String::from_utf8_lossy(&buf[..n]);
+    let Some(head_end) = head_end else { return };
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
     let mut parts = head.split_whitespace();
-    let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-    let path = target.split('?').next().unwrap_or("");
-    if method != "GET" {
-        return respond(&mut stream, "405 Method Not Allowed", "text/plain", b"GET only").await;
+    let (method, target) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
+    let path = target.split('?').next().unwrap_or("").to_string();
+
+    if method == "POST" {
+        let Some(cmd) = path.strip_prefix("/api/invoke/") else {
+            return respond(&mut stream, "404 Not Found", "text/plain", b"not found").await;
+        };
+        let len: usize = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim().eq_ignore_ascii_case("content-length").then(|| v.trim().parse().ok())?
+            })
+            .unwrap_or(0);
+        if len > MAX_BODY {
+            return respond(&mut stream, "413 Payload Too Large", "text/plain", b"too large").await;
+        }
+        let mut body = buf[head_end..].to_vec();
+        while body.len() < len {
+            match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Err(_) | Ok(Err(_)) => break,
+                Ok(Ok(k)) => body.extend_from_slice(&chunk[..k]),
+            }
+        }
+        let args: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+        return match (remote.invoke)(cmd.to_string(), args).await {
+            Ok(v) => {
+                let out = serde_json::to_vec(&v).unwrap_or_default();
+                respond(&mut stream, "200 OK", "application/json; charset=utf-8", &out).await
+            }
+            Err((code, msg)) => {
+                let status = match code {
+                    403 => "403 Forbidden",
+                    400 => "400 Bad Request",
+                    503 => "503 Service Unavailable",
+                    _ => "500 Internal Server Error",
+                };
+                respond(&mut stream, status, "text/plain; charset=utf-8", msg.as_bytes()).await
+            }
+        };
     }
-    match path {
-        "/" | "/index.html" => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE.as_bytes()).await,
-        "/api/snapshot" => match snapshot() {
+    if method != "GET" {
+        return respond(&mut stream, "405 Method Not Allowed", "text/plain", b"GET or POST").await;
+    }
+    match path.as_str() {
+        "/" | "/index.html" | "/panel.html" => match (remote.asset)("panel.html") {
+            Some((b, mime)) => respond(&mut stream, "200 OK", &mime, &b).await,
+            None => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE.as_bytes()).await,
+        },
+        "/api/snapshot" => match (remote.snapshot)() {
             Some(snap) => {
                 let body = serde_json::to_vec(&view(&snap)).unwrap_or_default();
                 respond(&mut stream, "200 OK", "application/json; charset=utf-8", &body).await
@@ -189,15 +252,22 @@ async fn handle(mut stream: TcpStream, snapshot: impl Fn() -> Option<DashboardSn
             respond(&mut stream, "200 OK", "application/manifest+json", MANIFEST.as_bytes()).await
         }
         "/icon.png" | "/apple-touch-icon.png" => respond(&mut stream, "200 OK", "image/png", ICON).await,
+        p if p == "/analytics.html" || p.starts_with("/assets/") => {
+            let rel = p.trim_start_matches('/');
+            if rel.contains("..") {
+                return respond(&mut stream, "404 Not Found", "text/plain", b"not found").await;
+            }
+            match (remote.asset)(rel) {
+                Some((b, mime)) => respond(&mut stream, "200 OK", &mime, &b).await,
+                None => respond(&mut stream, "404 Not Found", "text/plain", b"not found").await,
+            }
+        }
         _ => respond(&mut stream, "404 Not Found", "text/plain", b"not found").await,
     }
 }
 
-/// Serve until the listener fails. `snapshot` reads the current snapshot.
-pub async fn serve<F>(addr: SocketAddr, snapshot: F) -> std::io::Result<()>
-where
-    F: Fn() -> Option<DashboardSnapshot> + Clone + Send + Sync + 'static,
-{
+/// Serve until the listener fails.
+pub async fn serve(addr: SocketAddr, remote: std::sync::Arc<Remote>) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -205,8 +275,8 @@ where
         if !matches!(peer.ip(), IpAddr::V4(v4) if is_tailscale(v4)) {
             continue;
         }
-        let snap = snapshot.clone();
-        tokio::spawn(async move { handle(stream, snap).await });
+        let r = remote.clone();
+        tokio::spawn(async move { handle(stream, r).await });
     }
 }
 

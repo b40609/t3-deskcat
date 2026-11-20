@@ -5,93 +5,8 @@
    The pace tick on each bar marks how much of the window's time has passed.
    ========================================================================== */
 
-:root {
-  color-scheme: light dark;
-  --bg: #f3f3f3;
-  --card: #fbfbfb;
-  --fill: rgba(0, 0, 0, 0.045);
-  --fill-strong: rgba(0, 0, 0, 0.08);
-  --sep: rgba(0, 0, 0, 0.075);
-  --stroke: rgba(0, 0, 0, 0.1);
-  --label: #1b1b1b;
-  --label-2: rgba(0, 0, 0, 0.6);
-  --label-3: rgba(0, 0, 0, 0.42);
-  --ink: rgba(0, 0, 0, 0.62);
-  --track: rgba(0, 0, 0, 0.08);
-  --accent: #005fb8;
-  --on-accent: #ffffff;
-  --warn: #9d5d00;
-  --good-ink: #0f7b0f;
-  --warn-ink: #a25e00;
-  --bad: #c42b1c;
-  --bad-ink: #c42b1c;
-  --claude: #c96442;
-  --ag: #3367d6;
-  --codex: #10865f;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.08);
-  --knob: #ffffff;
-  --ui-zoom: 0.9;
-  --ease: cubic-bezier(0.2, 0, 0, 1);
-}
+@import "./tokens.css";
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #202020;
-    --card: #2b2b2b;
-    --fill: rgba(255, 255, 255, 0.05);
-    --fill-strong: rgba(255, 255, 255, 0.09);
-    --sep: rgba(255, 255, 255, 0.07);
-    --stroke: rgba(255, 255, 255, 0.1);
-    --label: #ffffff;
-    --label-2: rgba(255, 255, 255, 0.7);
-    --label-3: rgba(255, 255, 255, 0.46);
-    --ink: rgba(255, 255, 255, 0.72);
-    --track: rgba(255, 255, 255, 0.1);
-    --accent: #60cdff;
-    --on-accent: #000000;
-    --warn: #fce100;
-    --good-ink: #6ccb5f;
-    --warn-ink: #e3b341;
-    --bad: #ff99a4;
-    --bad-ink: #ff6b7a;
-    --claude: #e08a6a;
-    --ag: #7aa7ff;
-    --codex: #4cc79a;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
-    --knob: #ffffff;
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg: #202020;
-  --card: #2b2b2b;
-  --fill: rgba(255, 255, 255, 0.05);
-  --fill-strong: rgba(255, 255, 255, 0.09);
-  --sep: rgba(255, 255, 255, 0.07);
-  --stroke: rgba(255, 255, 255, 0.1);
-  --label: #ffffff;
-  --label-2: rgba(255, 255, 255, 0.7);
-  --label-3: rgba(255, 255, 255, 0.46);
-  --ink: rgba(255, 255, 255, 0.72);
-  --track: rgba(255, 255, 255, 0.1);
-  --accent: #60cdff;
-  --on-accent: #000000;
-  --warn: #fce100;
-  --good-ink: #6ccb5f;
-    --warn-ink: #e3b341;
-  --bad: #ff99a4;
-  --bad-ink: #ff6b7a;
-  --claude: #e08a6a;
-  --ag: #7aa7ff;
-  --codex: #4cc79a;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
-  color-scheme: dark;
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-}
 
 * {
   box-sizing: border-box;
@@ -1750,4 +1665,110 @@ svg {
 .promo .chev {
   width: 12px;
   height: 12px;
+}
+
+/* ---------------------------------------------------------------- sub pages */
+
+#view-sub {
+  z-index: 2;
+}
+
+.shell.show-sub #view-settings {
+  transform: translateX(-16%);
+  opacity: 0;
+}
+
+.shell.show-sub #view-sub {
+  transform: translateX(0);
+}
+
+.list-gap {
+  margin-top: 8px;
+}
+
+.row-button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.row-button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--label));
+}
+
+.row-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.provider-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.provider-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  text-align: left;
+  font-weight: 500;
+  transition: border-color 0.12s var(--ease);
+}
+
+.provider-btn:hover {
+  background: color-mix(in srgb, var(--card) 92%, var(--label));
+}
+
+.provider-btn.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--label);
+  border-radius: 6px;
+  border: 1px solid var(--stroke);
+  background: var(--fill);
+  user-select: text;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--card);
+}
+
+/* phone: things that only make sense on the desktop are hidden */
+body.remote .desktop-only {
+  display: none !important;
+}
+
+html.remote,
+html.remote body {
+  background: var(--bg);
+}
+
+html.remote .shell {
+  inset: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+html.remote .nav-large,
+html.remote .nav-bar {
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+
+html.remote .scroll {
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }

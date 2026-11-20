@@ -71,6 +71,7 @@ export type PanelPosition = "pet" | "top_right" | "bottom_right" | "top_left" | 
 export type PetTheme = "hud_gauge" | "desk_cat" | "custom";
 
 export interface AppSettings {
+  modelPrices?: Record<string, Price>;
   petSize: number;
   workingThreshold: number;
   sleepingThreshold: number;
@@ -149,4 +150,42 @@ export interface AgentActivity {
   state: "working" | "done" | "error" | "idle" | "unknown";
   accountId: string | null;
   lastWrite: number;
+}
+
+/** USD per million tokens. */
+export interface Price {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface Cost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheSavings: number;
+}
+
+export interface ReportRow {
+  t: number;
+  accountId: string;
+  model: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  requests: number;
+  cost: Cost | null;
+}
+
+export interface UsageReport {
+  period: "day" | "week" | "month" | "quarter";
+  from: number;
+  to: number;
+  slot: "hour" | "day";
+  rows: ReportRow[];
+  models: { model: string; price: Price | null; custom: boolean }[];
+  backfilling: boolean;
 }

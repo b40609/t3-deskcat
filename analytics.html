@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>用量分析</title>
+    <link rel="stylesheet" href="/src/analytics.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="top">
+        <div class="title">
+          <a href="/" class="back" id="lnk-back" hidden aria-label="返回" data-i18n-attr="aria-label"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M15 4l-8 8 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          <h1 data-i18n>用量分析</h1>
+          <span id="status" class="muted"></span>
+        </div>
+        <div class="controls">
+          <div class="segmented" id="seg-metric" role="tablist" style="--n: 2">
+            <button class="seg-btn active" data-v="cost" data-i18n>費用</button>
+            <button class="seg-btn" data-v="tokens" data-i18n>Token</button>
+          </div>
+          <div class="segmented" id="seg-period" role="tablist" style="--n: 4">
+            <button class="seg-btn" data-v="day" data-i18n>24 小時</button>
+            <button class="seg-btn active" data-v="week" data-i18n>7 天</button>
+            <button class="seg-btn" data-v="month" data-i18n>30 天</button>
+            <button class="seg-btn" data-v="quarter" data-i18n>90 天</button>
+          </div>
+          <select id="sel-account" class="select" aria-label="帳號" data-i18n-attr="aria-label"></select>
+        </div>
+      </header>
+
+      <section class="kpis" id="kpis"></section>
+
+      <section class="card chart-card">
+        <div class="card-head">
+          <h2 id="chart-title"></h2>
+          <span id="chart-note" class="muted"></span>
+        </div>
+        <div class="chart" id="chart"></div>
+        <div class="tip" id="tip" hidden></div>
+        <ol class="legend" id="legend"></ol>
+      </section>
+
+      <div class="split">
+        <section class="card">
+          <div class="card-head"><h2 data-i18n>依類型</h2></div>
+          <div class="stack" id="type-stack"></div>
+          <ul class="rank" id="by-type"></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2 data-i18n>依模型</h2></div>
+          <ul class="rank" id="by-model"></ul>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 data-i18n>模型價格</h2>
+          <span class="muted" data-i18n>每百萬 Token 的美元價格，費用照這裡估算</span>
+        </div>
+        <div class="prices" id="prices"></div>
+      </section>
+
+      <p class="foot muted" data-i18n>費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code 與 Codex 紀錄，保留 90 天</p>
+    </main>
+    <script type="module" src="/src/analytics.ts"></script>
+  </body>
+</html>
