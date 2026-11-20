@@ -67,6 +67,13 @@ Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), fr
 
 ---
 
+## ❓ FAQ
+
+- **An account is missing?** Open `%APPDATA%\t3-deskcat\deskcat.log`; it lists every detected account and where it came from. Add folders outside the default locations to `extraAccountDirs` in `settings.json`.
+- **Only one Antigravity account?** Without T3 Code, Antigravity is read through the official `agy` CLI, which is signed in to one account at a time. T3 Code's multi-account instances show several.
+- **"Credentials expired"?** DeskCat never refreshes or rewrites sign-ins. Use that account once in Claude Code / Codex / Antigravity and it updates itself.
+- **SmartScreen warning on install?** The installer is not code-signed yet. Click "More info" → "Run anyway", or build from source below.
+- **Phone page?** Off by default. It needs this PC and your phone on the same Tailscale network; turn it on in Settings.
 ## 🔒 Security & Privacy First
 
 - **No Telemetry**: No third-party analytics, metrics collection, or tracking scripts.

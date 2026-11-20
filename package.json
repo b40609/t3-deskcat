@@ -1,6 +1,6 @@
 {
   "name": "t3-deskcat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop pet & multi-account AI quota monitor for T3 Code (Claude, Antigravity, Codex)",
   "type": "module",

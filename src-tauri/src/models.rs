@@ -231,7 +231,7 @@ pub struct AppSettings {
 
     // ---- Phone
     /// Serve the read-only quota page on this PC's Tailscale address.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub mobile_enabled: bool,
     #[serde(default = "default_mobile_port")]
     pub mobile_port: u16,
@@ -335,7 +335,7 @@ impl Default for AppSettings {
             show_forecast: true,
             show_usage_stats: true,
             tray_style: default_tray_style(),
-            mobile_enabled: true,
+            mobile_enabled: false,
             mobile_port: default_mobile_port(),
             extra_account_dirs: Vec::new(),
         }
