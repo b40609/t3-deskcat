@@ -167,19 +167,13 @@ function providerLabel(p: ProviderKind): string {
   return PROVIDERS.find((x) => x.kind === p)?.label ?? p;
 }
 
-function providerGlyph(p: ProviderKind): string {
-  if (p === "claude") return "C";
-  if (p === "antigravity") return "A";
-  return "G";
-}
-
 /** Custom avatar if set, else the provider letter tile. */
 function avatarHtml(id: string, provider: ProviderKind): string {
   const av = cfg().accountPrefs?.[id]?.avatar;
   if (av && av.startsWith("data:image/")) {
     return `<span class="p-icon has-img"><img src="${escapeHtml(av)}" alt="" /></span>`;
   }
-  return `<span class="p-icon ${provider}">${providerGlyph(provider)}</span>`;
+  return `<span class="p-icon ${provider}"><svg><use href="#m-${provider}" /></svg></span>`;
 }
 
 /** Downscale a picked image to a 96px square JPEG/PNG data URL. */
@@ -255,23 +249,44 @@ function windowName(label: string, provider: ProviderKind): string {
   return pool ? `${base === "週" ? "Wk" : base} · ${pool}` : base === "週" ? "Wk" : base;
 }
 
+/** Length of a limit window in seconds, from its label ("5h", "Wk", "3P Wk"). */
+function windowSeconds(label: string): number | null {
+  if (/(^|\s)5h(\s|$)/.test(label)) return 5 * 3600;
+  if (/(^|\s)(Wk|週)(\s|$)/.test(label)) return 7 * 86400;
+  return null;
+}
+
+/** Share of the window's time already gone (0–100), or null when unknown. */
+function elapsedPercent(label: string, resetAt: number | null): number | null {
+  const len = windowSeconds(label);
+  if (!len || !resetAt) return null;
+  const left = resetAt - Date.now() / 1000;
+  if (left <= 0 || left > len) return null;
+  return Math.round((1 - left / len) * 100);
+}
+
 function renderWindow(
   w: { label: string; remainingPercent: number; resetAt: number | null },
   provider: ProviderKind,
-  fc?: Forecast,
 ) {
   const showUsed = ((currentSettings ?? fallbackSettings).usageDisplay ?? "used") === "used";
   const remaining = Math.max(0, Math.min(100, w.remainingPercent));
   const value = showUsed ? 100 - remaining : remaining;
   const tone = getTone(remaining);
   const reset = formatResetAt(w.resetAt);
+  const elapsed = elapsedPercent(w.label, w.resetAt);
+  // The tick sits where the fill would be if usage kept pace with time.
+  const pace =
+    elapsed == null
+      ? ""
+      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="時間已過 ${elapsed}%：${showUsed ? "填色超過刻度代表用得比時間快" : "填色短於刻度代表用得比時間快"}"></i>`;
   return `
     <div class="win">
       <div class="win-line">
-        <span class="win-name">${escapeHtml(windowName(w.label, provider))}${fc && fc.label === w.label && cfg().showForecast !== false ? ` <span class="fc-${forecastLevel(fc)}" title="預計於重設前耗盡">⚠</span>` : ""}</span>
-        <span class="win-meta">${reset ? `<span class="win-reset">${reset}</span>` : ""}<span class="win-val">${value}%</span></span>
+        <span class="win-name">${escapeHtml(windowName(w.label, provider))}</span>
+        <span class="win-meta">${reset ? `<span class="win-reset">${reset}</span>` : ""}<span class="win-val ${tone === "good" ? "" : tone}">${value}%</span></span>
       </div>
-      <div class="bar"><span class="${showUsed ? `used-${tone}` : tone}" style="width:${value}%"></span></div>
+      <div class="bar"><span class="${tone === "good" ? "" : tone}" style="width:${value}%"></span>${pace}</div>
     </div>`;
 }
 
@@ -323,16 +338,15 @@ function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   if (mins < 0) return "";
   const name = escapeHtml(windowName(f.label, provider));
   const short = name.split(" · ")[0];
-  const when = mins < 60 ? `${Math.max(1, mins)}m 後` : shortWhen(f.exhaustAt);
+  const when = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : shortWhen(f.exhaustAt);
   const gap = forecastGap(f);
-  const text =
-    `⚠ ${short} ${when} 耗盡` + (gap != null ? ` · ${fmtGap(gap)}` : "") + ` · ${f.ratePerHour}%/h`;
+  const text = `${short} 照目前速度 ${when} 用完` + (gap != null ? `，比重設早 ${fmtGap(gap)}` : "");
   const tip =
     `依近期用量推算，${name} 預計 ${when} 耗盡` +
     (gap != null ? `，早於重設 ${fmtGap(gap)}` : "") +
     (f.resetAt ? `；${formatResetAt(f.resetAt)}` : "") +
     `。消耗速率 ${f.ratePerHour}%/h`;
-  return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}">${text}</div>`;
+  return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}"><svg><use href="#i-alert" /></svg><span>${text}</span></div>`;
 }
 
 function fmtTokens(n: number): string {
@@ -353,7 +367,7 @@ function usageHtml(u: UsageToday | undefined): string {
     `快取寫入 ${fmtTokens(u.cacheWriteTokens)}`,
   ].join(" · ");
   const note = u.costUsd != null ? "\n花費是換算成 API 牌價的估計，訂閱方案不會另外收費。" : "";
-  return `<div class="acc-line" title="${escapeHtml(tip + note)}">${parts.join(" · ")}</div>`;
+  return `<div class="acc-line" title="${escapeHtml(tip + note)}"><svg><use href="#i-activity" /></svg><span>${parts.join(" · ")}</span></div>`;
 }
 
 function ageLabel(ts: number): string {
@@ -374,7 +388,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   const isLastKnown = isExpired && acc.primaryWindows.length > 0;
   const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
-  const extras = usageHtml(snap.usageToday?.[acc.id]) + forecastHtml(snap.forecasts?.[acc.id], acc.provider);
+  const extras = forecastHtml(snap.forecasts?.[acc.id], acc.provider) + usageHtml(snap.usageToday?.[acc.id]);
 
   let body: string;
   let note = "";
@@ -391,7 +405,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
     }
     body = wins.length
-      ? wins.map((w) => renderWindow(w, acc.provider, snap.forecasts?.[acc.id])).join("")
+      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
       : `<span class="status stale">沒有用量資料</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
@@ -404,8 +418,9 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
     <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}">
       ${avatarHtml(acc.id, acc.provider)}
       <div class="row-main">
-        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${extras ? `<span class="head-extras">${extras}</span>` : ""}${note}</div>
+        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${note}</div>
         <div class="wins">${body}</div>
+        ${extras ? `<div class="acc-extras">${extras}</div>` : ""}
       </div>
     </div>`;
 }
@@ -415,7 +430,7 @@ function renderAccounts(snap: DashboardSnapshot) {
   const okCount = visible.filter((a) => a.status === "ok" || a.status === "stale").length;
   const hiddenCount = snap.accounts.length - visible.length;
   $("accounts-count").textContent =
-    `${okCount}/${visible.length} 在線` + (hiddenCount ? ` · 隱藏 ${hiddenCount}` : "");
+    `${okCount}/${visible.length} 正常` + (hiddenCount ? ` · 隱藏 ${hiddenCount}` : "");
 
   accountsSection.innerHTML =
     snap.accounts.length === 0
@@ -458,7 +473,8 @@ ${formatResetAt(pick.resetAt)}` : "";
     hour: "2-digit",
     minute: "2-digit",
   });
-  lastUpdatedEl.textContent = `更新於 ${timeStr} · 每 ${snap.settings.refreshIntervalSecs} 秒自動刷新`;
+  lastUpdatedEl.textContent = `${timeStr} 更新`;
+  lastUpdatedEl.title = `每 ${snap.settings.refreshIntervalSecs} 秒自動刷新`;
 }
 
 // ------------------------------------------------------------------ settings form
@@ -476,7 +492,7 @@ function setRangeIfIdle(inp: HTMLInputElement, value: number) {
 }
 
 function slotHtml(src: string | null | undefined, fallback: string, alt: string) {
-  return src ? `<img src="${src}" alt="${alt}" />` : fallback;
+  return src ? `<img src="${src}" alt="${alt}" />` : `<svg><use href="#${fallback}" /></svg>`;
 }
 
 function syncSettingsForm(s: AppSettings) {
@@ -484,9 +500,9 @@ function syncSettingsForm(s: AppSettings) {
   themeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === activeTheme));
   customCard.classList.toggle("hidden", activeTheme !== "custom");
 
-  prevSlotWorking.innerHTML = slotHtml(s.customImageWorking, "💻", "Working");
-  prevSlotSweating.innerHTML = slotHtml(s.customImageSweating, "💦", "Sweating");
-  prevSlotSleeping.innerHTML = slotHtml(s.customImageSleeping, "😴", "Sleeping");
+  prevSlotWorking.innerHTML = slotHtml(s.customImageWorking, "i-image", "Working");
+  prevSlotSweating.innerHTML = slotHtml(s.customImageSweating, "i-image", "Sweating");
+  prevSlotSleeping.innerHTML = slotHtml(s.customImageSleeping, "i-image", "Sleeping");
 
   setRangeIfIdle(inpPetSize, s.petSize);
   valPetSize.textContent = `${s.petSize} px`;
@@ -494,7 +510,7 @@ function syncSettingsForm(s: AppSettings) {
   valWorkTh.textContent = `${s.workingThreshold}%`;
   setRangeIfIdle(inpSleepTh, s.sleepingThreshold);
   valSleepTh.textContent = `${s.sleepingThreshold}%`;
-  valSweatRange.textContent = `介於 ${s.sleepingThreshold}% ~ ${s.workingThreshold}% 時，貓會冒汗趕工。`;
+  valSweatRange.textContent = `介於 ${s.sleepingThreshold}% 到 ${s.workingThreshold}% 時，貓會冒汗趕工`;
 
   inpNotify.checked = s.notifyEnabled;
   setRangeIfIdle(inpNotifyTh, s.notifyLowThreshold);
