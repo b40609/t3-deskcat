@@ -33,19 +33,28 @@ pub async fn fetch_antigravity_quota(
         }
     };
 
-    let refresh_token = parsed
+    // T3 0.1.11+ writes `antigravity-oauth-token`:
+    // {"token":{"access_token","refresh_token","expiry"(RFC3339),..},"auth_method",..}
+    // T3 keeps it refreshed while running; it carries no OAuth client.
+    let t3_token = parsed.get("token").filter(|v| v.is_object());
+    let token_obj = t3_token.unwrap_or(&parsed);
+    let refresh_token = token_obj
         .get("refresh_token")
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or("");
     let env_client_id = std::env::var("T3_DESKCAT_AG_CLIENT_ID").ok();
     let env_client_secret = std::env::var("T3_DESKCAT_AG_CLIENT_SECRET").ok();
+    // New-format files have no client: borrow it from an older `acp_token.json`
+    // of any Antigravity account (they all use the Antigravity app's client).
+    let sibling = if t3_token.is_some() { sibling_client(token_path) } else { None };
     let client_id = parsed
         .get("client_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or(env_client_id.as_deref())
+        .or(sibling.as_ref().map(|s| s.0.as_str()))
         .unwrap_or("");
     let client_secret = parsed
         .get("client_secret")
@@ -53,6 +62,7 @@ pub async fn fetch_antigravity_quota(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or(env_client_secret.as_deref())
+        .or(sibling.as_ref().map(|s| s.1.as_str()))
         .unwrap_or("");
     let token_uri = parsed
         .get("token_uri")
@@ -60,7 +70,20 @@ pub async fn fetch_antigravity_quota(
         .unwrap_or(GOOGLE_TOKEN_ENDPOINT);
 
     // For legacy oauth_creds.json, try existing access_token if not expired, else refresh
-    let mut access_token = if is_legacy_gemini {
+    let mut access_token = if let Some(tok) = t3_token {
+        let exp = tok
+            .get("expiry")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.timestamp())
+            .unwrap_or(0);
+        let at = tok.get("access_token").and_then(Value::as_str).unwrap_or("");
+        if !at.is_empty() && exp > now + 60 {
+            Some(at.to_string())
+        } else {
+            None
+        }
+    } else if is_legacy_gemini {
         let exp = parsed.get("expiry_date").and_then(Value::as_i64).unwrap_or(0);
         let tok = parsed.get("access_token").and_then(Value::as_str).unwrap_or("");
         if !tok.is_empty() && exp > (now * 1000 + 60_000) {
@@ -82,7 +105,11 @@ pub async fn fetch_antigravity_quota(
                 name,
                 now,
                 "error",
-                "憑證缺少 client_id / client_secret".to_string(),
+                if t3_token.is_some() {
+                    "憑證已過期：開著 T3 Code 會自動刷新".to_string()
+                } else {
+                    "憑證缺少 client_id / client_secret".to_string()
+                },
             );
         }
         match refresh_google_token(client, token_uri, client_id, client_secret, refresh_token).await
@@ -194,6 +221,24 @@ pub async fn fetch_antigravity_quota(
         error: None,
         updated_at: now,
     }
+}
+
+/// Find an OAuth client (id, secret) in any `<instance>/antigravity-acp/acp_token.json`
+/// next to this account's token. Read-only; nothing is written.
+fn sibling_client(token_path: &Path) -> Option<(String, String)> {
+    // token_path = .../providers/antigravity/<hash>/antigravity-acp/<file>
+    let root = token_path.parent()?.parent()?.parent()?;
+    for entry in fs::read_dir(root).ok()?.flatten() {
+        let p = entry.path().join("antigravity-acp").join("acp_token.json");
+        let Ok(raw) = fs::read_to_string(&p) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&raw) else { continue };
+        let id = v.get("client_id").and_then(Value::as_str).unwrap_or("").trim();
+        let secret = v.get("client_secret").and_then(Value::as_str).unwrap_or("").trim();
+        if !id.is_empty() && !secret.is_empty() {
+            return Some((id.to_string(), secret.to_string()));
+        }
+    }
+    None
 }
 
 async fn refresh_google_token(

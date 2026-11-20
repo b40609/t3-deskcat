@@ -72,13 +72,19 @@ pub fn discover_accounts() -> Vec<DiscoveredAccount> {
                             }
                         }
                         "antigravity" => {
-                            let hash = sha256_hex(instance_id);
-                            let token_path = t3_userdata
+                            let acp_dir = t3_userdata
                                 .join("providers")
                                 .join("antigravity")
-                                .join(hash)
-                                .join("antigravity-acp")
-                                .join("acp_token.json");
+                                .join(sha256_hex(instance_id))
+                                .join("antigravity-acp");
+                            // T3 0.1.11+ keeps the live token in `antigravity-oauth-token`;
+                            // `acp_token.json` is the older file (no longer refreshed).
+                            let new_path = acp_dir.join("antigravity-oauth-token");
+                            let token_path = if new_path.exists() {
+                                new_path
+                            } else {
+                                acp_dir.join("acp_token.json")
+                            };
                             if token_path.exists() && seen_ag_paths.insert(token_path.clone()) {
                                 accounts.push(DiscoveredAccount::Antigravity {
                                     id: format!("ag:{instance_id}"),
