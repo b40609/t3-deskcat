@@ -70,11 +70,11 @@ pub fn open_target(target: &str) -> Result<(), String> {
     let arg: String = match target {
         "logs" => crate::logging::log_path()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .ok_or("找不到記錄檔資料夾")?
+            .ok_or_else(|| crate::tr!("找不到記錄檔資料夾"))?
             .display()
             .to_string(),
         "tailscale-download" => "https://tailscale.com/download/windows".into(),
-        "tailscale-app" => tailscale_gui().ok_or("找不到 Tailscale")?.display().to_string(),
+        "tailscale-app" => tailscale_gui().ok_or_else(|| crate::tr!("找不到 Tailscale"))?.display().to_string(),
         _ => return Err("unknown target".into()),
     };
     let mut cmd = if target == "tailscale-app" {

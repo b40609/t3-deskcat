@@ -52,6 +52,9 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.reset_format.as_str(), "absolute" | "relative") {
         s.reset_format = "absolute".to_string();
     }
+    if !matches!(s.language.as_str(), "system" | "en" | "zh-TW" | "zh-CN" | "ja" | "ko") {
+        s.language = "system".to_string();
+    }
     if !matches!(s.pace_tick.as_str(), "on" | "ahead" | "off") {
         s.pace_tick = "ahead".to_string();
     }

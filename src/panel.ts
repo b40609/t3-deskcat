@@ -1,3 +1,5 @@
+import { mainWindows } from "./focus";
+import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -62,7 +64,7 @@ const offlineNote = $("offline-note");
 const inpMobile = $<HTMLInputElement>("inp-mobile");
 const btnMobileUrl = $<HTMLButtonElement>("btn-mobile-url");
 const mobileHint = $("mobile-hint");
-const MOBILE_HINT = "只透過 Tailscale 連線，區網與網際網路都看不到";
+const mobileHintText = () => t("只透過 Tailscale 連線，區網與網際網路都看不到");
 const selPanelPos = $<HTMLSelectElement>("sel-panel-pos");
 const btnHotkey = $<HTMLButtonElement>("btn-hotkey");
 const btnHotkeyClear = $<HTMLButtonElement>("btn-hotkey-clear");
@@ -83,7 +85,7 @@ let pinned = false;
 let expandedAcc: string | null = null;
 let accSettingsSig = "";
 let recordingHotkey = false;
-const HOTKEY_HINT = "點快捷鍵後按下新的組合鍵，Esc 取消、Backspace 清除";
+const hotkeyHintText = () => t("點快捷鍵後按下新的組合鍵，Esc 取消、Backspace 清除");
 
 const fallbackSettings: AppSettings = {
   petSize: 64,
@@ -191,7 +193,7 @@ function loadAvatar(file: File): Promise<string> {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("無法讀取圖片"));
+      reject(new Error(t("無法讀取圖片")));
     };
     img.src = url;
   });
@@ -216,30 +218,29 @@ function getTone(pct: number, accId?: string): "good" | "warn" | "bad" {
   return "bad";
 }
 
-const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
 
 /** Claude-style reset text: "於 下午7:00 重設" / "週六上午2:00 重設", or a countdown. */
 function formatResetAt(resetAt: number | null): string {
   if (!resetAt) return "";
   const diffSec = resetAt - Math.floor(Date.now() / 1000);
-  if (diffSec <= 0) return "即將重設";
+  if (diffSec <= 0) return t("即將重設");
   const fmt = (currentSettings ?? fallbackSettings).resetFormat ?? "absolute";
   if (fmt === "relative") {
     const hours = Math.floor(diffSec / 3600);
     const mins = Math.floor((diffSec % 3600) / 60);
-    if (hours >= 24) return `${Math.floor(hours / 24)} 天 ${hours % 24} 小時後重設`;
-    if (hours > 0) return `${hours} 小時 ${mins} 分後重設`;
-    return `${Math.max(1, mins)} 分鐘後重設`;
+    if (hours >= 24) return t("{d} 天 {h} 小時後重設", { d: Math.floor(hours / 24), h: hours % 24 });
+    if (hours > 0) return t("{h} 小時 {m} 分後重設", { h: hours, m: mins });
+    return t("{m} 分鐘後重設", { m: Math.max(1, mins) });
   }
   const d = new Date(resetAt * 1000);
   const now = new Date();
-  const time = d.toLocaleTimeString("zh-TW", { hour: "numeric", minute: "2-digit", hour12: true });
-  if (d.toDateString() === now.toDateString()) return `於 ${time} 重設`;
+  const time = d.toLocaleTimeString(locale(), { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return t("於 {time} 重設", { time });
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
-  if (d.toDateString() === tomorrow.toDateString()) return `明天${time} 重設`;
-  if (diffSec < 6.5 * 86400) return `${WEEKDAYS[d.getDay()]}${time} 重設`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${time} 重設`;
+  if (d.toDateString() === tomorrow.toDateString()) return t("明天{time} 重設", { time });
+  if (diffSec < 6.5 * 86400) return t("{day}{time} 重設", { day: weekday(d), time });
+  return t("{date} {time} 重設", { date: `${d.getMonth() + 1}/${d.getDate()}`, time });
 }
 
 /** Window label → Claude-style name ("5 小時限制", "每週 · 所有模型", "每週 · Sonnet") */
@@ -284,7 +285,7 @@ function renderWindow(
   const pace =
     elapsed == null || tickMode === "off" || (tickMode === "ahead" && !ahead)
       ? ""
-      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="時間已過 ${elapsed}%：${showUsed ? "填色超過刻度代表用得比時間快" : "填色短於刻度代表用得比時間快"}"></i>`;
+      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
   return `
     <div class="win">
       <div class="win-line">
@@ -299,12 +300,12 @@ function renderWindow(
 function formatWhen(ts: number): string {
   const d = new Date(ts * 1000);
   const now = new Date();
-  const time = d.toLocaleTimeString("zh-TW", { hour: "numeric", minute: "2-digit", hour12: true });
+  const time = d.toLocaleTimeString(locale(), { hour: "numeric", minute: "2-digit" });
   if (d.toDateString() === now.toDateString()) return time;
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
-  if (d.toDateString() === tomorrow.toDateString()) return `明天${time}`;
-  return `${WEEKDAYS[d.getDay()]}${time}`;
+  if (d.toDateString() === tomorrow.toDateString()) return t("明天{time}", { time });
+  return `${weekday(d)} ${time}`;
 }
 
 /** Idle time between running out and the reset, in seconds (null when unknown). */
@@ -334,7 +335,7 @@ function shortWhen(ts: number): string {
   if (d.toDateString() === now.toDateString()) return hm;
   const tmr = new Date(now);
   tmr.setDate(now.getDate() + 1);
-  return `${d.toDateString() === tmr.toDateString() ? "明天" : WEEKDAYS[d.getDay()]} ${hm}`;
+  return `${d.toDateString() === tmr.toDateString() ? t("明天") : weekday(d)} ${hm}`;
 }
 
 function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
@@ -343,14 +344,14 @@ function forecastHtml(f: Forecast | undefined, provider: ProviderKind): string {
   if (mins < 0) return "";
   const name = escapeHtml(windowName(f.label, provider));
   const short = name.split(" · ")[0];
-  const when = mins < 60 ? `${Math.max(1, mins)} 分鐘後` : shortWhen(f.exhaustAt);
+  const when = mins < 60 ? t("{m} 分鐘後", { m: Math.max(1, mins) }) : shortWhen(f.exhaustAt);
   const gap = forecastGap(f);
-  const text = `${short} 照目前速度 ${when} 用完` + (gap != null ? `，比重設早 ${fmtGap(gap)}` : "");
+  const text = t("{label} 照目前速度 {when} 用完", { label: short, when }) + (gap != null ? t("，比重設早 {gap}", { gap: fmtGap(gap) }) : "");
   const tip =
-    `依近期用量推算，${name} 預計 ${when} 耗盡` +
-    (gap != null ? `，早於重設 ${fmtGap(gap)}` : "") +
-    (f.resetAt ? `；${formatResetAt(f.resetAt)}` : "") +
-    `。消耗速率 ${f.ratePerHour}%/h`;
+    t("依近期用量推算，{name} 預計 {when} 耗盡", { name, when }) +
+    (gap != null ? t("，早於重設 {gap}", { gap: fmtGap(gap) }) : "") +
+    (f.resetAt ? t("；{reset}", { reset: formatResetAt(f.resetAt) }) : "") +
+    t("。消耗速率 {rate}%/h", { rate: f.ratePerHour });
   return `<div class="acc-line fc-${forecastLevel(f)}" title="${escapeHtml(tip)}"><svg><use href="#i-alert" /></svg><span>${text}</span></div>`;
 }
 
@@ -363,23 +364,23 @@ function fmtTokens(n: number): string {
 
 function usageHtml(u: UsageToday | undefined): string {
   if (!u || cfg().showUsageStats === false || u.requests === 0) return "";
-  const parts = [`今日 ${fmtTokens(u.totalTokens)}`, `${u.requests} 次`];
+  const parts = [t("今日 {n}", { n: fmtTokens(u.totalTokens) }), t("{n} 次", { n: u.requests })];
   if (u.costUsd != null) parts.push(`$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`);
   const tip = [
-    `輸入 ${fmtTokens(u.inputTokens)}`,
-    `輸出 ${fmtTokens(u.outputTokens)}`,
-    `快取讀取 ${fmtTokens(u.cacheReadTokens)}`,
-    `快取寫入 ${fmtTokens(u.cacheWriteTokens)}`,
+    t("輸入 {n}", { n: fmtTokens(u.inputTokens) }),
+    t("輸出 {n}", { n: fmtTokens(u.outputTokens) }),
+    t("快取讀取 {n}", { n: fmtTokens(u.cacheReadTokens) }),
+    t("快取寫入 {n}", { n: fmtTokens(u.cacheWriteTokens) }),
   ].join(" · ");
-  const note = u.costUsd != null ? "\n花費是換算成 API 牌價的估計，訂閱方案不會另外收費。" : "";
+  const note = u.costUsd != null ? "\n" + t("花費是換算成 API 牌價的估計，訂閱方案不會另外收費。") : "";
   return `<div class="acc-line" title="${escapeHtml(tip + note)}"><svg><use href="#i-activity" /></svg><span>${parts.join(" · ")}</span></div>`;
 }
 
 function ageLabel(ts: number): string {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-  if (mins < 1) return "剛剛";
-  if (mins < 60) return `${mins} 分鐘前`;
-  return `${Math.floor(mins / 60)} 小時前`;
+  if (mins < 1) return t("剛剛");
+  if (mins < 60) return t("{m} 分鐘前", { m: mins });
+  return t("{h} 小時前", { h: Math.floor(mins / 60) });
 }
 
 // ------------------------------------------------------------------ rendering
@@ -398,22 +399,24 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   let body: string;
   let note = "";
   if (isExpired && !isLastKnown) {
-    body = `<span class="status expired">${escapeHtml(acc.error ?? "授權已過期，請重新登入這個帳號")}</span>`;
+    body = `<span class="status expired">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
   } else if (isErr) {
-    body = `<span class="status error">${escapeHtml(acc.error ?? "讀取失敗")}</span>`;
+    body = `<span class="status error">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
   } else if (isCooldown) {
-    body = `<span class="status cooldown">${escapeHtml(acc.error ?? "查詢受限，稍後自動重試")}</span>`;
+    body = `<span class="status cooldown">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</span>`;
   } else {
     let wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
-    if (cfg().compactAccounts && wins.length > 1) {
-      const pool = acc.primaryWindows.length ? acc.primaryWindows : wins;
-      wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
+    if (cfg().compactAccounts) {
+      // Only the 5-hour and weekly limits; model and pool limits are dropped.
+      const { short, long } = mainWindows(acc);
+      const main = [short, long].filter((w): w is NonNullable<typeof w> => !!w);
+      if (main.length) wins = main;
     }
     body = wins.length
       ? wins.map((w) => renderWindow(w, acc.provider, acc.id)).join("")
-      : `<span class="status stale">沒有用量資料</span>`;
+      : `<span class="status stale">${t("沒有用量資料")}</span>`;
     if (isLastKnown) {
-      note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
+      note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")} · ${ageLabel(acc.updatedAt)}</span>`;
     } else if (isStale && Date.now() / 1000 - acc.updatedAt >= 600) {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
     }
@@ -435,13 +438,13 @@ function renderAccounts(snap: DashboardSnapshot) {
   const okCount = visible.filter((a) => a.status === "ok" || a.status === "stale").length;
   const hiddenCount = snap.accounts.length - visible.length;
   $("accounts-count").textContent =
-    `${okCount}/${visible.length} 正常` + (hiddenCount ? ` · 隱藏 ${hiddenCount}` : "");
+    t("{ok}/{n} 正常", { ok: okCount, n: visible.length }) + (hiddenCount ? ` · ${t("隱藏 {n}", { n: hiddenCount })}` : "");
 
   accountsSection.innerHTML =
     snap.accounts.length === 0
-      ? `<div class="empty">尚未找到 Claude / Antigravity / ChatGPT 的登入憑證</div>`
+      ? `<div class="empty">${t("尚未找到 Claude / Antigravity / ChatGPT 的登入憑證")}</div>`
       : visible.length === 0
-        ? `<div class="empty">所有帳號都已隱藏，可在設定 → 帳號中開啟</div>`
+        ? `<div class="empty">${t("所有帳號都已隱藏，可在設定 → 帳號中開啟")}</div>`
         : visible.map((acc) => renderAccountRow(acc, snap)).join("");
 }
 
@@ -466,7 +469,7 @@ ${formatResetAt(pick.resetAt)}` : "";
           <span class="row-sub" title="${escapeHtml(pick.reason + reset)}">${sub}</span>
           ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
         </div>
-        <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">剩餘</small>${pick.effectiveRemaining}<small>%</small></span>
+        <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">${t("剩餘")}</small>${pick.effectiveRemaining}<small>%</small></span>
       </div>`;
     })
     .join("");
@@ -474,13 +477,13 @@ ${formatResetAt(pick.resetAt)}` : "";
   renderAccounts(snap);
   btnMobilePromo.classList.toggle("hidden", snap.settings.mobileEnabled === true || snap.accounts.length === 0);
 
-  const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString("zh-TW", {
+  const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString(locale(), {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
   });
-  lastUpdatedEl.textContent = `${timeStr} 更新`;
-  lastUpdatedEl.title = `每 ${snap.settings.refreshIntervalSecs} 秒自動刷新`;
+  lastUpdatedEl.textContent = t("{time} 更新", { time: timeStr });
+  lastUpdatedEl.title = t("每 {n} 秒自動刷新", { n: snap.settings.refreshIntervalSecs });
 }
 
 // ------------------------------------------------------------------ settings form
@@ -501,7 +504,14 @@ function slotHtml(src: string | null | undefined, fallback: string, alt: string)
   return src ? `<img src="${src}" alt="${alt}" />` : `<svg><use href="#${fallback}" /></svg>`;
 }
 
+const selLanguage = $<HTMLSelectElement>("sel-language");
+
 function syncSettingsForm(s: AppSettings) {
+  if (setLang(s.language)) applyI18n();
+  selLanguage.innerHTML = LANGUAGES.map(
+    (l) => `<option value="${l.value}">${l.value === "system" ? t("跟隨系統") : l.label}</option>`,
+  ).join("");
+  selLanguage.value = s.language ?? "system";
   const activeTheme = s.petTheme ?? "hud_gauge";
   themeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === activeTheme));
   customCard.classList.toggle("hidden", activeTheme !== "custom");
@@ -516,7 +526,7 @@ function syncSettingsForm(s: AppSettings) {
   valWorkTh.textContent = `${s.workingThreshold}%`;
   setRangeIfIdle(inpSleepTh, s.sleepingThreshold);
   valSleepTh.textContent = `${s.sleepingThreshold}%`;
-  valSweatRange.textContent = `剩餘低於 ${s.workingThreshold}% 額度條轉琥珀色、貓開始冒汗；低於 ${s.sleepingThreshold}% 轉紅色、發通知、貓趴睡`;
+  valSweatRange.textContent = t("剩餘低於 {warn}% 額度條轉琥珀色、貓開始冒汗；低於 {bad}% 轉紅色、發通知、貓趴睡", { warn: s.workingThreshold, bad: s.sleepingThreshold });
   const th = $("th-preview");
   th.style.setProperty("--bad", `${s.sleepingThreshold}%`);
   th.style.setProperty("--warn", `${s.workingThreshold - s.sleepingThreshold}%`);
@@ -524,7 +534,7 @@ function syncSettingsForm(s: AppSettings) {
 
   inpNotify.checked = s.notifyEnabled;
   setRangeIfIdle(inpRefreshSec, s.refreshIntervalSecs);
-  valRefreshSec.textContent = `${s.refreshIntervalSecs} 秒`;
+  valRefreshSec.textContent = t("{n} 秒", { n: s.refreshIntervalSecs });
 
   inpAgExtra.checked = s.showAntigravityExtra;
   inpAutostart.checked = s.launchAtStartup;
@@ -547,7 +557,7 @@ function syncSettingsForm(s: AppSettings) {
   if (document.activeElement !== inpQuietEnd) inpQuietEnd.value = minToTime(s.quietEndMin ?? 9 * 60);
   const ci = s.claudeMinIntervalSecs ?? 90;
   setRangeIfIdle(inpClaudeInterval, ci);
-  valClaudeInterval.textContent = ci % 60 ? `${Math.floor(ci / 60)} 分 ${ci % 60} 秒` : `${ci / 60} 分鐘`;
+  valClaudeInterval.textContent = ci % 60 ? t("{m} 分 {s} 秒", { m: Math.floor(ci / 60), s: ci % 60 }) : t("{m} 分鐘", { m: ci / 60 });
   if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
 
   inpShowPicks.checked = s.showPicks !== false;
@@ -575,7 +585,7 @@ function timeToMin(v: string): number {
 }
 
 function hotkeyLabel(hk: string): string {
-  if (!hk) return `<span class="hk-off">未設定</span>`;
+  if (!hk) return `<span class="hk-off">${t("未設定")}</span>`;
   return hk
     .split("+")
     .map((k) => `<kbd>${escapeHtml(k === "Super" ? "Win" : k)}</kbd>`)
@@ -595,13 +605,13 @@ function accSettingRow(acc: AccountQuota): string {
   const p = prefOf(acc.id);
   const open = expandedAcc === acc.id;
   const tags = [providerLabel(acc.provider)];
-  if (p.alias?.trim()) tags.push(`原名 ${acc.name}`);
-  if (p.hidden) tags.push("已隱藏");
-  else if (p.excludeScore) tags.push("不計分");
-  if (p.notifyThreshold != null) tags.push(`危險線 ${p.notifyThreshold}%`);
+  if (p.alias?.trim()) tags.push(t("原名 {name}", { name: acc.name }));
+  if (p.hidden) tags.push(t("已隱藏"));
+  else if (p.excludeScore) tags.push(t("不計分"));
+  if (p.notifyThreshold != null) tags.push(t("危險線 {n}%", { n: p.notifyThreshold }));
   const src = accountSources[acc.id];
   const thOpts = [
-    `<option value="">跟隨全域（${s.sleepingThreshold}%）</option>`,
+    `<option value="">${t("跟隨全域（{n}%）", { n: s.sleepingThreshold })}</option>`,
     ...[5, 10, 15, 20, 25, 30, 40, 50].map(
       (v) => `<option value="${v}" ${p.notifyThreshold === v ? "selected" : ""}>${v}%</option>`,
     ),
@@ -609,17 +619,17 @@ function accSettingRow(acc: AccountQuota): string {
   const body = open
     ? `
       <div class="acc-set-body">
-        <div class="row"><span>顯示名稱</span><input class="text-input" data-f="alias" maxlength="40" placeholder="${escapeHtml(acc.name)}" value="${escapeHtml(p.alias ?? "")}" /></div>
-        <label class="row"><span>在額度頁顯示</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
-        <label class="row ${p.hidden ? "disabled" : ""}"><span>計入總分與心情</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
-        <div class="row"><span>危險線</span><select class="select" data-f="th">${thOpts}</select></div>
-        <div class="row"><span>頭像</span><span class="av-actions">${p.avatar ? `<button class="link-btn" data-act="av-clear">還原預設</button>` : ""}<label class="link-btn">選擇圖片<input type="file" accept="image/*" class="hidden-file-input" data-f="avatar" /></label></span></div>
+        <div class="row"><span>${t("顯示名稱")}</span><input class="text-input" data-f="alias" maxlength="40" placeholder="${escapeHtml(acc.name)}" value="${escapeHtml(p.alias ?? "")}" /></div>
+        <label class="row"><span>${t("在額度頁顯示")}</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
+        <label class="row ${p.hidden ? "disabled" : ""}"><span>${t("計入總分與心情")}</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
+        <div class="row"><span>${t("危險線")}</span><select class="select" data-f="th">${thOpts}</select></div>
+        <div class="row"><span>${t("頭像")}</span><span class="av-actions">${p.avatar ? `<button class="link-btn" data-act="av-clear">${t("還原預設")}</button>` : ""}<label class="link-btn">${t("選擇圖片")}<input type="file" accept="image/*" class="hidden-file-input" data-f="avatar" /></label></span></div>
       </div>`
     : "";
   return `
     <div class="acc-set ${open ? "open" : ""} ${p.hidden ? "is-hidden" : ""}" data-id="${escapeHtml(acc.id)}">
       <div class="row acc-set-head" data-act="toggle">
-        <span class="grip" title="拖曳排序"><svg><use href="#i-grip" /></svg></span>
+        <span class="grip" title="${t("拖曳排序")}"><svg><use href="#i-grip" /></svg></span>
         ${avatarHtml(acc.id, acc.provider)}
         <div class="row-main">
           <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span>${p.hidden ? `<svg class="tag-ico"><use href="#i-eye-off" /></svg>` : ""}</div>
@@ -647,7 +657,7 @@ function renderAccountSettings(accounts: AccountQuota[]) {
   accSettingsSig = sig;
   accSettingsEl.innerHTML = accs.length
     ? accs.map(accSettingRow).join("")
-    : `<div class="empty">尚未偵測到帳號</div>`;
+    : `<div class="empty">${t("尚未偵測到帳號")}</div>`;
 }
 
 function applyDisplay(s: AppSettings) {
@@ -812,8 +822,8 @@ document.querySelectorAll<HTMLElement>(".tab").forEach((t) =>
 // ---- account sources, extra folders, rescan
 /** Where an account was read from, in words: T3 Code, the agy CLI, or a folder. */
 function sourceLabel(src: string): string {
-  if (/[\\/]\.t3[\\/]|t3code/i.test(src)) return "來自 T3 Code";
-  if (src.includes("-p /usage")) return "來自 agy CLI";
+  if (/[\\/]\.t3[\\/]|t3code/i.test(src)) return t("來自 T3 Code");
+  if (src.includes("-p /usage")) return t("來自 agy CLI");
   const dir = src.replace(/[\\/][^\\/]+$/, "");
   return tailPath(dir);
 }
@@ -846,7 +856,7 @@ function renderDirList(s: AppSettings) {
       (d, i) => `
       <div class="row dir-row">
         <span class="dir-path" title="${escapeHtml(d)}">${escapeHtml(tailPath(d))}</span>
-        <button class="icon-btn" data-rm="${i}" title="移除"><svg><use href="#i-x" /></svg></button>
+        <button class="icon-btn" data-rm="${i}" title="${t("移除")}"><svg><use href="#i-x" /></svg></button>
       </div>`,
     )
     .join("");
@@ -861,16 +871,16 @@ dirList.addEventListener("click", (e) => {
 });
 async function rescan() {
   const b = $("btn-rescan");
-  b.textContent = "掃描中";
+  b.textContent = t("掃描中");
   try {
     renderDashboard(await invoke<DashboardSnapshot>("refresh_now"));
     await loadSources();
     const n = currentSnapshot?.accounts.length ?? 0;
-    b.textContent = `找到 ${n} 個帳號`;
+    b.textContent = t("找到 {n} 個帳號", { n });
   } catch {
-    b.textContent = "掃描失敗";
+    b.textContent = t("掃描失敗");
   }
-  window.setTimeout(() => (b.textContent = "重新掃描帳號"), 2500);
+  window.setTimeout(() => (b.textContent = t("重新掃描帳號")), 2500);
 }
 $("btn-rescan").addEventListener("click", () => void rescan());
 $("btn-add-dir").addEventListener("click", async () => {
@@ -893,9 +903,9 @@ $("btn-diag").addEventListener("click", async () => {
   const state = $("diag-state");
   try {
     await navigator.clipboard.writeText(await invoke<string>("diagnostics"));
-    state.textContent = "已複製";
+    state.textContent = t("已複製");
   } catch {
-    state.textContent = "複製失敗";
+    state.textContent = t("複製失敗");
   }
   window.setTimeout(() => (state.textContent = ""), 2500);
 });
@@ -942,7 +952,7 @@ async function showMobileStatus() {
   btnMobileUrl.textContent = st.url ?? "";
   btnMobileUrl.dataset.url = st.url ?? "";
   const err = on && !live ? st.error : null;
-  mobileHint.textContent = err ?? (on && !live ? "啟動中" : MOBILE_HINT);
+  mobileHint.textContent = err ?? (on && !live ? t("啟動中") : mobileHintText());
   mobileHint.classList.toggle("error", !!err);
   if (ts.connected && tsWatch) {
     window.clearInterval(tsWatch);
@@ -966,7 +976,7 @@ function startTailscaleWatch() {
 
 function setMobile(on: boolean) {
   commitSettings({ mobileEnabled: on }, true);
-  mobileHint.textContent = on ? "啟動中" : MOBILE_HINT;
+  mobileHint.textContent = on ? t("啟動中") : mobileHintText();
   // The server picks the change up within ~10 s.
   [800, 2500, 6000, 11000].forEach((ms) => window.setTimeout(() => void showMobileStatus(), ms));
 }
@@ -977,7 +987,7 @@ btnMobileUrl.addEventListener("click", async () => {
   if (!url) return;
   try {
     await navigator.clipboard.writeText(url);
-    btnMobileUrl.textContent = "已複製網址";
+    btnMobileUrl.textContent = t("已複製網址");
     window.setTimeout(() => (btnMobileUrl.textContent = url), 1500);
   } catch {
     // ignore
@@ -996,10 +1006,10 @@ btnMobilePromo.addEventListener("click", () => {
 async function showHotkeyStatus() {
   try {
     const err = await invoke<string | null>("hotkey_status");
-    hotkeyHint.textContent = err ?? HOTKEY_HINT;
+    hotkeyHint.textContent = err ?? hotkeyHintText();
     hotkeyHint.classList.toggle("error", !!err);
   } catch {
-    hotkeyHint.textContent = HOTKEY_HINT;
+    hotkeyHint.textContent = hotkeyHintText();
   }
 }
 
@@ -1038,8 +1048,8 @@ btnHotkey.addEventListener("click", () => {
   if (recordingHotkey) return stopRecording();
   recordingHotkey = true;
   btnHotkey.classList.add("recording");
-  btnHotkey.textContent = "按下組合鍵…";
-  hotkeyHint.textContent = HOTKEY_HINT;
+  btnHotkey.textContent = t("按下組合鍵…");
+  hotkeyHint.textContent = hotkeyHintText();
   hotkeyHint.classList.remove("error");
 });
 btnHotkey.addEventListener("blur", () => recordingHotkey && stopRecording());
@@ -1056,11 +1066,11 @@ window.addEventListener(
     if (plain && (e.key === "Backspace" || e.key === "Delete")) return saveHotkey("");
     const combo = comboFromEvent(e);
     if (combo === null) {
-      btnHotkey.textContent = "按下組合鍵…";
+      btnHotkey.textContent = t("按下組合鍵…");
       return;
     }
     if (combo === "") {
-      hotkeyHint.textContent = "需要搭配 Ctrl / Alt / Shift / Win（F1～F12 除外）";
+      hotkeyHint.textContent = t("需要搭配 Ctrl / Alt / Shift / Win（F1～F12 除外）");
       hotkeyHint.classList.add("error");
       return;
     }
@@ -1180,7 +1190,13 @@ window.addEventListener("keydown", (e) => {
   else invoke("hide_panel").catch(() => {});
 });
 
+selLanguage.addEventListener("change", () =>
+  commitSettings({ language: selLanguage.value as AppSettings["language"] }, true),
+);
+
 async function init() {
+  setLang(null);
+  applyI18n();
   await listen<DashboardSnapshot>("snapshot-updated", (event) => renderDashboard(event.payload));
 
   const existing = await invoke<DashboardSnapshot | null>("get_snapshot");

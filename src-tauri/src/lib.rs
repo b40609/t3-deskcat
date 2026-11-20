@@ -1,4 +1,6 @@
 mod activity;
+#[macro_use]
+mod i18n;
 mod discovery;
 mod forecast;
 mod history;
@@ -97,14 +99,14 @@ fn spawn_mobile_supervisor(state: SharedState) {
                     });
                     // Give bind a moment so a port clash is reported right away.
                     match tokio::time::timeout(Duration::from_millis(500), rx).await {
-                        Ok(Ok(Some(err))) => status.error = Some(format!("無法開啟連接埠 {port}：{err}")),
+                        Ok(Ok(Some(err))) => status.error = Some(tr!("無法開啟連接埠 {port}：{err}", port = port, err = err)),
                         _ => {
                             status.url = Some(format!("http://{addr}"));
                             running = Some((addr, handle));
                         }
                     }
                 } else if enabled {
-                    status.error = Some("找不到 Tailscale：請在這台電腦開啟 Tailscale".to_string());
+                    status.error = Some(tr!("找不到 Tailscale：請在這台電腦開啟 Tailscale"));
                 }
                 if let Ok(mut g) = state.0.lock() {
                     g.mobile_status = status;
@@ -175,6 +177,11 @@ fn update_settings(
 
         settings::save_settings(&clean)?;
         guard.settings = clean.clone();
+        if i18n::set_lang(&clean.language) {
+            if let (Some(tray), Ok(menu)) = (app.tray_by_id("main-tray"), build_tray_menu(&app)) {
+                let _ = tray.set_menu(Some(menu));
+            }
+        }
 
         if let Some(pet) = app.get_webview_window("pet") {
             let _ = pet.set_size(Size::Logical(LogicalSize::new(
@@ -260,8 +267,8 @@ fn apply_hotkey(app: &AppHandle, combo: &str) -> Option<String> {
         Ok(sc) => gs
             .register(sc)
             .err()
-            .map(|_| format!("{combo} 無法註冊，可能已被其他程式佔用")),
-        Err(_) => Some(format!("{combo} 不是有效的快捷鍵")),
+            .map(|_| tr!("{combo} 無法註冊，可能已被其他程式佔用", combo = combo)),
+        Err(_) => Some(tr!("{combo} 不是有效的快捷鍵", combo = combo)),
     }
 }
 
@@ -350,9 +357,9 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
     app.notification()
         .builder()
         .title("T3 DeskCat")
-        .body("系統通知運作正常！額度過低或重置時會在這裡提醒你。")
+        .body(tr!("系統通知運作正常！額度過低或重置時會在這裡提醒你。"))
         .show()
-        .map_err(|err| format!("通知發送失敗: {err}"))
+        .map_err(|err| tr!("通知發送失敗: {err}", err = err))
 }
 
 #[tauri::command]
@@ -419,7 +426,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
-            .set_title("選擇帳號資料夾")
+            .set_title(tr!("選擇帳號資料夾"))
             .blocking_pick_folder()
             .and_then(|p| p.into_path().ok())
             .map(|p| p.display().to_string())
@@ -620,7 +627,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                 primary_windows: Vec::new(),
                 extra_windows: Vec::new(),
                 status: "cooldown".to_string(),
-                error: Some("Anthropic 暫時限制查詢，稍後自動重試".to_string()),
+                error: Some(tr!("Anthropic 暫時限制查詢，稍後自動重試")),
                 updated_at: now,
             };
             let shown = state
@@ -755,8 +762,8 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     if let Some(prev_val) = prev {
                         if prev_val < 80 && rem >= 98 {
                             notifications.push((
-                                format!("✨ {who} 額度已恢復"),
-                                format!("已恢復至 {rem}%，小貓繼續上工！"),
+                                tr!("✨ {who} 額度已恢復", who = who),
+                                tr!("已恢復至 {rem}%，小貓繼續上工！", rem = rem),
                             ));
                         }
                     }
@@ -769,8 +776,8 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                         n.zero_notified.insert(acc.id.clone(), true);
                         n.low_notified.insert(acc.id.clone(), true);
                         notifications.push((
-                            format!("😴 {who} 額度已見底"),
-                            "剩餘 0%，請切換推薦帳號或等待重設。".to_string(),
+                            tr!("😴 {who} 額度已見底", who = who),
+                            tr!("剩餘 0%，請切換推薦帳號或等待重設。"),
                         ));
                     }
                 } else {
@@ -781,8 +788,8 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                         if !n.low_notified.get(&acc.id).copied().unwrap_or(false) {
                             n.low_notified.insert(acc.id.clone(), true);
                             notifications.push((
-                                format!("⚠️ {who} 額度偏低"),
-                                format!("目前僅剩 {rem}%（警戒線 {low}%）。"),
+                                tr!("⚠️ {who} 額度偏低", who = who),
+                                tr!("目前僅剩 {rem}%（警戒線 {low}%）。", rem = rem, low = low),
                             ));
                         }
                     } else if rem >= low + 10 {
@@ -805,8 +812,8 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     }
                     if let Some(acc) = snap.accounts.iter().find(|a| a.id == id) {
                         notifications.push((
-                            format!("✨ {} 的{}已重設", cfg.display_name(acc), window_label_zh(&label)),
-                            format!("{} 額度已恢復，可以繼續使用了。", acc.provider.short_label()),
+                            tr!("✨ {name} 的{window}已重設", name = cfg.display_name(acc), window = window_label_zh(&label)),
+                            tr!("{provider} 額度已恢復，可以繼續使用了。", provider = acc.provider.short_label()),
                         ));
                     }
                 }
@@ -860,7 +867,7 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
     let picks = compute_picks(&visible, Utc::now().timestamp());
     let mut tooltip = format_tooltip(&picks, &visible);
     if offline {
-        tooltip = format!("暫時抓不到最新額度｜{tooltip}");
+        tooltip = tr!("暫時抓不到最新額度｜{tooltip}", tooltip = tooltip);
     }
     // Excluding every account from the score falls back to all visible ones.
     let score_opt = compute_overall_score(&scored, settings.score_mode)
@@ -941,12 +948,12 @@ fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
         let reset_at = binding_window(best).and_then(|w| w.reset_at).filter(|r| *r > now);
         let reason = if use_before_reset {
             let mins = ((reset_at.unwrap_or(now) - now) + 59) / 60;
-            format!("{} 分鐘後重設，建議優先使用", mins.max(1))
+            tr!("{n} 分鐘後重設，建議優先使用", n = mins.max(1))
         } else {
             build_pick_reason(best)
         };
         let note = (best.status == "expired")
-            .then(|| "最後已知額度（憑證過期，切換過去用一次就會更新）".to_string());
+            .then(|| tr!("最後已知額度（憑證過期，切換過去用一次就會更新）"));
         picks.push(SmartPick {
             provider,
             account_id: best.id.clone(),
@@ -987,7 +994,7 @@ fn window_percent(acc: &AccountQuota, label: &str) -> i32 {
 
 fn build_pick_reason(acc: &AccountQuota) -> String {
     if acc.primary_windows.is_empty() {
-        return format!("剩餘 {}%", acc.effective_remaining);
+        return tr!("剩餘 {n}%", n = acc.effective_remaining);
     }
     acc.primary_windows
         .iter()
@@ -1004,7 +1011,7 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
             pick.provider.short_label(),
             pick.account_name,
             pick.effective_remaining,
-            if pick.use_before_reset { "（即將重設）" } else { "" }
+            if pick.use_before_reset { tr!("（即將重設）") } else { String::new() }
         ));
     }
     if parts.is_empty() {
@@ -1014,7 +1021,7 @@ fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
         {
             parts.push(format!("ChatGPT: {}%", codex.effective_remaining));
         } else {
-            return "T3 DeskCat（載入額度中…）".to_string();
+            return tr!("T3 DeskCat（載入額度中…）");
         }
     }
     parts.join("｜")
@@ -1077,7 +1084,7 @@ fn window_label_zh(label: &str) -> String {
 /// Tray tooltip (best picks + overall + today's cost) and the live number / ring icon.
 fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
     let cfg = &snap.settings;
-    let mut tip = format!("{}\n總剩餘 {}%", snap.tooltip_text, snap.overall_score);
+    let mut tip = format!("{}\n{}", snap.tooltip_text, tr!("總剩餘 {n}%", n = snap.overall_score));
     let cost: f64 = snap
         .usage_today
         .iter()
@@ -1085,7 +1092,7 @@ fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
         .filter_map(|(_, u)| u.cost_usd)
         .sum();
     if cfg.show_usage_stats && cost >= 0.01 {
-        tip.push_str(&format!(" · 今日約 US${cost:.2}"));
+        tip.push_str(&format!(" · {}", tr!("今日約 US${cost}", cost = format!("{cost:.2}"))));
     }
     // Windows caps tray tooltips at 127 UTF-16 units.
     if tip.encode_utf16().count() > 127 {
@@ -1118,6 +1125,14 @@ fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
         };
         let _ = tray.set_icon(icon);
     }
+}
+
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let toggle_item = MenuItem::with_id(app, "toggle", tr!("展開 / 收合面板"), true, None::<&str>)?;
+    let refresh_item = MenuItem::with_id(app, "refresh", tr!("立即更新額度"), true, None::<&str>)?;
+    let reset_pos_item = MenuItem::with_id(app, "reset_pos", tr!("重設小貓位置"), true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", tr!("結束 T3 DeskCat"), true, None::<&str>)?;
+    Menu::with_items(app, &[&toggle_item, &refresh_item, &reset_pos_item, &quit_item])
 }
 
 fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
@@ -1241,6 +1256,7 @@ pub fn run() {
         std::thread::sleep(Duration::from_secs(2));
     }
     let loaded_settings = settings::load_settings();
+    i18n::set_lang(&loaded_settings.language);
     let shared = SharedState(Arc::new(Mutex::new(InnerState {
         settings: loaded_settings.clone(),
         snapshot: None,
@@ -1351,17 +1367,7 @@ pub fn run() {
             }
 
             // Build Windows system tray
-            let toggle_item =
-                MenuItem::with_id(app, "toggle", "展開 / 收合面板", true, None::<&str>)?;
-            let refresh_item =
-                MenuItem::with_id(app, "refresh", "立即更新額度", true, None::<&str>)?;
-            let reset_pos_item =
-                MenuItem::with_id(app, "reset_pos", "重設小貓位置", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "結束 T3 DeskCat", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[&toggle_item, &refresh_item, &reset_pos_item, &quit_item],
-            )?;
+            let menu = build_tray_menu(app.handle())?;
 
             let tray_builder = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())

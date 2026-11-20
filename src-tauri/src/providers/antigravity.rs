@@ -22,14 +22,14 @@ pub async fn fetch_antigravity_quota(
     let raw = match fs::read_to_string(token_path) {
         Ok(s) => s,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("無法讀取憑證: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("無法讀取憑證: {err}", err = err));
         }
     };
 
     let parsed: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("憑證 JSON 錯誤: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("憑證 JSON 錯誤: {err}", err = err));
         }
     };
 
@@ -97,7 +97,7 @@ pub async fn fetch_antigravity_quota(
 
     if access_token.is_none() {
         if refresh_token.is_empty() {
-            return error_account(id, name, now, "expired", "缺少 Refresh Token".to_string());
+            return error_account(id, name, now, "expired", crate::tr!("缺少 Refresh Token"));
         }
         if client_id.is_empty() || client_secret.is_empty() {
             return error_account(
@@ -106,9 +106,9 @@ pub async fn fetch_antigravity_quota(
                 now,
                 "error",
                 if t3_token.is_some() {
-                    "憑證已過期：開啟 Antigravity（或 T3 Code）會自動刷新".to_string()
+                    crate::tr!("憑證已過期：開啟 Antigravity（或 T3 Code）會自動刷新")
                 } else {
-                    "憑證缺少 client_id / client_secret".to_string()
+                    crate::tr!("憑證缺少 client_id / client_secret")
                 },
             );
         }
@@ -170,7 +170,7 @@ pub async fn fetch_antigravity_quota(
             "error",
             load_res
                 .err()
-                .unwrap_or_else(|| "無法取得 Antigravity Project ID".to_string()),
+                .unwrap_or_else(|| crate::tr!("無法取得 Antigravity Project ID")),
         );
     };
 
@@ -258,27 +258,27 @@ async fn refresh_google_token(
         ])
         .send()
         .await
-        .map_err(|err| format!("OAuth 連線失敗: {err}"))?;
+        .map_err(|err| crate::tr!("OAuth 連線失敗: {err}", err = err))?;
 
     let status = resp.status().as_u16();
     if status == 400 || status == 401 {
-        return Err(format!("Google 授權已失效 (HTTP {status})"));
+        return Err(crate::tr!("Google 授權已失效 (HTTP {status})", status = status));
     }
     if !resp.status().is_success() {
-        return Err(format!("Token 刷新失敗 (HTTP {status})"));
+        return Err(crate::tr!("Token 刷新失敗 (HTTP {status})", status = status));
     }
 
     let body: Value = resp
         .json()
         .await
-        .map_err(|err| format!("Token 回應解析失敗: {err}"))?;
+        .map_err(|err| crate::tr!("Token 回應解析失敗: {err}", err = err))?;
 
     body.get("access_token")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "OAuth 回應缺少 access_token".to_string())
+        .ok_or_else(|| crate::tr!("OAuth 回應缺少 access_token"))
 }
 
 async fn post_code_assist(
@@ -299,11 +299,11 @@ async fn post_code_assist(
         .json(payload)
         .send()
         .await
-        .map_err(|err| format!("請求 {endpoint} 失敗: {err}"))?;
+        .map_err(|err| crate::tr!("請求 {endpoint} 失敗: {err}", endpoint = endpoint, err = err))?;
 
     let status = resp.status().as_u16();
     if status == 401 || status == 403 {
-        return Err(format!("授權被拒絕 (HTTP {status})"));
+        return Err(crate::tr!("授權被拒絕 (HTTP {status})", status = status));
     }
     if !resp.status().is_success() {
         return Err(format!("{endpoint} HTTP {status}"));
@@ -312,11 +312,11 @@ async fn post_code_assist(
     let text = resp
         .text()
         .await
-        .map_err(|err| format!("讀取 {endpoint} 回應失敗: {err}"))?;
+        .map_err(|err| crate::tr!("讀取 {endpoint} 回應失敗: {err}", endpoint = endpoint, err = err))?;
     if text.trim().is_empty() {
         return Ok(json!({}));
     }
-    serde_json::from_str(&text).map_err(|err| format!("解析 {endpoint} JSON 失敗: {err}"))
+    serde_json::from_str(&text).map_err(|err| crate::tr!("解析 {endpoint} JSON 失敗: {err}", endpoint = endpoint, err = err))
 }
 
 fn extract_project(load: &Value) -> Option<String> {

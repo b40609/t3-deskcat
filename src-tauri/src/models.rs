@@ -161,6 +161,9 @@ pub struct AppSettings {
     /// Time tick on the bars: "on" | "ahead" (only when used faster than time) | "off".
     #[serde(default = "default_pace_tick")]
     pub pace_tick: String,
+    /// UI language: "system" | "en" | "zh-TW" | "zh-CN" | "ja" | "ko".
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(default = "default_true")]
     pub show_picks: bool,
     /// Pet particle effects (music notes, Zzz, sweat, sparks)
@@ -294,6 +297,9 @@ fn default_reset_format() -> String {
 fn default_pace_tick() -> String {
     "ahead".to_string()
 }
+fn default_language() -> String {
+    "system".to_string()
+}
 fn default_true() -> bool {
     true
 }
@@ -321,6 +327,7 @@ impl Default for AppSettings {
             usage_display: default_usage_display(),
             reset_format: default_reset_format(),
             pace_tick: default_pace_tick(),
+            language: default_language(),
             show_picks: true,
             pet_effects: true,
             account_prefs: HashMap::new(),

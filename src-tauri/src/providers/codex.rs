@@ -19,19 +19,19 @@ pub async fn fetch_codex_quota(
     let raw = match fs::read_to_string(auth_path) {
         Ok(s) => s,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("無法讀取認證: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("無法讀取認證: {err}", err = err));
         }
     };
 
     let parsed: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("認證 JSON 錯誤: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("認證 JSON 錯誤: {err}", err = err));
         }
     };
 
     let Some(tokens) = parsed.get("tokens") else {
-        return error_account(id, name, now, "expired", "尚未登入 Codex / ChatGPT".to_string());
+        return error_account(id, name, now, "expired", crate::tr!("尚未登入 Codex / ChatGPT"));
     };
 
     let access_token = tokens
@@ -40,7 +40,7 @@ pub async fn fetch_codex_quota(
         .map(str::trim)
         .unwrap_or("");
     if access_token.is_empty() {
-        return error_account(id, name, now, "expired", "缺少 Access Token".to_string());
+        return error_account(id, name, now, "expired", crate::tr!("缺少 Access Token"));
     }
 
     let account_id = tokens
@@ -62,7 +62,7 @@ pub async fn fetch_codex_quota(
     let response = match req.send().await {
         Ok(r) => r,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("連線失敗: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("連線失敗: {err}", err = err));
         }
     };
 
@@ -73,7 +73,7 @@ pub async fn fetch_codex_quota(
             name,
             now,
             "expired",
-            "授權已過期，請在 Codex 重新登入".to_string(),
+            crate::tr!("授權已過期，請在 Codex 重新登入"),
         );
     }
     if !response.status().is_success() {
@@ -83,7 +83,7 @@ pub async fn fetch_codex_quota(
     let body: Value = match response.json().await {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("解析回應失敗: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("解析回應失敗: {err}", err = err));
         }
     };
 

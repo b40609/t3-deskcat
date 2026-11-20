@@ -69,13 +69,13 @@ impl NotifyState {
         let items = std::mem::take(&mut self.quiet_backlog);
         if items.len() == 1 {
             let (t, b) = items.into_iter().next().unwrap();
-            return Some((format!("🌙 勿擾期間：{t}"), b));
+            return Some((crate::tr!("🌙 勿擾期間：{t}", t = t), b));
         }
         let mut body = String::new();
         for (i, (t, _)) in items.iter().enumerate() {
             let line = strip_emoji_prefix(t);
             if body.chars().count() + line.chars().count() > 180 {
-                body.push_str(&format!("…等 {} 則", items.len()));
+                body.push_str(&crate::tr!("…等 {n} 則", n = items.len()));
                 break;
             }
             if i > 0 {
@@ -83,7 +83,7 @@ impl NotifyState {
             }
             body.push_str(line);
         }
-        Some((format!("🌙 勿擾期間有 {} 則通知", items.len()), body))
+        Some((crate::tr!("🌙 勿擾期間有 {n} 則通知", n = items.len()), body))
     }
 }
 

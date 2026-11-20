@@ -92,6 +92,8 @@ export interface AppSettings {
   resetFormat?: "absolute" | "relative";
   /** Time tick on the bars. */
   paceTick?: "on" | "ahead" | "off";
+  /** UI language; "system" follows Windows. */
+  language?: "system" | "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
   showPicks?: boolean;
   petEffects?: boolean;
   // accounts

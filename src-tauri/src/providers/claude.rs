@@ -21,19 +21,19 @@ pub async fn fetch_claude_quota(
     let raw_creds = match fs::read_to_string(credentials_path) {
         Ok(s) => s,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("無法讀取憑證: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("無法讀取憑證: {err}", err = err));
         }
     };
 
     let parsed: Value = match serde_json::from_str(&raw_creds) {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("憑證 JSON 格式錯誤: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("憑證 JSON 格式錯誤: {err}", err = err));
         }
     };
 
     let Some(oauth) = parsed.get("claudeAiOauth") else {
-        return error_account(id, name, now, "expired", "尚未登入 Claude Code".to_string());
+        return error_account(id, name, now, "expired", crate::tr!("尚未登入 Claude Code"));
     };
 
     let access_token = oauth
@@ -42,7 +42,7 @@ pub async fn fetch_claude_quota(
         .map(str::trim)
         .unwrap_or("");
     if access_token.is_empty() {
-        return error_account(id, name, now, "expired", "缺少 Access Token".to_string());
+        return error_account(id, name, now, "expired", crate::tr!("缺少 Access Token"));
     }
 
     let plan = oauth
@@ -62,7 +62,7 @@ pub async fn fetch_claude_quota(
             primary_windows: Vec::new(),
             extra_windows: Vec::new(),
             status: "expired".to_string(),
-            error: Some("憑證已過期：用這個帳號跑一次 Claude Code 就會自動更新".to_string()),
+            error: Some(crate::tr!("憑證已過期：用這個帳號跑一次 Claude Code 就會自動更新")),
             updated_at: now,
         };
     }
@@ -79,7 +79,7 @@ pub async fn fetch_claude_quota(
     let response = match resp {
         Ok(r) => r,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("連線失敗: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("連線失敗: {err}", err = err));
         }
     };
 
@@ -94,7 +94,7 @@ pub async fn fetch_claude_quota(
             primary_windows: Vec::new(),
             extra_windows: Vec::new(),
             status: "expired".to_string(),
-            error: Some("授權已過期，請在 Claude Code 重新登入".to_string()),
+            error: Some(crate::tr!("授權已過期，請在 Claude Code 重新登入")),
             updated_at: now,
         };
     }
@@ -109,7 +109,7 @@ pub async fn fetch_claude_quota(
             primary_windows: Vec::new(),
             extra_windows: Vec::new(),
             status: "cooldown".to_string(),
-            error: Some("429 請求頻繁冷卻中".to_string()),
+            error: Some(crate::tr!("429 請求頻繁冷卻中")),
             updated_at: now,
         };
     }
@@ -121,7 +121,7 @@ pub async fn fetch_claude_quota(
     let body: Value = match response.json().await {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", format!("解析回應失敗: {err}"));
+            return error_account(id, name, now, "error", crate::tr!("解析回應失敗: {err}", err = err));
         }
     };
 

@@ -80,8 +80,8 @@ pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -
     }
 
     let output = match tokio::time::timeout(TIMEOUT, cmd.output()).await {
-        Err(_) => return error(id, name, now, "error", "agy 回應逾時".to_string()),
-        Ok(Err(err)) => return error(id, name, now, "error", format!("無法執行 agy：{err}")),
+        Err(_) => return error(id, name, now, "error", crate::tr!("agy 回應逾時")),
+        Ok(Err(err)) => return error(id, name, now, "error", crate::tr!("無法執行 agy：{err}", err = err)),
         Ok(Ok(o)) => o,
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -116,9 +116,9 @@ pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -
 type Windows = (Vec<crate::models::QuotaWindow>, Vec<crate::models::QuotaWindow>);
 
 fn parse_report(stdout: &str) -> Result<Windows, String> {
-    let start = stdout.find('{').ok_or_else(|| "agy 沒有輸出用量報告".to_string())?;
+    let start = stdout.find('{').ok_or_else(|| crate::tr!("agy 沒有輸出用量報告"))?;
     let v: Value = serde_json::from_str(stdout[start..].trim())
-        .map_err(|e| format!("agy 用量報告格式無法解析：{e}"))?;
+        .map_err(|e| crate::tr!("agy 用量報告格式無法解析：{e}", e = e))?;
     if v.get("status").and_then(Value::as_str) != Some("SUCCESS") {
         let detail = v
             .get("error")
@@ -129,10 +129,10 @@ fn parse_report(stdout: &str) -> Result<Windows, String> {
     }
     let data = v
         .pointer("/command/data")
-        .ok_or_else(|| "agy 用量報告缺少資料".to_string())?;
+        .ok_or_else(|| crate::tr!("agy 用量報告缺少資料"))?;
     let (primary, extra) = super::antigravity::parse_quota_groups(data);
     if primary.is_empty() && extra.is_empty() {
-        return Err("agy 用量報告沒有可用的額度".to_string());
+        return Err(crate::tr!("agy 用量報告沒有可用的額度"));
     }
     Ok((primary, extra))
 }
