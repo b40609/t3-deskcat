@@ -361,6 +361,9 @@ pub struct DashboardSnapshot {
     /// Per account id.
     #[serde(default)]
     pub usage_today: HashMap<String, crate::usage_stats::UsageToday>,
+    /// Per account id: current burn rate of its shortest limit window, % per hour.
+    #[serde(default)]
+    pub burn_rates: HashMap<String, f64>,
 }
 
 impl AppSettings {

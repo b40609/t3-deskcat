@@ -1,7 +1,8 @@
 import { drawDeskCat } from "./catSprite";
 import { MUSE_ASSETS } from "./museAssets";
 import { getAnimator } from "./museAnimator";
-import type { AppSettings, CatMood, PetTheme } from "./types";
+import { elapsedShare, toneOf, windowWord, type Focus, type Tone } from "./focus";
+import type { AppSettings, CatMood, PetTheme, QuotaWindow } from "./types";
 
 const imageCache: Record<string, HTMLImageElement> = {};
 const museImages: Partial<Record<CatMood, HTMLImageElement>> = {};
@@ -46,120 +47,95 @@ export function drawMuseCat(
   anim.render(ctx, size, mood);
 }
 
+const RING_INK: Record<Tone, string> = {
+  good: "rgba(255, 255, 255, 0.86)",
+  warn: "#e3b341",
+  bad: "#ff6b7a",
+};
+
 /**
- * 1. Professional HUD Radial Gauge
- * Clean, distraction-free, high-precision developer aesthetic.
+ * Ring gauge: outer ring = 5-hour window, inner ring = weekly window, of the
+ * focus account (the one an agent is using, else the best next pick). Each ring
+ * fills with what is left; the small tick marks how much of the window's time
+ * is left, so a fill shorter than the tick means it is being used faster than
+ * time passes. Centre: the lower of the two. No glow, no decorative motion.
  */
-export function drawHudGauge(
+export function drawRingGauge(
   ctx: CanvasRenderingContext2D,
   size: number,
-  score: number,
-  mood: CatMood,
-  tick: number,
+  focus: Focus | null,
+  settings: AppSettings,
+  dpr = 1,
 ) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, size, size);
   ctx.imageSmoothingEnabled = true;
-
-  const center = size / 2;
-  const radius = size * 0.38;
-  const strokeWidth = Math.max(3, Math.round(size * 0.085));
+  const c = size / 2;
+  const outerW = Math.max(3, size * 0.085);
+  const innerW = Math.max(2, size * 0.055);
+  const gap = Math.max(1.5, size * 0.03);
+  const r1 = size * 0.46 - outerW / 2;
+  const r2 = r1 - outerW / 2 - gap - innerW / 2;
 
   ctx.save();
-
-  // Dark glassy background disc
+  // Disc: a quiet graphite surface so the rings read on any wallpaper.
   ctx.beginPath();
-  ctx.arc(center, center, radius + strokeWidth * 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(11, 15, 25, 0.88)";
+  ctx.arc(c, c, size * 0.48, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(32, 32, 32, 0.92)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.09)";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = Math.max(1, size / 64);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
   ctx.stroke();
+  // Old or missing data: everything on the disc fades.
+  ctx.globalAlpha = focus && !focus.stale ? 1 : 0.4;
 
-  // Outer track ring
-  ctx.beginPath();
-  ctx.arc(center, center, radius, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-  ctx.lineWidth = strokeWidth;
-  ctx.lineCap = "round";
-  ctx.stroke();
-
-  // Mood color schemes
-  let primaryColor = "#00f0ff";
-  let glowColor = "rgba(0, 240, 255, 0.5)";
-  let labelText = "NOMINAL";
-
-  if (mood === "sweating") {
-    primaryColor = "#ffb020";
-    glowColor = "rgba(255, 176, 32, 0.5)";
-    labelText = "ALERT";
-  } else if (mood === "sleeping") {
-    primaryColor = "#ff3366";
-    glowColor = "rgba(255, 51, 102, 0.55)";
-    labelText = "DRAINED";
-  }
-
-  // Active progress arc (from -90° clockwise)
-  const clampedScore = Math.max(0, Math.min(100, Math.round(score)));
-  const startAngle = -Math.PI / 2;
-  const arcLength = (clampedScore / 100) * (Math.PI * 2);
-  const endAngle = startAngle + arcLength;
-
-  if (clampedScore > 0) {
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = Math.round(size * 0.1);
-
+  const ring = (w: QuotaWindow | null, r: number, lw: number) => {
     ctx.beginPath();
-    ctx.arc(center, center, radius, startAngle, endAngle);
-    ctx.strokeStyle = primaryColor;
-    ctx.lineWidth = strokeWidth;
-    ctx.lineCap = "round";
+    ctx.arc(c, c, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.lineWidth = lw;
     ctx.stroke();
+    if (!w || !focus) return;
+    const pct = Math.max(0, Math.min(100, w.remainingPercent));
+    const top = -Math.PI / 2;
+    if (pct > 0) {
+      ctx.beginPath();
+      ctx.arc(c, c, r, top, top + (pct / 100) * Math.PI * 2);
+      ctx.strokeStyle = RING_INK[toneOf(pct, settings, focus.acc.id)];
+      ctx.lineWidth = lw;
+      ctx.lineCap = "butt";
+      ctx.stroke();
+    }
+    const el = elapsedShare(w);
+    if (el != null) {
+      // A notch cut through the ring: dark on the fill, light on the empty track.
+      const ang = top + (1 - el) * Math.PI * 2;
+      const notch = Math.max(1.5, size / 36) / r;
+      ctx.beginPath();
+      ctx.arc(c, c, r, ang - notch / 2, ang + notch / 2);
+      ctx.strokeStyle = pct / 100 > 1 - el ? "rgb(32, 32, 32)" : "rgba(255, 255, 255, 0.9)";
+      ctx.lineWidth = lw + 1;
+      ctx.stroke();
+    }
+  };
+  ring(focus?.short ?? null, r1, outerW);
+  ring(focus?.long ?? null, r2, innerW);
 
-    ctx.shadowBlur = 0;
-  }
-
-  // Subtle rotating scanner tick on outer rim
-  const scanAngle = (tick % 100) / 100 * (Math.PI * 2) - Math.PI / 2;
-  const scanX = center + Math.cos(scanAngle) * radius;
-  const scanY = center + Math.sin(scanAngle) * radius;
-  ctx.beginPath();
-  ctx.arc(scanX, scanY, Math.max(1, size * 0.02), 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
-  ctx.fill();
-
-  // Inner subtle concentric radar line
-  ctx.beginPath();
-  ctx.arc(center, center, radius * 0.62, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Center Score Number
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-
-  const numFontSize = Math.round(size * 0.29);
-  ctx.font = `700 ${numFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace`;
-  ctx.fillStyle = "#ffffff";
-  const numY = size >= 58 ? center - Math.round(size * 0.05) : center;
-  ctx.fillText(`${clampedScore}%`, center, numY);
-
-  // Status subtext when space allows
-  if (size >= 58) {
-    const subFontSize = Math.max(8, Math.round(size * 0.11));
-    ctx.font = `600 ${subFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-    ctx.fillStyle = primaryColor;
-    ctx.fillText(labelText, center, center + Math.round(size * 0.22));
+  const tight = focus?.tight;
+  const value = tight ? `${Math.max(0, Math.round(tight.remainingPercent))}` : "–";
+  const showLabel = size / dpr >= 88 && !!tight;
+  const numSize = Math.round(size * (value.length >= 3 ? 0.22 : 0.27));
+  ctx.font = `600 ${numSize}px "Segoe UI Variable Display", "Segoe UI", sans-serif`;
+  ctx.fillStyle = tight && focus ? RING_INK[toneOf(tight.remainingPercent, settings, focus.acc.id)] : "rgba(255,255,255,0.6)";
+  if (tight && toneOf(tight.remainingPercent, settings, focus!.acc.id) === "good") ctx.fillStyle = "#ffffff";
+  ctx.fillText(value, c, showLabel ? c - size * 0.04 : c + size * 0.01);
+  if (showLabel) {
+    ctx.font = `500 ${Math.round(size * 0.1)}px "Segoe UI Variable Text", "Segoe UI", sans-serif`;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.fillText(windowWord(tight), c, c + size * 0.15);
   }
-
-  // Blinking health pulse indicator at top
-  const pulseBlink = Math.sin((tick % 24) / 24 * Math.PI * 2) > -0.2;
-  ctx.beginPath();
-  ctx.arc(center, center - radius - strokeWidth * 0.85, Math.max(1.5, size * 0.03), 0, Math.PI * 2);
-  ctx.fillStyle = pulseBlink ? primaryColor : "rgba(255, 255, 255, 0.15)";
-  ctx.fill();
-
   ctx.restore();
 }
 
@@ -215,7 +191,7 @@ export function drawCustomAvatar(
     if (size >= 64) {
       ctx.font = `600 ${Math.max(9, Math.round(size * 0.12))}px "Segoe UI", sans-serif`;
       ctx.fillStyle = "#939bb0";
-      ctx.fillText("點擊設定", center, center + Math.round(size * 0.25));
+      ctx.fillText("Set image", center, center + Math.round(size * 0.25));
     }
     ctx.restore();
     return;
@@ -289,17 +265,17 @@ export function renderAvatar(
   ctx: CanvasRenderingContext2D,
   size: number,
   theme: PetTheme,
-  score: number,
+  focus: Focus | null,
   mood: CatMood,
   tick: number,
   settings: AppSettings,
+  dpr = 1,
 ) {
   if (theme === "desk_cat") {
     drawMuseCat(ctx, size, mood, tick, settings.petEffects !== false, animSpeedFactor(settings));
   } else if (theme === "custom") {
     drawCustomAvatar(ctx, size, mood, tick, settings);
   } else {
-    // Default to HUD Gauge (Professional & practical)
-    drawHudGauge(ctx, size, score, mood, tick);
+    drawRingGauge(ctx, size, focus, settings, dpr);
   }
 }

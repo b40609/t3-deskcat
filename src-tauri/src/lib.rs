@@ -1,3 +1,4 @@
+mod activity;
 mod discovery;
 mod forecast;
 mod history;
@@ -429,6 +430,48 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
+fn get_activity() -> activity::Activity {
+    activity::get()
+}
+
+/// Hover bubble over (or under) the pet. The pet window composes the lines.
+#[tauri::command]
+fn show_bubble(app: AppHandle, lines: Vec<String>) {
+    let (Some(pet), Some(bubble)) = (app.get_webview_window("pet"), app.get_webview_window("bubble")) else {
+        return;
+    };
+    let (Ok(pp), Ok(ps), Ok(bs)) = (pet.outer_position(), pet.outer_size(), bubble.outer_size()) else {
+        return;
+    };
+    let Some(mon) = pet.current_monitor().ok().flatten() else { return };
+    let wa = mon.work_area();
+    let scale = mon.scale_factor();
+    let (bw, bh) = (bs.width as i32, bs.height as i32);
+    let (l, t) = (wa.position.x, wa.position.y);
+    let r = l + wa.size.width as i32;
+    let b = t + wa.size.height as i32;
+    let pet_cx = pp.x + ps.width as i32 / 2;
+    let x = (pet_cx - bw / 2).clamp(l + 4, (r - bw - 4).max(l + 4));
+    let above = pp.y - t >= bh;
+    let y = if above { pp.y - bh } else { (pp.y + ps.height as i32).min(b - bh) };
+    let tail_x = ((pet_cx - x) as f64 / scale).round();
+    let _ = app.emit_to(
+        "bubble",
+        "bubble-content",
+        serde_json::json!({ "lines": lines, "above": above, "tailX": tail_x }),
+    );
+    let _ = bubble.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    let _ = bubble.show();
+}
+
+#[tauri::command]
+fn hide_bubble(app: AppHandle) {
+    if let Some(b) = app.get_webview_window("bubble") {
+        let _ = b.hide();
+    }
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
 }
@@ -483,6 +526,23 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
             _ => None,
         })
         .collect();
+    activity::set_sources(
+        usage_sources
+            .iter()
+            .map(|s| match s {
+                usage_stats::Source::Claude { account_id, config_dir } => activity::Src {
+                    account_id: account_id.clone(),
+                    kind: activity::Kind::Claude,
+                    dir: config_dir.clone(),
+                },
+                usage_stats::Source::Codex { account_id, codex_home } => activity::Src {
+                    account_id: account_id.clone(),
+                    kind: activity::Kind::Codex,
+                    dir: codex_home.clone(),
+                },
+            })
+            .collect(),
+    );
     let want_usage = state.0.lock().map(|g| g.settings.show_usage_stats).unwrap_or(true);
     let usage_task = want_usage
         .then(|| tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources)));
@@ -606,6 +666,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
     // Never let a transient failure (429 / network / 5xx) wipe an account to 0%:
     // fall back to the last good data (persisted across restarts).
     let mut forecasts = HashMap::new();
+    let mut burn_rates = HashMap::new();
     if let Ok(mut guard) = state.0.lock() {
         let now = Utc::now().timestamp();
         accounts = accounts
@@ -637,6 +698,9 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
             if let Some(f) = forecast::forecast(acc, series, now) {
                 forecasts.insert(acc.id.clone(), f);
             }
+            if let Some(r) = forecast::burn_rate(acc, series, now) {
+                burn_rates.insert(acc.id.clone(), r);
+            }
         }
     }
 
@@ -659,6 +723,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
             offline: false,
             forecasts,
             usage_today,
+            burn_rates,
         };
         recompute_snapshot_metrics(&mut snap, &cfg);
 
@@ -1239,10 +1304,17 @@ pub fn run() {
             qr_svg,
             diagnostics,
             pick_folder,
+            get_activity,
+            show_bubble,
+            hide_bubble,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
             position_pet_initial(&handle, &loaded_settings);
+            if let Some(b) = app.get_webview_window("bubble") {
+                let _ = b.set_ignore_cursor_events(true);
+            }
+            activity::spawn(handle.clone());
             let hk_err = apply_hotkey(&handle, &loaded_settings.hotkey);
             if let Ok(mut g) = shared.0.lock() {
                 g.hotkey_error = hk_err;
@@ -1463,6 +1535,7 @@ mod tests {
             offline: false,
             forecasts: HashMap::new(),
             usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
         };
         recompute_snapshot_metrics(&mut snap, &settings);
         assert_eq!(snap.overall_score, 40); // only Beta counts
@@ -1483,6 +1556,7 @@ mod tests {
             offline: false,
             forecasts: HashMap::new(),
             usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
         }
     }
 
@@ -1591,6 +1665,7 @@ mod tests {
             offline: false,
             forecasts: HashMap::new(),
             usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
         };
 
         recompute_snapshot_metrics(&mut snap, &settings);

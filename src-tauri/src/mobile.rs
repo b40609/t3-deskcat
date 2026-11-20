@@ -256,6 +256,7 @@ mod tests {
             offline: false,
             forecasts: HashMap::new(),
             usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
         };
         let v = view(&snap);
         let names: Vec<&str> = v.accounts.iter().map(|a| a.name.as_str()).collect();

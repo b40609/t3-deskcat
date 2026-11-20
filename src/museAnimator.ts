@@ -280,6 +280,12 @@ export class MuseAnimator {
   effects = true;
   /** Animation speed multiplier (0.6 slow / 1 normal / 1.6 fast). */
   speed = 1;
+  /** Typing tempo in beats per minute; follows how fast quota is being used. */
+  tempo = 100;
+  /** false = nobody is working: the cat stops typing and rests its paws. */
+  busy = true;
+  /** Typing phase (0–1 per beat), advanced by tempo so tempo changes stay smooth. */
+  private beatPhase = 0;
   /** Virtual clock (ms) advanced by real time * speed. */
   private clock = performance.now();
   private lastReal = 0;
@@ -295,6 +301,35 @@ export class MuseAnimator {
     if (this.mood === "sleeping") this.actions.push({ kind: "twitch", start: t, dur: 420 });
   }
 
+  /** An agent finished its turn: lean back and stretch. */
+  finish() {
+    const t = this.clock;
+    if (this.mood === "sleeping") return;
+    this.actions = this.actions.filter((a) => a.kind === "pop");
+    this.actions.push({ kind: "stretch", start: t, dur: 1400, dir: 1 });
+    this.spawn("note", 330, 170, t, { vx: 30, vy: -70 });
+  }
+
+  /** An agent hit an error: startled jolt with a "!". */
+  oops() {
+    const t = this.clock;
+    if (this.mood === "sleeping") {
+      this.actions.push({ kind: "twitch", start: t, dur: 420 });
+      return;
+    }
+    this.actions.push({ kind: "panic", start: t, dur: 600, dir: 1 });
+    this.spawn("bang", 360, 120, t, { vx: 0, vy: -20 });
+  }
+
+  /** A limit reset: a happy hop with hearts and sparkles. */
+  celebrate() {
+    const t = this.clock;
+    this.actions = this.actions.filter((a) => a.kind !== "hop");
+    this.actions.push({ kind: "hop", start: t, dur: 650, dir: 1 });
+    for (let i = 0; i < 3; i++) this.spawn("heart", 220 + i * 60, 160, t, { vx: rand(-30, 30), vy: -90 - i * 20 });
+    for (let i = 0; i < 6; i++) this.spawn("spark", rand(150, 360), rand(200, 320), t, { vx: rand(-40, 40), vy: -60 });
+  }
+
   render(ctx: CanvasRenderingContext2D, size: number, mood: CatMood) {
     const real = performance.now();
     this.clock += this.lastReal ? Math.min(100, real - this.lastReal) * this.speed : 16;
@@ -302,6 +337,7 @@ export class MuseAnimator {
     const t = this.clock;
     const dt = Math.min(0.1, this.lastT ? (t - this.lastT) / 1000 : 0.016);
     this.lastT = t;
+    this.beatPhase = (this.beatPhase + dt * (this.tempo / 60)) % 1;
 
     if (mood !== this.mood) {
       this.prevMood = this.mood;
@@ -362,7 +398,9 @@ export class MuseAnimator {
     const busy = this.actions.length > 0;
     if (!busy) {
       const pool: ActionKind[] =
-        this.mood === "working"
+        this.mood !== "sleeping" && !this.busy
+          ? ["look", "doubleBlink", "look", "look"]
+          : this.mood === "working"
           ? ["stretch", "look", "doubleBlink", "look"]
           : this.mood === "sweating"
             ? ["panic", "look", "panic", "doubleBlink"]
@@ -416,17 +454,25 @@ export class MuseAnimator {
     let dy = 0;
     const sec = t / 1000;
 
-    if (mood === "working") {
-      // Typing to the music: ~100 BPM with a small squash on each beat.
-      const beat = (sec * (100 / 60)) % 1;
+    if (mood !== "sleeping" && !this.busy) {
+      // Paws off the keyboard: slow breathing and a little sway.
+      const br = (Math.sin((sec / 3) * Math.PI * 2 - Math.PI / 2) + 1) / 2;
+      sy += 0.02 * br;
+      sx += 0.006 * br;
+      rot = Math.sin(sec * 0.5) * 0.012;
+      if (mood === "sweating") dx = Math.sin(sec * 23) * 0.6;
+    } else if (mood === "working") {
+      // Typing on the beat; the tempo follows the burn rate.
+      const beat = this.beatPhase;
       const pulse = Math.exp(-beat * 7);
-      sy -= 0.03 * pulse;
-      sx += 0.018 * pulse;
-      rot = Math.sin(sec * Math.PI * (100 / 60) * 0.5) * 0.035; // sway every 2 beats
-      dy = -Math.sin(beat * Math.PI) * 3;
+      const k = Math.min(1.4, Math.max(0.7, this.tempo / 100));
+      sy -= 0.03 * pulse * k;
+      sx += 0.018 * pulse * k;
+      rot = Math.sin(sec * Math.PI * (this.tempo / 60) * 0.5) * 0.035; // sway every 2 beats
+      dy = -Math.sin(beat * Math.PI) * 3 * k;
     } else if (mood === "sweating") {
       // Frantic typing + nervous tremble
-      const fast = Math.sin(sec * Math.PI * 2 * 7);
+      const fast = Math.sin(this.beatPhase * Math.PI * 2 * 4);
       sy -= 0.012 * (fast * 0.5 + 0.5);
       sx += 0.008 * (fast * 0.5 + 0.5);
       dx = Math.sin(sec * 53) * 1.4 + Math.sin(sec * 31) * 0.8;
@@ -682,12 +728,13 @@ export class MuseAnimator {
 
   private spawnAmbient(t: number) {
     if (t - this.moodChangedAt < 300) return;
+    if (this.mood !== "sleeping" && !this.busy) return;
     if (this.mood === "working") {
-      if (this.every("note", t, 1150)) {
+      if (this.every("note", t, 1150 * (100 / this.tempo))) {
         const left = Math.random() < 0.6;
         this.spawn("note", left ? 95 : 380, 190, t, { vx: left ? rand(-45, -20) : rand(20, 45), vy: rand(-80, -60) });
       }
-      if (this.every("spark", t, 180)) {
+      if (this.every("spark", t, 180 * (100 / this.tempo))) {
         this.spawn("spark", rand(185, 265), rand(395, 420), t, { vx: 0, vy: -30 });
       }
     } else if (this.mood === "sweating") {

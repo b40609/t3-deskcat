@@ -52,6 +52,28 @@ pub fn window_key(account_id: &str, label: &str) -> String {
     format!("{account_id}|{label}")
 }
 
+/// Current pace of the account's shortest limit window, % per hour. Recent
+/// history only: a window that has not moved for 15+ minutes reads as 0, so the
+/// cat slows down when nobody is using the account.
+pub fn burn_rate<'a>(
+    acc: &AccountQuota,
+    series: impl Fn(&str) -> Option<&'a [(i64, i32)]>,
+    now: i64,
+) -> Option<f64> {
+    if acc.status != "ok" && acc.status != "stale" {
+        return None;
+    }
+    let w = acc
+        .primary_windows
+        .iter()
+        .filter(|w| !w.label.contains(' '))
+        .filter_map(|w| window_secs(&w.label).map(|len| (len, w)))
+        .min_by_key(|(len, _)| *len)?
+        .1;
+    let rate = recent_rate(series(&w.label)?, now, w.remaining_percent)?;
+    Some((rate * 3600.0 * 10.0).round() / 10.0)
+}
+
 /// `series(label)` returns that window's samples, if any.
 pub fn forecast<'a>(
     acc: &AccountQuota,
@@ -165,6 +187,20 @@ mod tests {
         let wk = [(now - 60 * 60, 41)];
         let f = forecast(&b, |l| Some(if l == "5h" { &five[..] } else { &wk[..] }), now).unwrap();
         assert_eq!((f.label.as_str(), f.exhaust_at), ("5h", now + 15 * 60));
+    }
+
+    #[test]
+    fn burn_rate_uses_the_shortest_window() {
+        let now = 100 * H;
+        let a = acc(&[("5h", 40, Some(now + 2 * H)), ("Wk", 70, Some(now + 3 * 86400))]);
+        let five = [(now - 30 * 60, 50)]; // 10% in 30 min
+        let wk = [(now - 60 * 60, 80)];
+        let r = burn_rate(&a, |l| Some(if l == "5h" { &five[..] } else { &wk[..] }), now);
+        assert_eq!(r, Some(20.0));
+        // Flat for 20 minutes: idle.
+        let flat = [(now - 20 * 60, 40)];
+        assert_eq!(burn_rate(&a, |_| Some(&flat[..]), now), Some(0.0));
+        assert_eq!(burn_rate(&a, |_| None, now), None);
     }
 
     #[test]

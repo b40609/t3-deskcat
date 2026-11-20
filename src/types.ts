@@ -136,4 +136,13 @@ export interface DashboardSnapshot {
   offline?: boolean;
   forecasts?: Record<string, Forecast>;
   usageToday?: Record<string, UsageToday>;
+  /** Current pace of each account's shortest window, % per hour. */
+  burnRates?: Record<string, number>;
+}
+
+/** What the coding agents are doing, from their local session logs. */
+export interface AgentActivity {
+  state: "working" | "done" | "error" | "idle" | "unknown";
+  accountId: string | null;
+  lastWrite: number;
 }
