@@ -379,7 +379,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   let body: string;
   let note = "";
   if (isExpired && !isLastKnown) {
-    body = `<span class="status expired">${escapeHtml(acc.error ?? "授權已過期，請在 T3 重新登入")}</span>`;
+    body = `<span class="status expired">${escapeHtml(acc.error ?? "授權已過期，請重新登入這個帳號")}</span>`;
   } else if (isErr) {
     body = `<span class="status error">${escapeHtml(acc.error ?? "讀取失敗")}</span>`;
   } else if (isCooldown) {

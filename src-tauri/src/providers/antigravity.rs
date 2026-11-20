@@ -106,7 +106,7 @@ pub async fn fetch_antigravity_quota(
                 now,
                 "error",
                 if t3_token.is_some() {
-                    "憑證已過期：開著 T3 Code 會自動刷新".to_string()
+                    "憑證已過期：開啟 Antigravity（或 T3 Code）會自動刷新".to_string()
                 } else {
                     "憑證缺少 client_id / client_secret".to_string()
                 },
@@ -343,7 +343,12 @@ fn extract_tier(load: &Value) -> Option<String> {
         })
 }
 
-fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWindow>) {
+/// Accepts both the Cloud Code API shape (`displayName`, `bucketId`, `remainingFraction`,
+/// `resetTime`) and the `agy -p /usage` report (`name`, `id`, `remaining_fraction`, `reset_time`).
+pub(crate) fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWindow>) {
+    fn field<'a>(v: &'a Value, camel: &str, snake: &str) -> Option<&'a Value> {
+        v.get(camel).or_else(|| v.get(snake))
+    }
     let mut gemini_5h: Option<QuotaWindow> = None;
     let mut gemini_wk: Option<QuotaWindow> = None;
     let mut extras: Vec<QuotaWindow> = Vec::new();
@@ -353,8 +358,7 @@ fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWindow>) {
     };
 
     for grp in groups {
-        let group_name = grp
-            .get("displayName")
+        let group_name = field(grp, "displayName", "name")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_ascii_lowercase();
@@ -363,8 +367,7 @@ fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWindow>) {
         };
 
         for bucket in buckets {
-            let bucket_id = bucket
-                .get("bucketId")
+            let bucket_id = field(bucket, "bucketId", "id")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_ascii_lowercase();
@@ -385,16 +388,14 @@ fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWindow>) {
             let remaining = if disabled {
                 0
             } else {
-                bucket
-                    .get("remainingFraction")
+                field(bucket, "remainingFraction", "remaining_fraction")
                     .and_then(|v| v.as_f64().or_else(|| v.as_str()?.parse::<f64>().ok()))
                     .filter(|f| f.is_finite())
                     .map(|f| (f * 100.0).round().clamp(0.0, 100.0) as i32)
                     .unwrap_or(0)
             };
 
-            let reset_at = bucket
-                .get("resetTime")
+            let reset_at = field(bucket, "resetTime", "reset_time")
                 .and_then(Value::as_str)
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.timestamp());

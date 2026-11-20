@@ -120,6 +120,8 @@ export interface AppSettings {
   // phone
   mobileEnabled?: boolean;
   mobilePort?: number;
+  /** Extra folders scanned for accounts (CLAUDE_CONFIG_DIR / CODEX_HOME / Antigravity token). */
+  extraAccountDirs?: string[];
 }
 
 export interface DashboardSnapshot {

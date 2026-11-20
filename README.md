@@ -43,10 +43,13 @@
   讓每位用戶自由更換為自己喜愛的虛擬寵物、動漫角色或個人吉祥物。支援 PNG、JPG 與動態 GIF。可分別為「充足」、「警戒」與「見底」三態上傳專屬圖片，亦可僅上傳 1 張通用圖片由程式自動附加警示震動與 `Zzz` 休息特效！
 
 ### 2. 🔍 零手動配置（Zero-Setup Auto-Discovery）
-自動讀取 T3 Code 現有配置與本機憑證檔，完全不需要重新手動輸入 API Key 或重跑 OAuth 登入流程：
-- **Claude Code**：唯讀解析本機憑證，即時監控 5 小時動態視窗與 7 日每週額度。
-- **Antigravity (Google / Gemini)**：自動讀取本機 token，僅在記憶體內部刷新臨時 Access Token（絕不竄改或寫入本機登入檔）。優先提取主要的 Gemini 5h / 週用量池，可選開啟次要池。
-- **ChatGPT / Codex**：唯讀解析本機認證狀態，監控 Primary / Secondary 重置視窗。
+**不需要安裝 T3 Code**。直接沿用各家官方 CLI 的登入，不必另外輸入 API Key 或重新登入：
+- **Claude Code**：掃描 `~/.claude`、`CLAUDE_CONFIG_DIR` 與 `~/.claude-<名稱>` 這類多帳號資料夾，唯讀讀取 `.credentials.json`，監控 5 小時與每週額度。
+- **ChatGPT / Codex**：掃描 `CODEX_HOME`、`~/.codex` 與 `~/.codex-<名稱>`，唯讀讀取 `auth.json`。
+- **Antigravity (Google / Gemini)**：執行官方的 `agy -p /usage --output-format json` 取得額度，完全不碰登入資料（agy 存在系統認證管理員裡）。只有在 agy 已登入時才會執行。
+- **T3 Code（選配）**：有安裝時，會一併讀取 T3 的多帳號實例與顯示名稱。
+- **其他資料夾**：在 `%APPDATA%\t3-deskcat\settings.json` 的 `extraAccountDirs` 加入路徑即可。
+- 偵測到哪些帳號、各自從哪裡來，會寫在 `%APPDATA%\t3-deskcat\deskcat.log`。
 
 ### 3. 🎯 智慧推薦與簡潔懸停提示（Smart Pick & Tooltip）
 - **滑鼠懸停**：即時提示目前各家推薦使用帳號與剩餘百分比，例如：

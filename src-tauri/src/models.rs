@@ -235,6 +235,12 @@ pub struct AppSettings {
     pub mobile_enabled: bool,
     #[serde(default = "default_mobile_port")]
     pub mobile_port: u16,
+
+    // ---- Accounts
+    /// Extra folders to scan for accounts (a Claude `CLAUDE_CONFIG_DIR`, a `CODEX_HOME`,
+    /// or a folder holding an Antigravity token), on top of the automatic ones.
+    #[serde(default)]
+    pub extra_account_dirs: Vec<String>,
 }
 
 fn default_mobile_port() -> u16 {
@@ -331,6 +337,7 @@ impl Default for AppSettings {
             tray_style: default_tray_style(),
             mobile_enabled: true,
             mobile_port: default_mobile_port(),
+            extra_account_dirs: Vec::new(),
         }
     }
 }

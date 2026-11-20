@@ -383,8 +383,34 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Write the discovered accounts and where each came from to the log whenever the
+/// set changes, so "an account is missing" can be answered from the log alone.
+fn log_discovery_changes(accounts: &[DiscoveredAccount]) {
+    static LAST: Mutex<String> = Mutex::new(String::new());
+    let summary = if accounts.is_empty() {
+        "accounts: none found (no Claude Code / Codex / agy sign-in detected)".to_string()
+    } else {
+        let lines: Vec<String> = accounts
+            .iter()
+            .map(|a| format!("  {} <- {}", a.id(), a.source()))
+            .collect();
+        format!("accounts ({}):\n{}", accounts.len(), lines.join("\n"))
+    };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if *last != summary {
+        logging::log(&summary);
+        *last = summary;
+    }
+}
+
 async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot {
-    let discovered = discover_accounts();
+    let extra_dirs = state
+        .0
+        .lock()
+        .map(|g| g.settings.extra_account_dirs.clone())
+        .unwrap_or_default();
+    let discovered = discover_accounts(&extra_dirs);
+    log_discovery_changes(&discovered);
 
     // Today's tokens from the local CLI logs, scanned on a blocking thread while
     // the network fetches run.
@@ -437,6 +463,9 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     is_legacy_gemini,
                 } => {
                     fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                }
+                DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                    providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
                 }
                 DiscoveredAccount::Codex {
                     id,

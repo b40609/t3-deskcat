@@ -43,10 +43,13 @@ Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), fr
   Replace the avatar with any pet, anime character, or mascot of your choice (PNG, JPG, or animated GIF). Upload distinct images for each state, or provide a single favorite image that automatically reacts with tremor shakes and floating `Zzz` bubbles!
 
 ### 2. 🔍 Zero-Setup Auto-Discovery
-Parses active T3 Code profile configurations and local auth tokens without any manual API Key entry or redundant OAuth authorizations:
-- **Claude Code**: Read-only extraction of dynamic 5-hour rolling windows and 7-day weekly limits.
-- **Antigravity (Google / Gemini)**: Refreshes short-lived tokens in-memory without ever altering local token files on disk. Tracks primary Gemini 5h / Weekly pools with optional secondary pool visibility.
-- **ChatGPT / Codex**: Read-only status parsing of primary and secondary reset windows.
+**T3 Code is not required.** DeskCat reuses the sign-ins of each official CLI — no API keys, no extra OAuth logins:
+- **Claude Code**: scans `~/.claude`, `CLAUDE_CONFIG_DIR` and multi-account profile folders such as `~/.claude-<name>`; reads `.credentials.json` read-only for the 5-hour and weekly limits.
+- **ChatGPT / Codex**: scans `CODEX_HOME`, `~/.codex` and `~/.codex-<name>`; reads `auth.json` read-only.
+- **Antigravity (Google / Gemini)**: runs the official `agy -p /usage --output-format json` and never touches the sign-in (agy keeps it in the OS credential store). Only runs when agy is signed in.
+- **T3 Code (optional)**: when installed, its multi-account instances and display names are picked up as well.
+- **Other folders**: add paths to `extraAccountDirs` in `%APPDATA%\t3-deskcat\settings.json`.
+- Which accounts were found, and from where, is written to `%APPDATA%\t3-deskcat\deskcat.log`.
 
 ### 3. 🎯 Smart Picks & Minimal Hover Tooltip
 - **Hover Tooltip**: Instant summary of best-suited accounts and remaining percentage:

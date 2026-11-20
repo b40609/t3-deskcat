@@ -43,10 +43,12 @@
   允许用户自由更换为自己喜欢的宠物、动漫角色或个性头像（支持 PNG、JPG、动态 GIF）。可为三种状态分别设置专属图片，也可仅上传 1 张通用图片，由程序自动赋予焦躁微震与 `Zzz` 休息特效！
 
 ### 2. 🔍 零配置本地自发现（Zero-Setup Auto-Discovery）
-无需重新输入 API Key 或重新登录 OAuth，自动解析现有 T3 Code 配置：
-- **Claude Code**：只读解析本地凭据，实时监控 5 小时动态滚动窗口与 7 天周额度。
-- **Antigravity (Google / Gemini)**：仅在内存中刷新临时 Token（绝不修改磁盘本地配置），优先展示主力 Gemini 5h 与周限额池。
-- **ChatGPT / Codex**：只读解析认证信息，监控 Primary / Secondary 重置窗口。
+**无需安装 T3 Code。** 直接沿用各家官方 CLI 的登录，无需输入 API Key 或重新登录：
+- **Claude Code**：扫描 `~/.claude`、`CLAUDE_CONFIG_DIR` 与 `~/.claude-<名称>` 这类多账号文件夹，只读读取 `.credentials.json`。
+- **ChatGPT / Codex**：扫描 `CODEX_HOME`、`~/.codex` 与 `~/.codex-<名称>`，只读读取 `auth.json`。
+- **Antigravity (Google / Gemini)**：执行官方的 `agy -p /usage --output-format json` 获取额度，完全不碰登录数据；仅在 agy 已登录时执行。
+- **T3 Code（可选）**：如已安装，会一并读取其多账号实例与显示名称。
+- 检测到的账号及来源会写入 `%APPDATA%\t3-deskcat\deskcat.log`。
 
 ### 3. 🎯 智能推荐与极简悬停提示
 - **鼠标悬停**：精炼展示当前各服务推荐使用的最佳账号与剩余百分比：

@@ -62,7 +62,7 @@ pub async fn fetch_claude_quota(
             primary_windows: Vec::new(),
             extra_windows: Vec::new(),
             status: "expired".to_string(),
-            error: Some("憑證已過期：在 T3 用一次這個帳號就會自動更新".to_string()),
+            error: Some("憑證已過期：用這個帳號跑一次 Claude Code 就會自動更新".to_string()),
             updated_at: now,
         };
     }
@@ -94,7 +94,7 @@ pub async fn fetch_claude_quota(
             primary_windows: Vec::new(),
             extra_windows: Vec::new(),
             status: "expired".to_string(),
-            error: Some("授權已過期，請在 T3 或終端機重新登入".to_string()),
+            error: Some("授權已過期，請在 Claude Code 重新登入".to_string()),
             updated_at: now,
         };
     }
