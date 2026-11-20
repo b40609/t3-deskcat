@@ -103,7 +103,7 @@ canvas.addEventListener("pointerenter", () => {
   const now = performance.now();
   if (now - lastHover < 2500) return;
   lastHover = now;
-  getAnimator(ctx).poke("hop");
+  getAnimator(ctx).poke("squish");
 });
 
 canvas.addEventListener("pointerleave", () => {
