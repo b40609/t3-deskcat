@@ -615,7 +615,6 @@ export class MuseAnimator {
     }
 
     if (mood === "sweating" && prep.drop) this.drawSlidingDrop(ctx, prep.drop, t, primary);
-    if (mood === "sweating") this.drawVein(ctx, t);
     if (mood === "sleeping") this.drawBubble(ctx, t);
     ctx.restore();
   }
@@ -646,26 +645,6 @@ export class MuseAnimator {
       this.lastSpawn.dropFall = t;
     }
     drawTeardrop(ctx, d.cx + ox, d.cy + oy, d.w * sc, d.h * sc, d.color, alpha);
-  }
-
-  private drawVein(ctx: CanvasRenderingContext2D, t: number) {
-    const pulse = 1 + Math.max(0, Math.sin((t / 1000) * Math.PI * 2 * 1.6)) * 0.25;
-    ctx.save();
-    ctx.translate(398, 152);
-    ctx.scale(pulse, pulse);
-    ctx.strokeStyle = "#ff3b30";
-    ctx.lineWidth = 9;
-    ctx.lineCap = "round";
-    for (let i = 0; i < 4; i++) {
-      ctx.save();
-      ctx.rotate((i * Math.PI) / 2);
-      ctx.beginPath();
-      ctx.moveTo(7, -20);
-      ctx.quadraticCurveTo(7, -7, 20, -7);
-      ctx.stroke();
-      ctx.restore();
-    }
-    ctx.restore();
   }
 
   private drawBubble(ctx: CanvasRenderingContext2D, t: number) {
