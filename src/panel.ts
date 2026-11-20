@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import type {
   AccountPref,
   AccountQuota,
@@ -43,14 +44,10 @@ const inpSleepTh = $<HTMLInputElement>("inp-sleep-th");
 const valSleepTh = $("val-sleep-th");
 const valSweatRange = $("val-sweat-range");
 const inpNotify = $<HTMLInputElement>("inp-notify");
-const inpNotifyTh = $<HTMLInputElement>("inp-notify-th");
-const valNotifyTh = $("val-notify-th");
 const inpRefreshSec = $<HTMLInputElement>("inp-refresh-sec");
 const valRefreshSec = $("val-refresh-sec");
 const inpAgExtra = $<HTMLInputElement>("inp-ag-extra");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
-const inpUiScale = $<HTMLInputElement>("inp-ui-scale");
-const valUiScale = $("val-ui-scale");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
 const inpPetEffects = $<HTMLInputElement>("inp-pet-effects");
 const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
@@ -65,7 +62,7 @@ const offlineNote = $("offline-note");
 const inpMobile = $<HTMLInputElement>("inp-mobile");
 const btnMobileUrl = $<HTMLButtonElement>("btn-mobile-url");
 const mobileHint = $("mobile-hint");
-const MOBILE_HINT = "在 iPhone 開啟 Tailscale，用 Safari 打開上面的網址，再按「分享 → 加入主畫面」。";
+const MOBILE_HINT = "只透過 Tailscale 連線，區網與網際網路都看不到";
 const selPanelPos = $<HTMLSelectElement>("sel-panel-pos");
 const btnHotkey = $<HTMLButtonElement>("btn-hotkey");
 const btnHotkeyClear = $<HTMLButtonElement>("btn-hotkey-clear");
@@ -86,7 +83,7 @@ let pinned = false;
 let expandedAcc: string | null = null;
 let accSettingsSig = "";
 let recordingHotkey = false;
-const HOTKEY_HINT = "點快捷鍵後按下新的組合鍵；Esc 取消、Backspace 清除。";
+const HOTKEY_HINT = "點快捷鍵後按下新的組合鍵，Esc 取消、Backspace 清除";
 
 const fallbackSettings: AppSettings = {
   petSize: 64,
@@ -208,10 +205,13 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
-function getTone(pct: number): "good" | "warn" | "bad" {
+/** Bar color for a remaining %: above the notice line, between, or under the danger line (per-account override). */
+function getTone(pct: number, accId?: string): "good" | "warn" | "bad" {
   const s = currentSettings ?? fallbackSettings;
+  const danger = (accId && s.accountPrefs?.[accId]?.notifyThreshold) || s.sleepingThreshold;
+  if (pct < danger) return "bad";
   if (pct > s.workingThreshold) return "good";
-  if (pct >= s.sleepingThreshold) return "warn";
+  if (pct >= danger) return "warn";
   return "bad";
 }
 
@@ -268,11 +268,12 @@ function elapsedPercent(label: string, resetAt: number | null): number | null {
 function renderWindow(
   w: { label: string; remainingPercent: number; resetAt: number | null },
   provider: ProviderKind,
+  accId?: string,
 ) {
   const showUsed = ((currentSettings ?? fallbackSettings).usageDisplay ?? "used") === "used";
   const remaining = Math.max(0, Math.min(100, w.remainingPercent));
   const value = showUsed ? 100 - remaining : remaining;
-  const tone = getTone(remaining);
+  const tone = getTone(remaining, accId);
   const reset = formatResetAt(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
   // The tick sits where the fill would be if usage kept pace with time.
@@ -405,7 +406,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
       wins = [pool.reduce((m, w) => (w.remainingPercent < m.remainingPercent ? w : m), pool[0])];
     }
     body = wins.length
-      ? wins.map((w) => renderWindow(w, acc.provider)).join("")
+      ? wins.map((w) => renderWindow(w, acc.provider, acc.id)).join("")
       : `<span class="status stale">沒有用量資料</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">憑證過期 · ${ageLabel(acc.updatedAt)}</span>`;
@@ -461,12 +462,13 @@ ${formatResetAt(pick.resetAt)}` : "";
           <span class="row-sub" title="${escapeHtml(pick.reason + reset)}">${sub}</span>
           ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
         </div>
-        <span class="pct tone-${getTone(pick.effectiveRemaining)}"><small class="pct-cap">剩餘</small>${pick.effectiveRemaining}<small>%</small></span>
+        <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">剩餘</small>${pick.effectiveRemaining}<small>%</small></span>
       </div>`;
     })
     .join("");
 
   renderAccounts(snap);
+  btnMobilePromo.classList.toggle("hidden", snap.settings.mobileEnabled === true || snap.accounts.length === 0);
 
   const timeStr = new Date(snap.lastRefreshedAt * 1000).toLocaleTimeString("zh-TW", {
     hour12: false,
@@ -510,11 +512,13 @@ function syncSettingsForm(s: AppSettings) {
   valWorkTh.textContent = `${s.workingThreshold}%`;
   setRangeIfIdle(inpSleepTh, s.sleepingThreshold);
   valSleepTh.textContent = `${s.sleepingThreshold}%`;
-  valSweatRange.textContent = `介於 ${s.sleepingThreshold}% 到 ${s.workingThreshold}% 時，貓會冒汗趕工`;
+  valSweatRange.textContent = `剩餘低於 ${s.workingThreshold}% 額度條轉琥珀色、貓開始冒汗；低於 ${s.sleepingThreshold}% 轉紅色、發通知、貓趴睡`;
+  const th = $("th-preview");
+  th.style.setProperty("--bad", `${s.sleepingThreshold}%`);
+  th.style.setProperty("--warn", `${s.workingThreshold - s.sleepingThreshold}%`);
+  renderDirList(s);
 
   inpNotify.checked = s.notifyEnabled;
-  setRangeIfIdle(inpNotifyTh, s.notifyLowThreshold);
-  valNotifyTh.textContent = `${s.notifyLowThreshold}%`;
   setRangeIfIdle(inpRefreshSec, s.refreshIntervalSecs);
   valRefreshSec.textContent = `${s.refreshIntervalSecs} 秒`;
 
@@ -528,7 +532,7 @@ function syncSettingsForm(s: AppSettings) {
   inpCompact.checked = !!s.compactAccounts;
   inpShowForecast.checked = s.showForecast !== false;
   inpShowUsage.checked = s.showUsageStats !== false;
-  inpMobile.checked = s.mobileEnabled !== false;
+  inpMobile.checked = s.mobileEnabled === true;
   if (document.activeElement !== selPanelPos) selPanelPos.value = s.panelPosition ?? "pet";
   if (!recordingHotkey) btnHotkey.innerHTML = hotkeyLabel(s.hotkey ?? "");
   btnHotkeyClear.classList.toggle("hidden", !s.hotkey);
@@ -542,8 +546,6 @@ function syncSettingsForm(s: AppSettings) {
   valClaudeInterval.textContent = ci % 60 ? `${Math.floor(ci / 60)} 分 ${ci % 60} 秒` : `${ci / 60} 分鐘`;
   if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
 
-  setRangeIfIdle(inpUiScale, s.uiScale ?? 90);
-  valUiScale.textContent = `${s.uiScale ?? 90}%`;
   inpShowPicks.checked = s.showPicks !== false;
   inpPetEffects.checked = s.petEffects !== false;
 
@@ -592,9 +594,10 @@ function accSettingRow(acc: AccountQuota): string {
   if (p.alias?.trim()) tags.push(`原名 ${acc.name}`);
   if (p.hidden) tags.push("已隱藏");
   else if (p.excludeScore) tags.push("不計分");
-  if (p.notifyThreshold != null) tags.push(`警戒 ${p.notifyThreshold}%`);
+  if (p.notifyThreshold != null) tags.push(`危險線 ${p.notifyThreshold}%`);
+  const src = accountSources[acc.id];
   const thOpts = [
-    `<option value="">跟隨全域（${s.notifyLowThreshold}%）</option>`,
+    `<option value="">跟隨全域（${s.sleepingThreshold}%）</option>`,
     ...[5, 10, 15, 20, 25, 30, 40, 50].map(
       (v) => `<option value="${v}" ${p.notifyThreshold === v ? "selected" : ""}>${v}%</option>`,
     ),
@@ -605,7 +608,7 @@ function accSettingRow(acc: AccountQuota): string {
         <div class="row"><span>顯示名稱</span><input class="text-input" data-f="alias" maxlength="40" placeholder="${escapeHtml(acc.name)}" value="${escapeHtml(p.alias ?? "")}" /></div>
         <label class="row"><span>在額度頁顯示</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
         <label class="row ${p.hidden ? "disabled" : ""}"><span>計入總分與心情</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
-        <div class="row"><span>低額度警戒線</span><select class="select" data-f="th">${thOpts}</select></div>
+        <div class="row"><span>危險線</span><select class="select" data-f="th">${thOpts}</select></div>
         <div class="row"><span>頭像</span><span class="av-actions">${p.avatar ? `<button class="link-btn" data-act="av-clear">還原預設</button>` : ""}<label class="link-btn">選擇圖片<input type="file" accept="image/*" class="hidden-file-input" data-f="avatar" /></label></span></div>
       </div>`
     : "";
@@ -617,6 +620,7 @@ function accSettingRow(acc: AccountQuota): string {
         <div class="row-main">
           <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span>${p.hidden ? `<svg class="tag-ico"><use href="#i-eye-off" /></svg>` : ""}</div>
           <span class="row-sub">${escapeHtml(tags.join(" · "))}</span>
+          ${src ? `<span class="row-sub muted src" title="${escapeHtml(src)}">${escapeHtml(sourceLabel(src))}</span>` : ""}
         </div>
         <svg class="chev"><use href="#i-chev" /></svg>
       </div>${body}
@@ -630,7 +634,8 @@ function renderAccountSettings(accounts: AccountQuota[]) {
     accs.map((a) => [a.id, a.name, a.provider]),
     s.accountPrefs ?? {},
     expandedAcc,
-    s.notifyLowThreshold,
+    s.sleepingThreshold,
+    accountSources,
   ]);
   if (sig === accSettingsSig) return;
   const active = document.activeElement as HTMLElement | null;
@@ -753,12 +758,12 @@ inpSleepTh.addEventListener("input", () => {
 segControls.forEach((seg) => {
   seg.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      commitSettings({ [seg.dataset.key as string]: btn.dataset.value } as Partial<AppSettings>, true);
+      const v = seg.dataset.number !== undefined ? Number(btn.dataset.value) : btn.dataset.value;
+      commitSettings({ [seg.dataset.key as string]: v } as Partial<AppSettings>, true);
     });
   });
 });
 
-inpUiScale.addEventListener("input", () => commitSettings({ uiScale: Number(inpUiScale.value) }));
 inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
 inpPetEffects.addEventListener("change", () => commitSettings({ petEffects: inpPetEffects.checked }, true));
 
@@ -784,38 +789,203 @@ selPanelPos.addEventListener("change", () =>
   commitSettings({ panelPosition: selPanelPos.value as PanelPosition }, true),
 );
 
-// ---- phone page
+// ---- settings tabs
+const settingsScroll = $("settings-scroll");
+function showTab(name: string) {
+  document.querySelectorAll<HTMLElement>(".tab").forEach((t) => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle("active", on);
+    t.setAttribute("aria-selected", String(on));
+  });
+  document.querySelectorAll<HTMLElement>(".pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
+  settingsScroll.scrollTop = 0;
+  if (name === "accounts") void loadSources();
+}
+document.querySelectorAll<HTMLElement>(".tab").forEach((t) =>
+  t.addEventListener("click", () => showTab(t.dataset.tab ?? "general")),
+);
+
+// ---- account sources, extra folders, rescan
+/** Where an account was read from, in words: T3 Code, the agy CLI, or a folder. */
+function sourceLabel(src: string): string {
+  if (/[\\/]\.t3[\\/]|t3code/i.test(src)) return "來自 T3 Code";
+  if (src.includes("-p /usage")) return "來自 agy CLI";
+  const dir = src.replace(/[\\/][^\\/]+$/, "");
+  return tailPath(dir);
+}
+
+/** Keep the end of a long path, where the account-specific part is. */
+function tailPath(p: string, max = 44): string {
+  return p.length <= max ? p : `…${p.slice(p.length - max + 1)}`;
+}
+
+let accountSources: Record<string, string> = {};
+async function loadSources() {
+  try {
+    accountSources = await invoke<Record<string, string>>("account_sources");
+  } catch {
+    accountSources = {};
+  }
+  accSettingsSig = "";
+  if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
+}
+
+const dirList = $("dir-list");
+let dirSig = "";
+function renderDirList(s: AppSettings) {
+  const dirs = s.extraAccountDirs ?? [];
+  const sig = JSON.stringify(dirs);
+  if (sig === dirSig) return;
+  dirSig = sig;
+  dirList.innerHTML = dirs
+    .map(
+      (d, i) => `
+      <div class="row dir-row">
+        <span class="dir-path" title="${escapeHtml(d)}">${escapeHtml(tailPath(d))}</span>
+        <button class="icon-btn" data-rm="${i}" title="移除"><svg><use href="#i-x" /></svg></button>
+      </div>`,
+    )
+    .join("");
+}
+dirList.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-rm]");
+  if (!btn) return;
+  const dirs = [...(cfg().extraAccountDirs ?? [])];
+  dirs.splice(Number(btn.dataset.rm), 1);
+  commitSettings({ extraAccountDirs: dirs }, true);
+  void rescan();
+});
+async function rescan() {
+  const b = $("btn-rescan");
+  b.textContent = "掃描中";
+  try {
+    renderDashboard(await invoke<DashboardSnapshot>("refresh_now"));
+    await loadSources();
+    const n = currentSnapshot?.accounts.length ?? 0;
+    b.textContent = `找到 ${n} 個帳號`;
+  } catch {
+    b.textContent = "掃描失敗";
+  }
+  window.setTimeout(() => (b.textContent = "重新掃描帳號"), 2500);
+}
+$("btn-rescan").addEventListener("click", () => void rescan());
+$("btn-add-dir").addEventListener("click", async () => {
+  const dir = await invoke<string | null>("pick_folder").catch(() => null);
+  if (!dir) return;
+  const dirs = cfg().extraAccountDirs ?? [];
+  if (dirs.includes(dir)) return;
+  commitSettings({ extraAccountDirs: [...dirs, dir] }, true);
+  window.setTimeout(() => void rescan(), 300);
+});
+
+// ---- support
+document.querySelectorAll<HTMLElement>("[data-open]").forEach((el) =>
+  el.addEventListener("click", () => {
+    invoke("open_target", { target: el.dataset.open }).catch(() => {});
+    if (el.dataset.open?.startsWith("tailscale")) startTailscaleWatch();
+  }),
+);
+$("btn-diag").addEventListener("click", async () => {
+  const state = $("diag-state");
+  try {
+    await navigator.clipboard.writeText(await invoke<string>("diagnostics"));
+    state.textContent = "已複製";
+  } catch {
+    state.textContent = "複製失敗";
+  }
+  window.setTimeout(() => (state.textContent = ""), 2500);
+});
+getVersion()
+  .then((v) => ($("app-version").textContent = `T3 DeskCat ${v}`))
+  .catch(() => {});
+
+// ---- phone page: a four-step guide; each step is detected, not ticked by hand
+const mobileSteps = $("mobile-steps");
+const mobileQr = $("mobile-qr");
+const qrImg = $("qr-img");
+const rowMobileToggle = $("row-mobile-toggle");
+let qrFor = "";
+let tsWatch: number | undefined;
+
+function setStep(name: string, state: "done" | "current" | "todo") {
+  const el = mobileSteps.querySelector<HTMLElement>(`[data-step="${name}"]`);
+  if (el) el.dataset.state = state;
+}
+
 async function showMobileStatus() {
   let st: { url: string | null; error: string | null } = { url: null, error: null };
+  let ts = { installed: false, connected: false };
   try {
-    st = await invoke("mobile_status");
+    [st, ts] = await Promise.all([invoke<typeof st>("mobile_status"), invoke<typeof ts>("tailscale_state")]);
   } catch {
     // preview
   }
-  const on = cfg().mobileEnabled !== false;
-  btnMobileUrl.classList.toggle("hidden", !on || !st.url);
-  btnMobileUrl.textContent = st.url ? `${st.url}　點一下複製` : "";
+  const on = cfg().mobileEnabled === true;
+  const live = on && !!st.url;
+  setStep("install", ts.installed ? "done" : "current");
+  setStep("signin", ts.connected ? "done" : ts.installed ? "current" : "todo");
+  setStep("phone", live ? "done" : ts.connected ? "current" : "todo");
+  setStep("scan", live ? "done" : ts.connected ? "current" : "todo");
+  mobileSteps.classList.toggle("is-live", live);
+  rowMobileToggle.classList.toggle("hidden", !on);
+  inpMobile.checked = on;
+
+  mobileQr.classList.toggle("hidden", !live);
+  if (live && st.url && qrFor !== st.url) {
+    qrFor = st.url;
+    qrImg.innerHTML = await invoke<string>("qr_svg", { text: st.url }).catch(() => "");
+  }
+  btnMobileUrl.textContent = st.url ?? "";
   btnMobileUrl.dataset.url = st.url ?? "";
-  mobileHint.textContent = !on ? "已關閉。" : st.error ?? (st.url ? MOBILE_HINT : "啟動中…");
-  mobileHint.classList.toggle("error", on && !!st.error);
+  const err = on && !live ? st.error : null;
+  mobileHint.textContent = err ?? (on && !live ? "啟動中" : MOBILE_HINT);
+  mobileHint.classList.toggle("error", !!err);
+  if (ts.connected && tsWatch) {
+    window.clearInterval(tsWatch);
+    tsWatch = undefined;
+  }
 }
-inpMobile.addEventListener("change", () => {
-  commitSettings({ mobileEnabled: inpMobile.checked }, true);
-  mobileHint.textContent = inpMobile.checked ? "啟動中…" : "已關閉。";
-  btnMobileUrl.classList.add("hidden");
-  // The server reacts within ~10 s.
-  window.setTimeout(() => void showMobileStatus(), 1500);
-  window.setTimeout(() => void showMobileStatus(), 11000);
-});
+
+/** After sending the user to install or sign in, re-check every few seconds. */
+function startTailscaleWatch() {
+  if (tsWatch) return;
+  let n = 0;
+  tsWatch = window.setInterval(() => {
+    if (++n > 100 || !showingSettings) {
+      window.clearInterval(tsWatch);
+      tsWatch = undefined;
+      return;
+    }
+    void showMobileStatus();
+  }, 3000);
+}
+
+function setMobile(on: boolean) {
+  commitSettings({ mobileEnabled: on }, true);
+  mobileHint.textContent = on ? "啟動中" : MOBILE_HINT;
+  // The server picks the change up within ~10 s.
+  [800, 2500, 6000, 11000].forEach((ms) => window.setTimeout(() => void showMobileStatus(), ms));
+}
+$("btn-mobile-on").addEventListener("click", () => setMobile(true));
+inpMobile.addEventListener("change", () => setMobile(inpMobile.checked));
 btnMobileUrl.addEventListener("click", async () => {
   const url = btnMobileUrl.dataset.url;
   if (!url) return;
   try {
     await navigator.clipboard.writeText(url);
-    btnMobileUrl.textContent = `${url}　已複製`;
+    btnMobileUrl.textContent = "已複製網址";
+    window.setTimeout(() => (btnMobileUrl.textContent = url), 1500);
   } catch {
-    btnMobileUrl.textContent = url;
+    // ignore
   }
+});
+
+// Dashboard entry point, until the phone page is turned on.
+const btnMobilePromo = $("btn-mobile-promo");
+btnMobilePromo.addEventListener("click", () => {
+  setSettingsVisible(true);
+  showTab("general");
+  window.setTimeout(() => $("sec-mobile").scrollIntoView({ behavior: "smooth", block: "start" }), 300);
 });
 
 // ---- hotkey recorder
@@ -984,7 +1154,7 @@ window.addEventListener("pointercancel", () => {
   clearDropMarks();
   accSettingsEl.classList.remove("sorting");
 });
-inpNotifyTh.addEventListener("input", () => commitSettings({ notifyLowThreshold: Number(inpNotifyTh.value) }));
+
 inpRefreshSec.addEventListener("input", () => commitSettings({ refreshIntervalSecs: Number(inpRefreshSec.value) }));
 inpAgExtra.addEventListener("change", () => commitSettings({ showAntigravityExtra: inpAgExtra.checked }, true));
 inpAutostart.addEventListener("change", () => commitSettings({ launchAtStartup: inpAutostart.checked }, true));

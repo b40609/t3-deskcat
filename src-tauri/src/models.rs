@@ -384,7 +384,7 @@ impl AppSettings {
     pub fn low_threshold_for(&self, id: &str) -> i32 {
         self.pref(id)
             .and_then(|p| p.notify_threshold)
-            .unwrap_or(self.notify_low_threshold)
+            .unwrap_or(self.sleeping_threshold)
     }
     /// Whether `minute_of_day` (local) falls in the do-not-disturb window.
     pub fn in_quiet_hours(&self, minute_of_day: u32) -> bool {

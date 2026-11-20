@@ -1374,3 +1374,377 @@ svg {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------- settings tabs */
+
+.tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--sep);
+}
+
+.tab {
+  position: relative;
+  padding: 6px 8px 10px;
+  font-size: 13px;
+  color: var(--label-2);
+  border-radius: 6px 6px 0 0;
+  transition: color 0.12s var(--ease);
+}
+
+.tab:hover {
+  color: var(--label);
+}
+
+.tab.active {
+  color: var(--label);
+  font-weight: 600;
+}
+
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.pane > .group:first-child {
+  margin-top: 12px;
+}
+
+/* advanced, collapsed */
+.adv > summary {
+  list-style: none;
+  cursor: pointer;
+  justify-content: flex-start;
+  gap: 4px;
+  color: var(--label-2);
+}
+
+.adv > summary::-webkit-details-marker {
+  display: none;
+}
+
+.adv > summary .chev {
+  width: 12px;
+  height: 12px;
+}
+
+.adv[open] > summary .chev {
+  transform: rotate(90deg);
+}
+
+.adv[open] > summary {
+  color: var(--label);
+}
+
+/* links, small buttons */
+.row-link {
+  color: var(--label);
+  transition: background-color 0.12s var(--ease);
+}
+
+.row-link:hover {
+  background: var(--fill);
+}
+
+.btn {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-bottom-color: color-mix(in srgb, var(--stroke) 100%, var(--label) 8%);
+  transition: background-color 0.12s var(--ease);
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--card) 94%, var(--label));
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--accent) 90%, var(--label));
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--label-3);
+}
+
+.icon-btn:hover {
+  background: var(--fill);
+  color: var(--label);
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dir-path,
+.row-sub.src {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-path {
+  font-size: 13px;
+}
+
+/* threshold preview */
+.th-preview {
+  --bad: 20%;
+  --warn: 50%;
+  padding: 12px 12px 4px;
+}
+
+.th-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--track);
+}
+
+.th-bar i {
+  display: block;
+  height: 100%;
+  transition: flex-basis 0.2s var(--ease);
+}
+
+.th-bad {
+  flex: 0 0 var(--bad);
+  background: var(--bad-ink);
+}
+
+.th-warn {
+  flex: 0 0 var(--warn);
+  background: var(--warn-ink);
+}
+
+.th-ok {
+  flex: 1;
+  background: var(--ink);
+}
+
+.th-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot.warn {
+  background: var(--warn-ink);
+}
+
+.dot.bad {
+  background: var(--bad-ink);
+}
+
+/* phone setup guide */
+.steps {
+  list-style: none;
+  padding: 4px 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.step-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--stroke);
+  color: var(--label-3);
+}
+
+.step-mark b {
+  font-weight: 600;
+}
+
+.step-mark svg {
+  display: none;
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.2;
+}
+
+.step-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-title {
+  font-size: 13px;
+}
+
+.step-hint {
+  font-size: 12px;
+  color: var(--label-3);
+}
+
+.step .btn {
+  display: none;
+}
+
+.step[data-state="todo"] .step-title {
+  color: var(--label-3);
+}
+
+.step[data-state="current"] .step-mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.step[data-state="current"] .btn {
+  display: block;
+}
+
+.step[data-state="done"] .step-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.step[data-state="done"] .step-mark b {
+  display: none;
+}
+
+.step[data-state="done"] .step-mark svg {
+  display: block;
+}
+
+.step[data-state="done"] .step-title {
+  color: var(--label-2);
+}
+
+.step[data-state="done"] .step-hint {
+  display: none;
+}
+
+/* Once live, the finished checklist folds to one line above the QR. */
+.steps.is-live .step:not([data-step="scan"]) {
+  display: none;
+}
+
+.steps.is-live .step[data-step="scan"] .step-hint {
+  display: block;
+}
+
+.qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+
+.qr {
+  width: 168px;
+  height: 168px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px var(--stroke);
+}
+
+.qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  stroke: none;
+}
+
+.url-btn {
+  font-size: 12px;
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.url-btn:hover {
+  background: var(--fill);
+  color: var(--label);
+}
+
+#mobile-qr + .row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--sep);
+}
+
+/* dashboard: phone entry point */
+.promo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--label-2);
+  transition:
+    background-color 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+
+.promo:hover {
+  background: var(--fill);
+  color: var(--label);
+}
+
+.promo > svg:first-child {
+  width: 16px;
+  height: 16px;
+}
+
+.promo span {
+  flex: 1;
+  text-align: left;
+}
+
+.promo .chev {
+  width: 12px;
+  height: 12px;
+}

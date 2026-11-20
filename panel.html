@@ -17,6 +17,7 @@
       <symbol id="i-grip" viewBox="0 0 24 24"><path d="M5 8h14M5 12h14M5 16h14" /></symbol>
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></symbol>
       <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18" /><path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c5 0 9 5 10 7a17 17 0 0 1-3 3.9M6.6 6.6C4.3 8 2.7 10.4 2 12c1 2 5 7 10 7a9.6 9.6 0 0 0 4.4-1" /></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" /></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></symbol>
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></symbol>
       <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></symbol>
@@ -60,6 +61,8 @@
               <div class="list" id="accounts-section"></div>
             </section>
 
+            <button class="promo hidden" id="btn-mobile-promo"><svg><use href="#i-phone" /></svg><span>也能在手機上看額度</span><svg class="chev"><use href="#i-chev" /></svg></button>
+
           </div>
         </section>
 
@@ -70,274 +73,364 @@
             <div class="nav-bar-title" data-tauri-drag-region>設定</div>
             <span class="nav-bar-spacer" data-tauri-drag-region></span>
           </header>
+          <nav class="tabs" role="tablist">
+            <button class="tab active" role="tab" data-tab="general">一般</button>
+            <button class="tab" role="tab" data-tab="accounts">帳號</button>
+            <button class="tab" role="tab" data-tab="alerts">警戒與通知</button>
+            <button class="tab" role="tab" data-tab="pet">桌寵</button>
+          </nav>
 
-          <div class="scroll">
-            <section class="group">
-              <div class="group-header">桌寵外觀</div>
-              <div class="theme-picker" id="theme-selector">
-                <button data-theme="desk_cat" class="theme-btn">
-                  <span class="theme-thumb cat"><svg><use href="#i-cat" /></svg></span>
-                  <span class="theme-name">Muse 貓</span>
-                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                </button>
-                <button data-theme="hud_gauge" class="theme-btn">
-                  <span class="theme-thumb gauge"><svg><use href="#i-gauge" /></svg></span>
-                  <span class="theme-name">圓環儀表</span>
-                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                </button>
-                <button data-theme="custom" class="theme-btn">
-                  <span class="theme-thumb custom"><svg><use href="#i-image" /></svg></span>
-                  <span class="theme-name">自訂圖片</span>
-                  <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                </button>
-              </div>
+          <div class="scroll" id="settings-scroll">
+            <!-- ===== 一般 ===== -->
+            <div class="pane" data-pane="general">
+              <section class="group">
+                <div class="group-header">顯示</div>
+                <div class="list">
+                  <div class="row">
+                    <span>外觀</span>
+                    <div class="segmented" data-key="appearance">
+                      <button data-value="system" class="seg-btn">系統</button>
+                      <button data-value="light" class="seg-btn">淺色</button>
+                      <button data-value="dark" class="seg-btn">深色</button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <span>文字大小</span>
+                    <div class="segmented" data-key="uiScale" data-number>
+                      <button data-value="90" class="seg-btn">小</button>
+                      <button data-value="100" class="seg-btn">中</button>
+                      <button data-value="115" class="seg-btn">大</button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <span>用量數字</span>
+                    <div class="segmented" data-key="usageDisplay">
+                      <button data-value="used" class="seg-btn">已使用</button>
+                      <button data-value="remaining" class="seg-btn">剩餘</button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <span>重設時間</span>
+                    <div class="segmented" data-key="resetFormat">
+                      <button data-value="absolute" class="seg-btn">時刻</button>
+                      <button data-value="relative" class="seg-btn">倒數</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="group-footer">「已使用」與 Claude 官方用量頁一致</div>
+              </section>
 
-              <div id="custom-images-card" class="list hidden" style="margin-top: 10px">
-                <div class="custom-slots">
-                  <label class="custom-slot">
-                    <span class="slot-preview" id="prev-slot-working"></span>
-                    <span class="slot-name">充沛</span>
-                    <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
+              <section class="group">
+                <div class="group-header">面板內容</div>
+                <div class="list">
+                  <label class="row">
+                    <span>推薦使用<small class="row-hint">在最上方列出現在最適合用的帳號</small></span>
+                    <input id="inp-show-picks" class="switch" type="checkbox" checked />
                   </label>
-                  <label class="custom-slot">
-                    <span class="slot-preview" id="prev-slot-sweating"></span>
-                    <span class="slot-name">趕工</span>
-                    <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
+                  <label class="row">
+                    <span>精簡模式<small class="row-hint">每個帳號只顯示最緊的一條限制</small></span>
+                    <input id="inp-compact" class="switch" type="checkbox" />
                   </label>
-                  <label class="custom-slot">
-                    <span class="slot-preview" id="prev-slot-sleeping"></span>
-                    <span class="slot-name">見底</span>
-                    <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
+                  <label class="row">
+                    <span>用完預測<small class="row-hint">照目前速度會在重設前用完時提醒</small></span>
+                    <input id="inp-show-forecast" class="switch" type="checkbox" checked />
+                  </label>
+                  <label class="row">
+                    <span>今日用量與花費<small class="row-hint">讀本機紀錄，花費以 API 牌價估算</small></span>
+                    <input id="inp-show-usage" class="switch" type="checkbox" checked />
                   </label>
                 </div>
-                <button id="btn-clear-custom" class="row row-button destructive">清除自訂圖片</button>
-              </div>
+              </section>
 
-              <div class="list" style="margin-top: 10px">
-                <div class="row row-slider">
-                  <div class="row-line"><span>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
-                  <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
+              <section class="group">
+                <div class="group-header">面板與系統匣</div>
+                <div class="list">
+                  <div class="row">
+                    <span>開啟位置</span>
+                    <select id="sel-panel-pos" class="select">
+                      <option value="pet">跟著桌寵</option>
+                      <option value="top_right">右上角</option>
+                      <option value="bottom_right">右下角</option>
+                      <option value="top_left">左上角</option>
+                      <option value="bottom_left">左下角</option>
+                      <option value="center">螢幕中央</option>
+                    </select>
+                  </div>
+                  <div class="row">
+                    <span>快捷鍵</span>
+                    <div class="hotkey-wrap">
+                      <button id="btn-hotkey" class="hotkey"></button>
+                      <button id="btn-hotkey-clear" class="hotkey-clear" title="停用快捷鍵"><svg><use href="#i-x" /></svg></button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <span>系統匣圖示</span>
+                    <div class="segmented" data-key="trayStyle">
+                      <button data-value="number" class="seg-btn">數字</button>
+                      <button data-value="ring" class="seg-btn">圓環</button>
+                      <button data-value="icon" class="seg-btn">原圖示</button>
+                    </div>
+                  </div>
+                  <label class="row">
+                    <span>開機時啟動</span>
+                    <input id="inp-autostart" class="switch" type="checkbox" />
+                  </label>
                 </div>
-                <label class="row">
-                  <span>動態特效<small class="row-hint">音符、Zzz、汗滴、愛心</small></span>
-                  <input id="inp-pet-effects" class="switch" type="checkbox" checked />
-                </label>
-                <div class="row">
-                  <span>動畫速度</span>
-                  <div class="segmented" data-key="petAnimSpeed">
-                    <button data-value="slow" class="seg-btn">慢</button>
-                    <button data-value="normal" class="seg-btn">正常</button>
-                    <button data-value="fast" class="seg-btn">快</button>
+                <div class="group-footer" id="hotkey-hint">點快捷鍵後按下新的組合鍵，Esc 取消</div>
+              </section>
+
+              <section class="group" id="sec-mobile">
+                <div class="group-header">在手機查看</div>
+                <div class="list">
+                  <ol class="steps" id="mobile-steps">
+                    <li class="step" data-step="install">
+                      <span class="step-mark"><b>1</b><svg><use href="#i-check" /></svg></span>
+                      <div class="step-body">
+                        <span class="step-title">在這台電腦安裝 Tailscale</span>
+                        <span class="step-hint">免費的加密連線，讓手機連回這台電腦</span>
+                      </div>
+                      <button class="btn" data-open="tailscale-download">下載</button>
+                    </li>
+                    <li class="step" data-step="signin">
+                      <span class="step-mark"><b>2</b><svg><use href="#i-check" /></svg></span>
+                      <div class="step-body">
+                        <span class="step-title">在電腦上登入 Tailscale</span>
+                        <span class="step-hint">用 Google、Microsoft 或 Apple 帳號都可以</span>
+                      </div>
+                      <button class="btn" data-open="tailscale-app">開啟</button>
+                    </li>
+                    <li class="step" data-step="phone">
+                      <span class="step-mark"><b>3</b><svg><use href="#i-check" /></svg></span>
+                      <div class="step-body">
+                        <span class="step-title">手機安裝 Tailscale，登入同一個帳號</span>
+                        <span class="step-hint">App Store 或 Google Play 搜尋 Tailscale</span>
+                      </div>
+                    </li>
+                    <li class="step" data-step="scan">
+                      <span class="step-mark"><b>4</b><svg><use href="#i-check" /></svg></span>
+                      <div class="step-body">
+                        <span class="step-title">用手機相機掃描 QR code</span>
+                        <span class="step-hint">打開後選「加入主畫面」，之後一點就開</span>
+                      </div>
+                      <button class="btn btn-primary" id="btn-mobile-on">顯示 QR code</button>
+                    </li>
+                  </ol>
+                  <div class="qr-card hidden" id="mobile-qr">
+                    <div class="qr" id="qr-img"></div>
+                    <button id="btn-mobile-url" class="url-btn" title="複製網址"></button>
+                  </div>
+                  <label class="row hidden" id="row-mobile-toggle">
+                    <span>手機頁</span>
+                    <input id="inp-mobile" class="switch" type="checkbox" />
+                  </label>
+                </div>
+                <div class="group-footer" id="mobile-hint">只透過 Tailscale 連線，區網與網際網路都看不到</div>
+              </section>
+
+              <details class="group adv">
+                <summary class="group-header">進階<svg class="chev"><use href="#i-chev" /></svg></summary>
+                <div class="list">
+                  <div class="row row-slider">
+                    <div class="row-line"><span>自動刷新</span><span class="value" id="val-refresh-sec">120 秒</span></div>
+                    <input id="inp-refresh-sec" class="slider" type="range" min="30" max="600" step="30" value="120" />
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span>Claude 最短查詢間隔</span><span class="value" id="val-claude-interval">90 秒</span></div>
+                    <input id="inp-claude-interval" class="slider" type="range" min="60" max="900" step="30" value="90" />
+                  </div>
+                  <label class="row">
+                    <span>顯示 Antigravity 次要池</span>
+                    <input id="inp-ag-extra" class="switch" type="checkbox" />
+                  </label>
+                </div>
+                <div class="group-footer">Claude 間隔越長，越不容易被 Anthropic 限流（429）</div>
+              </details>
+
+              <section class="group">
+                <div class="group-header">支援</div>
+                <div class="list">
+                  <button class="row row-link" data-open="logs"><span>開啟記錄檔資料夾</span><svg class="chev"><use href="#i-chev" /></svg></button>
+                  <button class="row row-link" id="btn-diag"><span>複製診斷資訊</span><span class="value" id="diag-state"></span></button>
+                </div>
+                <div class="group-footer">回報問題時貼上診斷資訊。內容只有帳號狀態與記錄檔，不含登入憑證</div>
+              </section>
+            </div>
+
+            <!-- ===== 帳號 ===== -->
+            <div class="pane hidden" data-pane="accounts">
+              <section class="group">
+                <div class="group-header">帳號</div>
+                <div class="list" id="acc-settings"></div>
+                <div class="group-footer">拖曳左側把手調整順序，點帳號可改名、隱藏、設定個別危險線</div>
+              </section>
+
+              <section class="group">
+                <div class="group-header">帳號資料夾</div>
+                <div class="list">
+                  <div id="dir-list"></div>
+                  <button class="row row-button" id="btn-add-dir">新增資料夾</button>
+                  <button class="row row-button" id="btn-rescan">重新掃描帳號</button>
+                </div>
+                <div class="group-footer">會自動找 Claude Code、Codex、Antigravity 的登入。帳號放在其他位置（例如設了 CLAUDE_CONFIG_DIR）時，才需要新增資料夾</div>
+              </section>
+            </div>
+
+            <!-- ===== 警戒與通知 ===== -->
+            <div class="pane hidden" data-pane="alerts">
+              <section class="group">
+                <div class="group-header">額度警戒</div>
+                <div class="list">
+                  <div class="th-preview" id="th-preview" aria-hidden="true">
+                    <div class="th-bar"><i class="th-bad"></i><i class="th-warn"></i><i class="th-ok"></i></div>
+                    <div class="th-scale"><span>0%</span><span>剩餘</span><span>100%</span></div>
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span><i class="dot warn"></i>注意線</span><span class="value" id="val-work-th">70%</span></div>
+                    <input id="inp-work-th" class="slider" type="range" min="30" max="95" step="5" value="70" />
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span><i class="dot bad"></i>危險線</span><span class="value" id="val-sleep-th">20%</span></div>
+                    <input id="inp-sleep-th" class="slider" type="range" min="5" max="60" step="5" value="20" />
                   </div>
                 </div>
-                <div class="row row-slider">
-                  <div class="row-line"><span>不透明度</span><span class="value" id="val-pet-opacity">100%</span></div>
-                  <input id="inp-pet-opacity" class="slider" type="range" min="30" max="100" step="5" value="100" />
+                <div class="group-footer" id="val-sweat-range"></div>
+              </section>
+
+              <section class="group">
+                <div class="group-header">通知</div>
+                <div class="list">
+                  <label class="row">
+                    <span>系統通知<small class="row-hint">剩餘額度跌破危險線時提醒</small></span>
+                    <input id="inp-notify" class="switch" type="checkbox" checked />
+                  </label>
+                  <label class="row">
+                    <span>額度重設時通知<small class="row-hint">用量過半的限制恢復時提醒</small></span>
+                    <input id="inp-notify-reset" class="switch" type="checkbox" checked />
+                  </label>
+                  <label class="row">
+                    <span>勿擾時段</span>
+                    <input id="inp-quiet" class="switch" type="checkbox" />
+                  </label>
+                  <div class="row" id="row-quiet-times">
+                    <span>時間</span>
+                    <span class="time-range">
+                      <input id="inp-quiet-start" class="time-input" type="time" value="23:00" />
+                      <span class="time-sep">至</span>
+                      <input id="inp-quiet-end" class="time-input" type="time" value="09:00" />
+                    </span>
+                  </div>
+                  <button id="btn-test-notify" class="row row-button">傳送測試通知</button>
                 </div>
-                <label class="row">
-                  <span>滑鼠離開時淡出<small class="row-hint">不擋畫面，滑過去就恢復</small></span>
-                  <input id="inp-pet-idle-fade" class="switch" type="checkbox" />
-                </label>
-                <div class="row">
-                  <span>開啟面板</span>
-                  <div class="segmented" data-key="petClickAction">
-                    <button data-value="single" class="seg-btn">單擊</button>
-                    <button data-value="double" class="seg-btn">雙擊</button>
+                <div class="group-footer">每個帳號的危險線可在「帳號」分頁個別設定</div>
+              </section>
+            </div>
+
+            <!-- ===== 桌寵 ===== -->
+            <div class="pane hidden" data-pane="pet">
+              <section class="group">
+                <div class="group-header">樣式</div>
+                <div class="theme-picker" id="theme-selector">
+                  <button data-theme="desk_cat" class="theme-btn">
+                    <span class="theme-thumb cat"><svg><use href="#i-cat" /></svg></span>
+                    <span class="theme-name">Muse 貓</span>
+                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                  </button>
+                  <button data-theme="hud_gauge" class="theme-btn">
+                    <span class="theme-thumb gauge"><svg><use href="#i-gauge" /></svg></span>
+                    <span class="theme-name">圓環儀表</span>
+                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                  </button>
+                  <button data-theme="custom" class="theme-btn">
+                    <span class="theme-thumb custom"><svg><use href="#i-image" /></svg></span>
+                    <span class="theme-name">自訂圖片</span>
+                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                  </button>
+                </div>
+
+                <div id="custom-images-card" class="list hidden" style="margin-top: 8px">
+                  <div class="custom-slots">
+                    <label class="custom-slot">
+                      <span class="slot-preview" id="prev-slot-working"></span>
+                      <span class="slot-name">充沛</span>
+                      <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
+                    </label>
+                    <label class="custom-slot">
+                      <span class="slot-preview" id="prev-slot-sweating"></span>
+                      <span class="slot-name">趕工</span>
+                      <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
+                    </label>
+                    <label class="custom-slot">
+                      <span class="slot-preview" id="prev-slot-sleeping"></span>
+                      <span class="slot-name">見底</span>
+                      <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
+                    </label>
+                  </div>
+                  <button id="btn-clear-custom" class="row row-button destructive">清除自訂圖片</button>
+                </div>
+
+                <div class="list" style="margin-top: 8px">
+                  <div class="row row-stack">
+                    <span class="row-caption">預覽動畫</span>
+                    <div class="chips">
+                      <button class="chip" data-preview="working">上班</button>
+                      <button class="chip" data-preview="sweating">趕工</button>
+                      <button class="chip" data-preview="sleeping">趴睡</button>
+                    </div>
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
+                    <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span>不透明度</span><span class="value" id="val-pet-opacity">100%</span></div>
+                    <input id="inp-pet-opacity" class="slider" type="range" min="30" max="100" step="5" value="100" />
+                  </div>
+                  <label class="row">
+                    <span>動態特效<small class="row-hint">音符、Zzz、汗滴、愛心</small></span>
+                    <input id="inp-pet-effects" class="switch" type="checkbox" checked />
+                  </label>
+                  <div class="row">
+                    <span>動畫速度</span>
+                    <div class="segmented" data-key="petAnimSpeed">
+                      <button data-value="slow" class="seg-btn">慢</button>
+                      <button data-value="normal" class="seg-btn">正常</button>
+                      <button data-value="fast" class="seg-btn">快</button>
+                    </div>
                   </div>
                 </div>
-                <label class="row">
-                  <span>貼齊螢幕邊緣<small class="row-hint">拖到邊緣附近會自動靠邊</small></span>
-                  <input id="inp-pet-snap" class="switch" type="checkbox" checked />
-                </label>
-                <div class="row row-stack">
-                  <span class="row-caption">預覽動畫</span>
-                  <div class="chips">
-                    <button class="chip" data-preview="working">上班</button>
-                    <button class="chip" data-preview="sweating">趕工</button>
-                    <button class="chip" data-preview="sleeping">趴睡</button>
+              </section>
+
+              <section class="group">
+                <div class="group-header">行為</div>
+                <div class="list">
+                  <div class="row">
+                    <span>開啟面板</span>
+                    <div class="segmented" data-key="petClickAction">
+                      <button data-value="single" class="seg-btn">單擊</button>
+                      <button data-value="double" class="seg-btn">雙擊</button>
+                    </div>
+                  </div>
+                  <label class="row">
+                    <span>滑鼠離開時淡出<small class="row-hint">不擋畫面，滑過去就恢復</small></span>
+                    <input id="inp-pet-idle-fade" class="switch" type="checkbox" />
+                  </label>
+                  <label class="row">
+                    <span>貼齊螢幕邊緣<small class="row-hint">拖到邊緣附近會自動靠邊</small></span>
+                    <input id="inp-pet-snap" class="switch" type="checkbox" checked />
+                  </label>
+                  <div class="row">
+                    <span>心情依據</span>
+                    <div class="segmented" id="seg-score-mode" data-key="scoreMode">
+                      <button data-value="max_avg" class="seg-btn">各家最高</button>
+                      <button data-value="all_avg" class="seg-btn">全部平均</button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+                <div class="group-footer">貓的心情跟著剩餘額度：高於注意線上班，介於兩線之間冒汗，低於危險線趴睡</div>
+              </section>
+            </div>
 
-            <section class="group">
-              <div class="group-header">顯示</div>
-              <div class="list">
-                <div class="row">
-                  <span>外觀</span>
-                  <div class="segmented" data-key="appearance">
-                    <button data-value="system" class="seg-btn">系統</button>
-                    <button data-value="light" class="seg-btn">淺色</button>
-                    <button data-value="dark" class="seg-btn">深色</button>
-                  </div>
-                </div>
-                <div class="row row-slider">
-                  <div class="row-line"><span>字體大小</span><span class="value" id="val-ui-scale">90%</span></div>
-                  <input id="inp-ui-scale" class="slider" type="range" min="80" max="125" step="5" value="90" />
-                </div>
-                <div class="row">
-                  <span>用量數字</span>
-                  <div class="segmented" data-key="usageDisplay">
-                    <button data-value="used" class="seg-btn">已使用</button>
-                    <button data-value="remaining" class="seg-btn">剩餘</button>
-                  </div>
-                </div>
-                <div class="row">
-                  <span>重設時間</span>
-                  <div class="segmented" data-key="resetFormat">
-                    <button data-value="absolute" class="seg-btn">時刻</button>
-                    <button data-value="relative" class="seg-btn">倒數</button>
-                  </div>
-                </div>
-                <label class="row">
-                  <span>顯示推薦使用</span>
-                  <input id="inp-show-picks" class="switch" type="checkbox" checked />
-                </label>
-                <label class="row">
-                  <span>精簡模式<small class="row-hint">每個帳號只顯示最緊的一條限制</small></span>
-                  <input id="inp-compact" class="switch" type="checkbox" />
-                </label>
-                <label class="row">
-                  <span>用完預測<small class="row-hint">照目前速度會在重設前用完時提醒</small></span>
-                  <input id="inp-show-forecast" class="switch" type="checkbox" checked />
-                </label>
-                <label class="row">
-                  <span>今日用量與花費<small class="row-hint">讀本機紀錄；花費以 API 牌價估算</small></span>
-                  <input id="inp-show-usage" class="switch" type="checkbox" checked />
-                </label>
-                <div class="row">
-                  <span>系統匣圖示</span>
-                  <div class="segmented" data-key="trayStyle">
-                    <button data-value="number" class="seg-btn">數字</button>
-                    <button data-value="ring" class="seg-btn">圓環</button>
-                    <button data-value="icon" class="seg-btn">原圖示</button>
-                  </div>
-                </div>
-              </div>
-              <div class="group-footer">「已使用」與 Claude 官方用量頁一致；桌寵心情仍以剩餘額度計算。</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">面板</div>
-              <div class="list">
-                <div class="row">
-                  <span>開啟位置</span>
-                  <select id="sel-panel-pos" class="select">
-                    <option value="pet">跟著桌寵</option>
-                    <option value="top_right">右上角</option>
-                    <option value="bottom_right">右下角</option>
-                    <option value="top_left">左上角</option>
-                    <option value="bottom_left">左下角</option>
-                    <option value="center">螢幕中央</option>
-                  </select>
-                </div>
-                <div class="row">
-                  <span>快捷鍵</span>
-                  <div class="hotkey-wrap">
-                    <button id="btn-hotkey" class="hotkey"></button>
-                    <button id="btn-hotkey-clear" class="hotkey-clear" title="停用快捷鍵"><svg><use href="#i-x" /></svg></button>
-                  </div>
-                </div>
-              </div>
-              <div class="group-footer" id="hotkey-hint">點快捷鍵後按下新的組合鍵；Esc 取消。</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">帳號</div>
-              <div class="list" id="acc-settings"></div>
-              <div class="group-footer">拖曳 ≡ 調整順序；點帳號可改名、隱藏、設定個別警戒線。</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">心情門檻</div>
-              <div class="list">
-                <div class="row row-slider">
-                  <div class="row-line"><span><i class="dot green"></i>元氣工作（高於）</span><span class="value" id="val-work-th">70%</span></div>
-                  <input id="inp-work-th" class="slider" type="range" min="30" max="95" step="5" value="70" />
-                </div>
-                <div class="row row-slider">
-                  <div class="row-line"><span><i class="dot gray"></i>趴睡休息（低於）</span><span class="value" id="val-sleep-th">20%</span></div>
-                  <input id="inp-sleep-th" class="slider" type="range" min="5" max="60" step="5" value="20" />
-                </div>
-                <div class="row">
-                  <span>計算方式</span>
-                  <div class="segmented" id="seg-score-mode" data-key="scoreMode">
-                    <button data-value="max_avg" class="seg-btn">各家最高</button>
-                    <button data-value="all_avg" class="seg-btn">全部平均</button>
-                  </div>
-                </div>
-              </div>
-              <div class="group-footer" id="val-sweat-range">介於 20% 到 70% 時貓會冒汗趕工</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">通知</div>
-              <div class="list">
-                <label class="row">
-                  <span>系統通知</span>
-                  <input id="inp-notify" class="switch" type="checkbox" checked />
-                </label>
-                <div class="row row-slider">
-                  <div class="row-line"><span>低額度警戒線</span><span class="value" id="val-notify-th">20%</span></div>
-                  <input id="inp-notify-th" class="slider" type="range" min="5" max="50" step="5" value="20" />
-                </div>
-                <label class="row">
-                  <span>額度重設時通知<small class="row-hint">用量過半的限制恢復時提醒</small></span>
-                  <input id="inp-notify-reset" class="switch" type="checkbox" checked />
-                </label>
-                <label class="row">
-                  <span>勿擾時段</span>
-                  <input id="inp-quiet" class="switch" type="checkbox" />
-                </label>
-                <div class="row" id="row-quiet-times">
-                  <span>時間</span>
-                  <span class="time-range">
-                    <input id="inp-quiet-start" class="time-input" type="time" value="23:00" />
-                    <span class="time-sep">至</span>
-                    <input id="inp-quiet-end" class="time-input" type="time" value="09:00" />
-                  </span>
-                </div>
-                <button id="btn-test-notify" class="row row-button">傳送測試通知</button>
-              </div>
-              <div class="group-footer">各帳號的警戒線可在「帳號」中個別設定。</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">一般</div>
-              <div class="list">
-                <div class="row row-slider">
-                  <div class="row-line"><span>自動刷新</span><span class="value" id="val-refresh-sec">120 秒</span></div>
-                  <input id="inp-refresh-sec" class="slider" type="range" min="30" max="600" step="30" value="120" />
-                </div>
-                <div class="row row-slider">
-                  <div class="row-line"><span>Claude 最短查詢間隔</span><span class="value" id="val-claude-interval">90 秒</span></div>
-                  <input id="inp-claude-interval" class="slider" type="range" min="60" max="900" step="30" value="90" />
-                </div>
-                <label class="row">
-                  <span>顯示 Antigravity 次要池</span>
-                  <input id="inp-ag-extra" class="switch" type="checkbox" />
-                </label>
-                <label class="row">
-                  <span>開機時啟動</span>
-                  <input id="inp-autostart" class="switch" type="checkbox" />
-                </label>
-              </div>
-              <div class="group-footer">Claude 間隔越長，越不容易被 Anthropic 限流（429）。</div>
-            </section>
-
-            <section class="group">
-              <div class="group-header">手機</div>
-              <div class="list">
-                <label class="row">
-                  <span>在手機查看<small class="row-hint">只透過 Tailscale，區網與網際網路都看不到</small></span>
-                  <input id="inp-mobile" class="switch" type="checkbox" checked />
-                </label>
-                <button id="btn-mobile-url" class="row row-button hidden"></button>
-              </div>
-              <div class="group-footer" id="mobile-hint">在 iPhone 開啟 Tailscale，用 Safari 打開上面的網址，再按「分享 → 加入主畫面」。</div>
-            </section>
-
-            <div class="footnote">T3 DeskCat 0.2.0</div>
+            <div class="footnote" id="app-version">T3 DeskCat 0.2.0</div>
           </div>
         </section>
       </div>

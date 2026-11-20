@@ -8,6 +8,7 @@ mod notify_state;
 mod providers;
 mod quota_cache;
 mod settings;
+mod support;
 mod tray_icon;
 mod usage_stats;
 
@@ -379,6 +380,55 @@ fn clear_custom_images(
 }
 
 #[tauri::command]
+fn account_sources() -> HashMap<String, String> {
+    support::sources()
+}
+
+#[tauri::command]
+fn tailscale_state() -> support::TailscaleState {
+    support::tailscale_state()
+}
+
+#[tauri::command]
+fn open_target(target: String) -> Result<(), String> {
+    support::open_target(&target)
+}
+
+#[tauri::command]
+fn qr_svg(text: String) -> Result<String, String> {
+    support::qr_svg(&text)
+}
+
+#[tauri::command]
+fn diagnostics(state: tauri::State<SharedState>) -> String {
+    let guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let m = &guard.mobile_status;
+    let mobile = if !guard.settings.mobile_enabled {
+        "off".to_string()
+    } else {
+        m.url.clone().or_else(|| m.error.clone()).unwrap_or_else(|| "starting".into())
+    };
+    support::diagnostics(guard.snapshot.as_ref(), &mobile)
+}
+
+/// Folder picker for an extra account folder; None when cancelled.
+#[tauri::command]
+async fn pick_folder(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("選擇帳號資料夾")
+            .blocking_pick_folder()
+            .and_then(|p| p.into_path().ok())
+            .map(|p| p.display().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
 }
@@ -386,6 +436,7 @@ fn quit_app(app: AppHandle) {
 /// Write the discovered accounts and where each came from to the log whenever the
 /// set changes, so "an account is missing" can be answered from the log alone.
 fn log_discovery_changes(accounts: &[DiscoveredAccount]) {
+    support::set_sources(accounts.iter().map(|a| (a.id().to_string(), a.source())).collect());
     static LAST: Mutex<String> = Mutex::new(String::new());
     let summary = if accounts.is_empty() {
         "accounts: none found (no Claude Code / Codex / agy sign-in detected)".to_string()
@@ -1151,6 +1202,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -1181,6 +1233,12 @@ pub fn run() {
             hotkey_status,
             get_history,
             mobile_status,
+            account_sources,
+            tailscale_state,
+            open_target,
+            qr_svg,
+            diagnostics,
+            pick_folder,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
