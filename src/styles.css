@@ -21,6 +21,7 @@
   --accent: #005fb8;
   --on-accent: #ffffff;
   --warn: #9d5d00;
+  --good-ink: #0f7b0f;
   --warn-ink: #a25e00;
   --bad: #c42b1c;
   --bad-ink: #c42b1c;
@@ -49,6 +50,7 @@
     --accent: #60cdff;
     --on-accent: #000000;
     --warn: #fce100;
+    --good-ink: #6ccb5f;
     --warn-ink: #e3b341;
     --bad: #ff99a4;
     --bad-ink: #ff6b7a;
@@ -76,7 +78,8 @@
   --accent: #60cdff;
   --on-accent: #000000;
   --warn: #fce100;
-  --warn-ink: #e3b341;
+  --good-ink: #6ccb5f;
+    --warn-ink: #e3b341;
   --bad: #ff99a4;
   --bad-ink: #ff6b7a;
   --claude: #e08a6a;
@@ -581,7 +584,7 @@ svg {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--ink);
+  background: var(--good-ink);
   transition: width 0.6s var(--ease);
 }
 

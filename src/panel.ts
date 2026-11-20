@@ -102,6 +102,7 @@ const fallbackSettings: AppSettings = {
   appearance: "system",
   usageDisplay: "used",
   resetFormat: "absolute",
+  paceTick: "ahead",
   showPicks: true,
   petEffects: true,
   accountPrefs: {},
@@ -277,8 +278,11 @@ function renderWindow(
   const reset = formatResetAt(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
   // The tick sits where the fill would be if usage kept pace with time.
+  // "ahead": only when more is used than time has passed.
+  const tickMode = (currentSettings ?? fallbackSettings).paceTick ?? "ahead";
+  const ahead = elapsed != null && 100 - remaining > elapsed;
   const pace =
-    elapsed == null
+    elapsed == null || tickMode === "off" || (tickMode === "ahead" && !ahead)
       ? ""
       : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="時間已過 ${elapsed}%：${showUsed ? "填色超過刻度代表用得比時間快" : "填色短於刻度代表用得比時間快"}"></i>`;
   return `

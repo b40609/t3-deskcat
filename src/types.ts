@@ -90,6 +90,8 @@ export interface AppSettings {
   appearance?: "system" | "light" | "dark";
   usageDisplay?: "used" | "remaining";
   resetFormat?: "absolute" | "relative";
+  /** Time tick on the bars. */
+  paceTick?: "on" | "ahead" | "off";
   showPicks?: boolean;
   petEffects?: boolean;
   // accounts

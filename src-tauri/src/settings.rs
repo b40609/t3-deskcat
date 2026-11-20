@@ -52,6 +52,9 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.reset_format.as_str(), "absolute" | "relative") {
         s.reset_format = "absolute".to_string();
     }
+    if !matches!(s.pace_tick.as_str(), "on" | "ahead" | "off") {
+        s.pace_tick = "ahead".to_string();
+    }
     s.quiet_start_min %= 24 * 60;
     s.quiet_end_min %= 24 * 60;
     if !matches!(s.pet_anim_speed.as_str(), "slow" | "normal" | "fast") {
