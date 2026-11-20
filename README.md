@@ -48,7 +48,7 @@
 - **ChatGPT / Codex**：掃描 `CODEX_HOME`、`~/.codex` 與 `~/.codex-<名稱>`，唯讀讀取 `auth.json`。
 - **Antigravity (Google / Gemini)**：執行官方的 `agy -p /usage --output-format json` 取得額度，完全不碰登入資料（agy 存在系統認證管理員裡）。只有在 agy 已登入時才會執行。
 - **T3 Code（選配）**：有安裝時，會一併讀取 T3 的多帳號實例與顯示名稱。
-- **其他資料夾**：在 `%APPDATA%\t3-deskcat\settings.json` 的 `extraAccountDirs` 加入路徑即可。
+- **其他資料夾**：在「設定 → 帳號 → 帳號資料夾」按「新增資料夾」。
 - 偵測到哪些帳號、各自從哪裡來，會寫在 `%APPDATA%\t3-deskcat\deskcat.log`。
 
 ### 3. 🎯 智慧推薦與簡潔懸停提示（Smart Pick & Tooltip）
@@ -69,7 +69,8 @@
 
 ## ❓ 常見問題
 
-- **少了某個帳號？** 打開 `%APPDATA%\t3-deskcat\deskcat.log`，裡面列出偵測到的每個帳號與來源。不在預設位置的資料夾，可以加進 `settings.json` 的 `extraAccountDirs`。
+- **少了某個帳號？** 「設定 → 帳號」會列出每個帳號從哪裡讀到；不在預設位置的，按「新增資料夾」加進來。回報問題時，到「設定 → 一般 → 支援」按「複製診斷資訊」貼上即可（不含登入憑證）。
+- **怎麼在手機上看？** 面板底下的「也能在手機上看額度」會帶你走四步：電腦裝 Tailscale、登入、手機裝 Tailscale、掃 QR code。
 - **Antigravity 只看得到一個帳號？** 沒有 T3 Code 時是透過官方 `agy` CLI 查詢，agy 同一時間只登入一個帳號。要同時看多個，可搭配 T3 Code 的多帳號實例。
 - **顯示「憑證已過期」？** DeskCat 不會自己刷新或改寫任何登入資料。用該帳號跑一次 Claude Code / Codex / Antigravity，就會自動更新。
 - **安裝時跳出 SmartScreen 警告？** 安裝檔尚未做程式碼簽章。點「其他資訊」→「仍要執行」即可；也可以照下方步驟自行編譯。

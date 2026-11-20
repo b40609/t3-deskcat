@@ -48,7 +48,7 @@ Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), fr
 - **ChatGPT / Codex**: scans `CODEX_HOME`, `~/.codex` and `~/.codex-<name>`; reads `auth.json` read-only.
 - **Antigravity (Google / Gemini)**: runs the official `agy -p /usage --output-format json` and never touches the sign-in (agy keeps it in the OS credential store). Only runs when agy is signed in.
 - **T3 Code (optional)**: when installed, its multi-account instances and display names are picked up as well.
-- **Other folders**: add paths to `extraAccountDirs` in `%APPDATA%\t3-deskcat\settings.json`.
+- **Other folders**: Settings → Accounts → Account folders → Add folder.
 - Which accounts were found, and from where, is written to `%APPDATA%\t3-deskcat\deskcat.log`.
 
 ### 3. 🎯 Smart Picks & Minimal Hover Tooltip
@@ -69,7 +69,8 @@ Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), fr
 
 ## ❓ FAQ
 
-- **An account is missing?** Open `%APPDATA%\t3-deskcat\deskcat.log`; it lists every detected account and where it came from. Add folders outside the default locations to `extraAccountDirs` in `settings.json`.
+- **An account is missing?** Settings → Accounts shows where each account was read from; add folders outside the default locations with Add folder. When reporting a problem, paste Settings → General → Support → Copy diagnostics (it holds no credentials).
+- **How do I see it on my phone?** "See your quota on your phone too" under the panel walks through four steps: install Tailscale on the PC, sign in, install it on the phone, scan the QR code.
 - **Only one Antigravity account?** Without T3 Code, Antigravity is read through the official `agy` CLI, which is signed in to one account at a time. T3 Code's multi-account instances show several.
 - **"Credentials expired"?** DeskCat never refreshes or rewrites sign-ins. Use that account once in Claude Code / Codex / Antigravity and it updates itself.
 - **SmartScreen warning on install?** The installer is not code-signed yet. Click "More info" → "Run anyway", or build from source below.
