@@ -375,7 +375,7 @@ export class MuseAnimator {
         this.nextBlinkAt = t + 260;
       }
     }
-    this.nextIdleAt = t + (this.mood === "sweating" ? rand(2500, 5000) : rand(5000, 10000));
+    this.nextIdleAt = t + (this.mood === "sleeping" ? rand(5000, 10000) : rand(2500, 5000));
   }
 
   private updateGaze(t: number, dt: number) {
@@ -417,11 +417,13 @@ export class MuseAnimator {
     const sec = t / 1000;
 
     if (mood === "working") {
-      // Calm: gentle breathing (2.8s) and a slow sway; no bouncing.
-      const br = (Math.sin((sec / 2.8) * Math.PI * 2 - Math.PI / 2) + 1) / 2;
-      sy += 0.02 * br;
-      sx += 0.008 * br;
-      rot = Math.sin(sec * 0.6) * 0.012;
+      // Typing to the music: ~100 BPM with a small squash on each beat.
+      const beat = (sec * (100 / 60)) % 1;
+      const pulse = Math.exp(-beat * 7);
+      sy -= 0.03 * pulse;
+      sx += 0.018 * pulse;
+      rot = Math.sin(sec * Math.PI * (100 / 60) * 0.5) * 0.035; // sway every 2 beats
+      dy = -Math.sin(beat * Math.PI) * 3;
     } else if (mood === "sweating") {
       // Frantic typing + nervous tremble
       const fast = Math.sin(sec * Math.PI * 2 * 7);
