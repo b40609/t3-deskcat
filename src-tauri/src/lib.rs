@@ -1,6 +1,7 @@
 mod discovery;
 mod forecast;
 mod history;
+mod logging;
 mod mobile;
 mod models;
 mod notify_state;
@@ -563,7 +564,8 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
     let mut notifications: Vec<(String, String)> = Vec::new();
 
     let snapshot = {
-        let mut guard = state.0.lock().expect("state lock");
+        // A panic elsewhere must not poison the state for good.
+        let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = guard.settings.clone();
 
         let mut snap = DashboardSnapshot {
@@ -1083,6 +1085,16 @@ fn position_panel_near_pet(app: &AppHandle, panel: &tauri::WebviewWindow) {
 }
 
 pub fn run() {
+    logging::install_panic_hook();
+    logging::log(&format!(
+        "start v{} args={:?}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::args().skip(1).collect::<Vec<_>>()
+    ));
+    if std::env::args().any(|a| a == logging::RELAUNCH_FLAG) {
+        // Let the crashed instance release the single-instance lock first.
+        std::thread::sleep(Duration::from_secs(2));
+    }
     let loaded_settings = settings::load_settings();
     let shared = SharedState(Arc::new(Mutex::new(InnerState {
         settings: loaded_settings.clone(),
@@ -1099,6 +1111,16 @@ pub fn run() {
     })));
 
     tauri::Builder::default()
+        // Must be registered first: a second launch (autostart + double-click)
+        // hands over to the running copy instead of fighting over the tray and port.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            logging::log(&format!("second launch ignored, args={args:?}"));
+            if let Some(panel) = app.get_webview_window("panel") {
+                position_panel(app, &panel);
+                let _ = panel.show();
+                let _ = panel.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -1232,7 +1254,16 @@ pub fn run() {
             let poll_state = shared.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let _ = run_refresh(&poll_app, &poll_state).await;
+                    // Each refresh runs as its own task: a panic inside one is
+                    // logged and the loop keeps going instead of dying silently.
+                    let (app_c, state_c) = (poll_app.clone(), poll_state.clone());
+                    let run = tauri::async_runtime::spawn(async move {
+                        let _ = run_refresh(&app_c, &state_c).await;
+                    });
+                    if let Err(err) = run.await {
+                        logging::log(&format!("refresh task failed: {err}"));
+                    }
+                    poll_state.0.clear_poison();
                     let interval = poll_state
                         .0
                         .lock()
@@ -1244,8 +1275,27 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running t3-deskcat");
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|err| {
+            logging::log(&format!("build failed: {err}"));
+            panic!("error while building t3-deskcat: {err}");
+        })
+        .run(|_app, event| match event {
+            tauri::RunEvent::ExitRequested { code, .. } => {
+                logging::log(&format!("exit requested code={code:?}"));
+                // Quit (tray menu / panel) passes an explicit code. `None` means the
+                // last window went away on its own, which this tray app never wants.
+                // Left alone the process lingers with no window and no tray (tested),
+                // so start a fresh copy and end this one for real.
+                if code.is_none() {
+                    logging::relaunch_guard("all windows closed unexpectedly");
+                    logging::log("exiting after unexpected window close");
+                    std::process::exit(0);
+                }
+            }
+            tauri::RunEvent::Exit => logging::log("exit"),
+            _ => {}
+        });
 }
 
 #[cfg(test)]

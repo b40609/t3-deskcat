@@ -29,7 +29,11 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     }
     let body = serde_json::to_string_pretty(&clean)
         .map_err(|err| format!("Failed to serialize settings: {err}"))?;
-    fs::write(&path, body).map_err(|err| format!("Failed to write settings: {err}"))
+    // Write to a temp file then rename, so a crash or shutdown mid-write cannot
+    // leave a truncated settings.json (which would silently reset everything).
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, body).map_err(|err| format!("Failed to write settings: {err}"))?;
+    fs::rename(&tmp, &path).map_err(|err| format!("Failed to replace settings: {err}"))
 }
 
 pub fn sanitize(s: &mut AppSettings) {
