@@ -45,6 +45,11 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 static SETUP_DONE: AtomicBool = AtomicBool::new(false);
 static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
 
+/// Fixed background poll cadence (Antigravity / Codex / local logs).
+const AUTO_REFRESH_SECS: u64 = 60;
+/// Per-account minimum gap between Anthropic usage calls to prevent 429 bursts.
+const CLAUDE_MIN_INTERVAL_SECS: i64 = 180;
+
 struct BoolResetGuard(&'static AtomicBool);
 impl Drop for BoolResetGuard {
     fn drop(&mut self) {
@@ -823,10 +828,7 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         let allowed = state
             .0
             .lock()
-            .map(|g| {
-                let min = g.settings.claude_min_interval_secs as i64;
-                g.cache.may_fetch(&id, now, min)
-            })
+            .map(|g| g.cache.may_fetch(&id, now, CLAUDE_MIN_INTERVAL_SECS))
             .unwrap_or(true);
         if !allowed {
             let placeholder = AccountQuota {
@@ -1704,12 +1706,7 @@ pub fn run() {
                         logging::log(&format!("refresh task failed: {err}"));
                     }
                     poll_state.0.clear_poison();
-                    let interval = poll_state
-                        .0
-                        .lock()
-                        .map(|g| g.settings.refresh_interval_secs)
-                        .unwrap_or(120);
-                    tokio::time::sleep(Duration::from_secs(interval)).await;
+                    tokio::time::sleep(Duration::from_secs(AUTO_REFRESH_SECS)).await;
                 }
             });
 

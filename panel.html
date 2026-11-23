@@ -197,10 +197,10 @@
                 <div class="group-footer hidden" id="hotkey-hint"></div>
               </section>
 
-              <section class="group">
+              <section class="group desktop-only">
                 <div class="list">
                   <button class="row row-link desktop-only" data-sub="mobile"><span><span data-i18n>在手機查看</span><small class="row-hint" id="mobile-summary"></small></span><svg class="chev"><use href="#i-chev" /></svg></button>
-                  <button class="row row-link" data-sub="advanced"><span data-i18n>進階</span><svg class="chev"><use href="#i-chev" /></svg></button>
+                  <button class="row row-link desktop-only" data-sub="advanced"><span data-i18n>進階</span><svg class="chev"><use href="#i-chev" /></svg></button>
                 </div>
               </section>
             </div>
@@ -450,20 +450,6 @@
             </div>
 
             <div class="subpane hidden" data-subpane="advanced" data-title="進階">
-              <section class="group">
-                <div class="group-header" data-i18n>更新頻率</div>
-                <div class="list">
-                  <div class="row row-slider">
-                    <div class="row-line"><span data-i18n>自動刷新</span><span class="value" id="val-refresh-sec">120 秒</span></div>
-                    <input id="inp-refresh-sec" class="slider" type="range" min="30" max="600" step="30" value="120" />
-                  </div>
-                  <div class="row row-slider">
-                    <div class="row-line"><span data-i18n>Claude 最短查詢間隔</span><span class="value" id="val-claude-interval">90 秒</span></div>
-                    <input id="inp-claude-interval" class="slider" type="range" min="60" max="900" step="30" value="90" />
-                  </div>
-                </div>
-                <div class="group-footer" data-i18n>Claude 間隔越長，越不容易被 Anthropic 限流（429）</div>
-              </section>
               <section class="group desktop-only">
                 <div class="group-header" data-i18n>帳號資料夾</div>
                 <div class="list">

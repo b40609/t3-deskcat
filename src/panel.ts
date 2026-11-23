@@ -48,8 +48,6 @@ const inpSleepTh = $<HTMLInputElement>("inp-sleep-th");
 const valSleepTh = $("val-sleep-th");
 const valSweatRange = $("val-sweat-range");
 const inpNotify = $<HTMLInputElement>("inp-notify");
-const inpRefreshSec = $<HTMLInputElement>("inp-refresh-sec");
-const valRefreshSec = $("val-refresh-sec");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
 const inpShowPet = $<HTMLInputElement>("inp-show-pet");
@@ -79,8 +77,6 @@ const inpQuiet = $<HTMLInputElement>("inp-quiet");
 const rowQuietTimes = $("row-quiet-times");
 const inpQuietStart = $<HTMLInputElement>("inp-quiet-start");
 const inpQuietEnd = $<HTMLInputElement>("inp-quiet-end");
-const inpClaudeInterval = $<HTMLInputElement>("inp-claude-interval");
-const valClaudeInterval = $("val-claude-interval");
 
 let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
@@ -485,7 +481,7 @@ ${formatResetAt(pick.resetAt)}` : "";
     hour: "2-digit",
     minute: "2-digit",
   });
-  btnRefresh.title = `${t("立即刷新")} · ${t("{time} 更新", { time: timeStr })} · ${t("每 {n} 秒自動刷新", { n: snap.settings.refreshIntervalSecs })}`;
+  btnRefresh.title = `${t("立即刷新")} · ${t("{time} 更新", { time: timeStr })}`;
   analyticsView.syncContext(snap, snap.settings);
 }
 
@@ -543,9 +539,6 @@ function syncSettingsForm(s: AppSettings) {
   renderDirList(s);
 
   inpNotify.checked = s.notifyEnabled;
-  setRangeIfIdle(inpRefreshSec, s.refreshIntervalSecs);
-  valRefreshSec.textContent = t("{n} 秒", { n: s.refreshIntervalSecs });
-
   inpAutostart.checked = s.launchAtStartup;
 
   setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
@@ -574,9 +567,6 @@ function syncSettingsForm(s: AppSettings) {
   rowQuietTimes.classList.toggle("hidden", !s.quietHoursEnabled);
   if (document.activeElement !== inpQuietStart) inpQuietStart.value = minToTime(s.quietStartMin ?? 23 * 60);
   if (document.activeElement !== inpQuietEnd) inpQuietEnd.value = minToTime(s.quietEndMin ?? 9 * 60);
-  const ci = s.claudeMinIntervalSecs ?? 90;
-  setRangeIfIdle(inpClaudeInterval, ci);
-  valClaudeInterval.textContent = ci % 60 ? t("{m} 分 {s} 秒", { m: Math.floor(ci / 60), s: ci % 60 }) : t("{m} 分鐘", { m: ci / 60 });
   if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
 
   inpShowPicks.checked = s.showPicks !== false;
@@ -871,9 +861,6 @@ inpNotifyReset.addEventListener("change", () => commitSettings({ notifyOnReset: 
 inpQuiet.addEventListener("change", () => commitSettings({ quietHoursEnabled: inpQuiet.checked }, true));
 inpQuietStart.addEventListener("change", () => commitSettings({ quietStartMin: timeToMin(inpQuietStart.value) }, true));
 inpQuietEnd.addEventListener("change", () => commitSettings({ quietEndMin: timeToMin(inpQuietEnd.value) }, true));
-inpClaudeInterval.addEventListener("input", () =>
-  commitSettings({ claudeMinIntervalSecs: Number(inpClaudeInterval.value) }),
-);
 inpPetOpacity.addEventListener("input", () => commitSettings({ petOpacity: Number(inpPetOpacity.value) }));
 inpPetIdleFade.addEventListener("change", () => commitSettings({ petIdleFade: inpPetIdleFade.checked }, true));
 inpShowForecast.addEventListener("change", () => commitSettings({ showForecast: inpShowForecast.checked }, true));
@@ -1292,7 +1279,28 @@ accSettingsEl.addEventListener("keydown", (e) => {
   if (t.classList.contains("text-input") && e.key === "Enter") t.blur();
 });
 
-let drag: { id: string; target: string | null; after: boolean } | null = null;
+let drag: { id: string; pointerId: number; target: string | null; after: boolean; lastX: number; lastY: number } | null = null;
+let autoScrollRaf = 0;
+let autoScrollSpeed = 0;
+
+function stopAutoScroll() {
+  autoScrollSpeed = 0;
+  if (autoScrollRaf) {
+    cancelAnimationFrame(autoScrollRaf);
+    autoScrollRaf = 0;
+  }
+}
+
+function stepAutoScroll() {
+  if (!drag || autoScrollSpeed === 0) {
+    autoScrollRaf = 0;
+    return;
+  }
+  const prev = settingsScroll.scrollTop;
+  settingsScroll.scrollTop += autoScrollSpeed;
+  if (settingsScroll.scrollTop !== prev) updateDragTarget(drag.lastX, drag.lastY);
+  autoScrollRaf = requestAnimationFrame(stepAutoScroll);
+}
 
 function clearDropMarks() {
   accSettingsEl
@@ -1300,35 +1308,91 @@ function clearDropMarks() {
     .forEach((el) => el.classList.remove("drop-before", "drop-after", "dragging"));
 }
 
-// Coordinate-free: the row under the pointer (browser hit-test) takes the dragged
-// row's slot. Avoids clientY vs. rect mismatches under the font-size `zoom`.
-accSettingsEl.addEventListener("pointerdown", (e) => {
-  const grip = (e.target as HTMLElement).closest<HTMLElement>(".grip");
-  if (!grip || e.button !== 0) return;
-  const row = grip.closest<HTMLElement>(".acc-set")!;
-  e.preventDefault();
-  drag = { id: row.dataset.id!, target: null, after: false };
-  row.classList.add("dragging");
-  accSettingsEl.classList.add("sorting");
-});
-
-accSettingsEl.addEventListener("pointermove", (e) => {
+function updateDragTarget(clientX: number, clientY: number) {
   if (!drag) return;
-  const row = (e.target as HTMLElement).closest<HTMLElement>(".acc-set");
-  if (!row) return;
+  drag.lastX = clientX;
+  drag.lastY = clientY;
   const rows = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set"));
+  if (!rows.length) return;
+
+  // Hit-test via viewport coordinates so touch implicit pointer capture on the
+  // starting `.grip` never pins target resolution to the original row.
+  const hit = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  let row = hit?.closest<HTMLElement>(".acc-set") ?? null;
+  if (!row || !accSettingsEl.contains(row)) {
+    const firstRect = rows[0].getBoundingClientRect();
+    const lastRect = rows[rows.length - 1].getBoundingClientRect();
+    if (clientY <= firstRect.top) row = rows[0];
+    else if (clientY >= lastRect.bottom) row = rows[rows.length - 1];
+    else {
+      // Fallback: nearest row vertically when pointer is in a gap or outside X bounds.
+      let best: HTMLElement | null = null;
+      let bestDist = Infinity;
+      for (const r of rows) {
+        const rect = r.getBoundingClientRect();
+        const mid = (rect.top + rect.bottom) / 2;
+        const d = Math.abs(clientY - mid);
+        if (d < bestDist) {
+          bestDist = d;
+          best = r;
+        }
+      }
+      row = best;
+    }
+  }
+  if (!row) return;
+
   const from = rows.findIndex((r) => r.dataset.id === drag!.id);
   const to = rows.indexOf(row);
   accSettingsEl.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
   drag.target = row.dataset.id!;
   drag.after = to > from;
   if (to !== from) row.classList.add(drag.after ? "drop-after" : "drop-before");
+
+  // Auto-scroll when dragging near the top or bottom edge of the scroll viewport.
+  const scRect = settingsScroll.getBoundingClientRect();
+  const edge = 48;
+  if (clientY < scRect.top + edge) autoScrollSpeed = -6;
+  else if (clientY > scRect.bottom - edge) autoScrollSpeed = 6;
+  else autoScrollSpeed = 0;
+  if (autoScrollSpeed !== 0 && !autoScrollRaf) autoScrollRaf = requestAnimationFrame(stepAutoScroll);
+}
+
+accSettingsEl.addEventListener("pointerdown", (e) => {
+  const grip = (e.target as HTMLElement).closest<HTMLElement>(".grip");
+  if (!grip || (e.pointerType === "mouse" && e.button !== 0)) return;
+  const row = grip.closest<HTMLElement>(".acc-set")!;
+  e.preventDefault();
+  try {
+    grip.setPointerCapture(e.pointerId);
+  } catch {
+    // ignore if synthetic pointer
+  }
+  drag = { id: row.dataset.id!, pointerId: e.pointerId, target: null, after: false, lastX: e.clientX, lastY: e.clientY };
+  row.classList.add("dragging");
+  accSettingsEl.classList.add("sorting");
 });
 
-function endDrag() {
+window.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  e.preventDefault();
+  updateDragTarget(e.clientX, e.clientY);
+});
+
+window.addEventListener(
+  "touchmove",
+  (e) => {
+    if (drag) e.preventDefault();
+  },
+  { passive: false },
+);
+
+function endDrag(e?: PointerEvent) {
   if (!drag) return;
+  if (e && e.pointerId !== drag.pointerId) return;
   const { id, target, after } = drag;
   drag = null;
+  stopAutoScroll();
   clearDropMarks();
   accSettingsEl.classList.remove("sorting");
   if (!target || target === id || !currentSnapshot) return;
@@ -1338,13 +1402,14 @@ function endDrag() {
   commitSettings({ accountOrder: ids }, true);
 }
 window.addEventListener("pointerup", endDrag);
-window.addEventListener("pointercancel", () => {
+window.addEventListener("pointercancel", (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return;
   drag = null;
+  stopAutoScroll();
   clearDropMarks();
   accSettingsEl.classList.remove("sorting");
 });
 
-inpRefreshSec.addEventListener("input", () => commitSettings({ refreshIntervalSecs: Number(inpRefreshSec.value) }));
 inpAutostart.addEventListener("change", () => commitSettings({ launchAtStartup: inpAutostart.checked }, true));
 
 $("btn-test-notify").addEventListener("click", () => {
