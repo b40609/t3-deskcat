@@ -696,7 +696,7 @@ function setSettingsVisible(show: boolean) {
   showingSettings = show;
   shell.classList.toggle("show-settings", show);
   if (!show) closeSub();
-  if (show) {
+  if (show && !isRemote) {
     void showHotkeyStatus();
     void showMobileStatus();
   }
@@ -907,9 +907,11 @@ $("btn-diag").addEventListener("click", async () => {
   }
   window.setTimeout(() => (state.textContent = ""), 2500);
 });
-getVersion()
-  .then((v) => ($("app-version").textContent = `T3 DeskCat ${v}`))
-  .catch(() => {});
+if (!isRemote) {
+  getVersion()
+    .then((v) => ($("app-version").textContent = `T3 DeskCat ${v}`))
+    .catch(() => {});
+}
 
 // ---- phone page: a four-step guide; each step is detected, not ticked by hand
 const mobileSteps = $("mobile-steps");
