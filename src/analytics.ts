@@ -344,8 +344,9 @@ async function savePrice(row: HTMLElement) {
 }
 
 async function commitPrices(modelPrices: Record<string, Price>) {
-  if (!settings) settings = await call<AppSettings>("get_settings");
-  settings = { ...settings, modelPrices };
+  const latest = await call<AppSettings>("get_settings").catch(() => settings);
+  if (!latest) return;
+  settings = { ...latest, modelPrices };
   await call("update_settings", { newSettings: settings });
   await load();
 }

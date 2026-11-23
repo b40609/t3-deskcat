@@ -43,6 +43,15 @@ use quota_cache::QuotaCache;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 static SETUP_DONE: AtomicBool = AtomicBool::new(false);
+static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
+static ANALYTICS_OPEN_LOCK: Mutex<()> = Mutex::new(());
+
+struct BoolResetGuard(&'static AtomicBool);
+impl Drop for BoolResetGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 struct InnerState {
     settings: AppSettings,
@@ -235,25 +244,59 @@ fn add_account_login(provider: String, name: String) -> Result<String, String> {
 }
 
 /// Opens (or brings back) the usage analytics window.
+/// Must run off the main UI thread on Windows so `WebviewWindowBuilder::build`
+/// does not re-enter WebView2's COM controller creation and deadlock (wry#583).
 fn show_analytics(app: &AppHandle) -> tauri::Result<()> {
+    let _open_guard = ANALYTICS_OPEN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(w) = app.get_webview_window("analytics") {
         let _ = w.unminimize();
         w.show()?;
         return w.set_focus();
     }
-    let w = tauri::WebviewWindowBuilder::new(app, "analytics", tauri::WebviewUrl::App("analytics.html".into()))
-        .title(tr!("用量分析"))
-        .inner_size(1080.0, 760.0)
-        .min_inner_size(380.0, 480.0)
-        .resizable(true)
-        .center()
-        .build()?;
+    let appearance = app
+        .try_state::<SharedState>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.settings.appearance.clone()))
+        .unwrap_or_else(|| "system".to_string());
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "analytics",
+        tauri::WebviewUrl::App("analytics.html".into()),
+    )
+    .title(tr!("用量分析"))
+    .inner_size(1080.0, 760.0)
+    .min_inner_size(380.0, 480.0)
+    .resizable(true)
+    .center();
+    match appearance.as_str() {
+        "dark" => {
+            builder = builder
+                .theme(Some(tauri::Theme::Dark))
+                .background_color(tauri::window::Color(32, 32, 32, 255));
+        }
+        "light" => {
+            builder = builder
+                .theme(Some(tauri::Theme::Light))
+                .background_color(tauri::window::Color(243, 243, 243, 255));
+        }
+        _ => {}
+    }
+    let w = builder.build()?;
     w.set_focus()
 }
 
 #[tauri::command]
-fn open_analytics(app: AppHandle) -> Result<(), String> {
-    show_analytics(&app).map_err(|e| e.to_string())
+async fn open_analytics(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || show_analytics(&app))
+        .await
+        .map_err(|e| {
+            let msg = format!("analytics task failed: {e}");
+            logging::log(&msg);
+            msg
+        })?
+        .map_err(|e| {
+            logging::log(&format!("open analytics failed: {e}"));
+            e.to_string()
+        })
 }
 
 /// Token and cost history for the analytics view.
@@ -288,7 +331,11 @@ fn update_settings(
     new_settings: AppSettings,
 ) -> Result<DashboardSnapshot, String> {
     let old_startup;
+    let new_startup;
     let old_hotkey;
+    let new_hotkey;
+    let lang_changed;
+    let new_pet_size;
     let updated_snapshot;
     {
         let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
@@ -317,18 +364,10 @@ fn update_settings(
         settings::save_settings(&clean)?;
         guard.settings = clean.clone();
         usage_stats::set_price_overrides(&clean.model_prices);
-        if i18n::set_lang(&clean.language) {
-            if let (Some(tray), Ok(menu)) = (app.tray_by_id("main-tray"), build_tray_menu(&app)) {
-                let _ = tray.set_menu(Some(menu));
-            }
-        }
-
-        if let Some(pet) = app.get_webview_window("pet") {
-            let _ = pet.set_size(Size::Logical(LogicalSize::new(
-                clean.pet_size as f64,
-                clean.pet_size as f64,
-            )));
-        }
+        lang_changed = i18n::set_lang(&clean.language);
+        new_pet_size = clean.pet_size;
+        new_startup = clean.launch_at_startup;
+        new_hotkey = clean.hotkey.clone();
 
         if let Some(ref mut snap) = guard.snapshot {
             recompute_snapshot_metrics(snap, &clean);
@@ -338,21 +377,30 @@ fn update_settings(
         }
     }
 
-    if old_startup != state.0.lock().map(|g| g.settings.launch_at_startup).unwrap_or(false) {
-        let enabled = state
-            .0
-            .lock()
-            .map(|g| g.settings.launch_at_startup)
-            .unwrap_or(false);
+    // Perform all UI / tray / OS calls after releasing `state.0` to avoid AB-BA
+    // deadlocks when called off the main thread (e.g. from the phone server).
+    if lang_changed {
+        if let (Some(tray), Ok(menu)) = (app.tray_by_id("main-tray"), build_tray_menu(&app)) {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+
+    if let Some(pet) = app.get_webview_window("pet") {
+        let _ = pet.set_size(Size::Logical(LogicalSize::new(
+            new_pet_size as f64,
+            new_pet_size as f64,
+        )));
+    }
+
+    if old_startup != new_startup {
         let autostart = app.autolaunch();
-        let _ = if enabled {
+        let _ = if new_startup {
             autostart.enable()
         } else {
             autostart.disable()
         };
     }
 
-    let new_hotkey = state.0.lock().map(|g| g.settings.hotkey.clone()).unwrap_or_default();
     if new_hotkey != old_hotkey {
         let err = apply_hotkey(&app, &new_hotkey);
         if let Ok(mut g) = state.0.lock() {
@@ -512,15 +560,21 @@ fn clear_custom_images(
     app: AppHandle,
     state: tauri::State<SharedState>,
 ) -> Result<DashboardSnapshot, String> {
-    let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
-    guard.settings.custom_image_working = None;
-    guard.settings.custom_image_sweating = None;
-    guard.settings.custom_image_sleeping = None;
-    settings::save_settings(&guard.settings)?;
-    let clean_settings = guard.settings.clone();
-    if let Some(ref mut snap) = guard.snapshot {
-        snap.settings = clean_settings;
-        let snap_clone = snap.clone();
+    let snap_clone = {
+        let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
+        guard.settings.custom_image_working = None;
+        guard.settings.custom_image_sweating = None;
+        guard.settings.custom_image_sleeping = None;
+        settings::save_settings(&guard.settings)?;
+        let clean_settings = guard.settings.clone();
+        if let Some(ref mut snap) = guard.snapshot {
+            snap.settings = clean_settings;
+            Some(snap.clone())
+        } else {
+            None
+        }
+    };
+    if let Some(snap_clone) = snap_clone {
         let _ = app.emit("snapshot-updated", &snap_clone);
         return Ok(snap_clone);
     }
@@ -563,8 +617,12 @@ fn diagnostics(state: tauri::State<SharedState>) -> String {
 #[tauri::command]
 async fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
-    tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
+    DIALOG_OPEN.store(true, Ordering::Release);
+    let _guard = BoolResetGuard(&DIALOG_OPEN);
+    let app_c = app.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        app_c
+            .dialog()
             .file()
             .set_title(tr!("選擇帳號資料夾"))
             .blocking_pick_folder()
@@ -573,7 +631,12 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     })
     .await
     .ok()
-    .flatten()
+    .flatten();
+    if let Some(panel) = app.get_webview_window("panel") {
+        let _ = panel.show();
+        let _ = panel.set_focus();
+    }
+    res
 }
 
 #[tauri::command]
@@ -1556,7 +1619,7 @@ pub fn run() {
                             .lock()
                             .map(|g| g.last_toggle.elapsed() < Duration::from_millis(220))
                             .unwrap_or(false);
-                        if !pinned && !recently_toggled {
+                        if !pinned && !recently_toggled && !DIALOG_OPEN.load(Ordering::Acquire) {
                             if let Some(w) = panel_handle.get_webview_window("panel") {
                                 let _ = w.hide();
                             }
@@ -1587,7 +1650,12 @@ pub fn run() {
                             let _ = toggle_panel_window(app);
                         }
                         "analytics" => {
-                            let _ = show_analytics(app);
+                            let h = app.clone();
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(e) = show_analytics(&h) {
+                                    logging::log(&format!("open analytics from tray failed: {e}"));
+                                }
+                            });
                         }
                         "refresh" => {
                             let h = app.clone();
@@ -1597,11 +1665,14 @@ pub fn run() {
                             });
                         }
                         "reset_pos" => {
-                            if let Ok(mut guard) = state_c.0.lock() {
+                            let cfg = state_c.0.lock().ok().map(|mut guard| {
                                 guard.settings.pet_x = None;
                                 guard.settings.pet_y = None;
                                 let _ = settings::save_settings(&guard.settings);
-                                position_pet_initial(app, &guard.settings);
+                                guard.settings.clone()
+                            });
+                            if let Some(cfg) = cfg {
+                                position_pet_initial(app, &cfg);
                             }
                         }
                         "quit" => app.exit(0),
@@ -1898,6 +1969,34 @@ mod tests {
         recompute_snapshot_metrics(&mut snap, &high_th);
         assert_eq!(snap.mood, CatMood::Sleeping); // 50 < 60
     }
+
+    #[test]
+    fn analytics_window_creation_never_blocks_main_thread() {
+        // Regression guard for Windows WebView2 COM re-entrancy deadlock (wry#583):
+        // creating the analytics WebviewWindow synchronously inside a command or
+        // tray menu handler freezes the entire UI thread on Windows.
+        let src = include_str!("lib.rs");
+        assert!(
+            src.contains("#[tauri::command]\nasync fn open_analytics(")
+                || src.contains("#[tauri::command]\r\nasync fn open_analytics("),
+            "open_analytics must be an async command"
+        );
+        assert!(
+            !src.contains("\"analytics\" => {\n                            let _ = show_analytics(")
+                && !src.contains("\"analytics\" => {\r\n                            let _ = show_analytics("),
+            "tray analytics menu must spawn off main thread instead of calling show_analytics directly"
+        );
+        // Verify BoolResetGuard restores AtomicBool even on panic unwind.
+        static TEST_FLAG: AtomicBool = AtomicBool::new(false);
+        let res = std::panic::catch_unwind(|| {
+            TEST_FLAG.store(true, Ordering::Release);
+            let _g = BoolResetGuard(&TEST_FLAG);
+            assert!(TEST_FLAG.load(Ordering::Acquire));
+            panic!("simulated unwind");
+        });
+        assert!(res.is_err());
+        assert!(!TEST_FLAG.load(Ordering::Acquire));
+    }
 }
 
 #[cfg(test)]
@@ -2100,13 +2199,36 @@ mod live_probe_tests {
         assert_eq!(l_parsed.get("version").and_then(|v| v.as_u64()), Some(1));
         assert!(l_parsed.get("buckets").and_then(|v| v.as_object()).is_some());
         eprintln!(
-            "[6/6] persisted files valid (read-only): history_series={} cache_accounts={} pending_resets={} ledger_buckets={} ledger_kb={}",
+            "[6/7] persisted files valid (read-only): history_series={} cache_accounts={} pending_resets={} ledger_buckets={} ledger_kb={}",
             h_parsed.samples.len(),
             c_parsed.last_good.len(),
             n_parsed.pending_resets.len(),
             l_parsed["buckets"].as_object().map(|m| m.len()).unwrap_or(0),
             l_raw.len() / 1024
         );
+
+        // 7. Read-only real usage_stats::report across all 4 periods
+        for (period, expected_slot) in [("day", "hour"), ("week", "day"), ("month", "day"), ("quarter", "day")] {
+            let r = usage_stats::report(period);
+            assert_eq!(r.period, period);
+            assert_eq!(r.slot, expected_slot);
+            assert!(r.from <= r.to, "invalid range for {period}");
+            let total_tok: u64 = r.rows.iter().map(|x| x.input + x.output + x.cache_read + x.cache_write).sum();
+            let total_cost: f64 = r
+                .rows
+                .iter()
+                .filter_map(|x| x.cost)
+                .map(|c| c.input + c.output + c.cache_read + c.cache_write)
+                .sum();
+            eprintln!(
+                "[7/7] usage_report({period}): slot={} rows={} models={} tokens={} cost=${:.2}",
+                r.slot,
+                r.rows.len(),
+                r.models.len(),
+                total_tok,
+                total_cost
+            );
+        }
     }
 }
 
