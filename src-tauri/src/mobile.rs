@@ -281,6 +281,11 @@ pub async fn serve(addr: SocketAddr, remote: std::sync::Arc<Remote>) -> std::io:
 }
 
 #[cfg(test)]
+pub(crate) async fn test_handle(stream: TcpStream, remote: std::sync::Arc<Remote>) {
+    handle(stream, remote).await;
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::{AccountPref, AccountQuota, CatMood, ProviderKind};
@@ -336,5 +341,151 @@ mod tests {
         assert_eq!(v.accounts[0].extra_windows.len(), 1);
         let json = serde_json::to_string(&v).unwrap();
         assert!(!json.contains("base64"));
+    }
+
+    async fn send_http(remote: std::sync::Arc<Remote>, req: &[u8]) -> (u16, String, Vec<u8>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle(stream, remote).await;
+        });
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(req).await.unwrap();
+        let _ = client.shutdown().await;
+        let mut raw = Vec::new();
+        client.read_to_end(&mut raw).await.unwrap();
+        server.await.unwrap();
+        let sep = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&raw[..sep]).to_string();
+        let code = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap();
+        (code, head, raw[sep + 4..].to_vec())
+    }
+
+    fn test_remote(with_snap: bool, with_assets: bool) -> std::sync::Arc<Remote> {
+        let snap = with_snap.then(|| DashboardSnapshot {
+            accounts: vec![acc("a", "Alpha")],
+            picks: vec![],
+            overall_score: 50,
+            mood: CatMood::Working,
+            tooltip_text: String::new(),
+            last_refreshed_at: 123,
+            settings: AppSettings::default(),
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
+        });
+        std::sync::Arc::new(Remote {
+            snapshot: Box::new(move || snap.clone()),
+            asset: Box::new(move |rel| {
+                if !with_assets {
+                    return None;
+                }
+                match rel {
+                    "panel.html" => Some((b"<html>panel</html>".to_vec(), "text/html; charset=utf-8".into())),
+                    "analytics.html" => Some((b"<html>analytics</html>".to_vec(), "text/html; charset=utf-8".into())),
+                    "assets/app.js" => Some((b"console.log(1);".to_vec(), "application/javascript; charset=utf-8".into())),
+                    _ => None,
+                }
+            }),
+            invoke: Box::new(|cmd, args| {
+                Box::pin(async move {
+                    match cmd.as_str() {
+                        "get_snapshot" => Ok(serde_json::json!({"ok": true})),
+                        "update_settings" if args.get("newSettings").is_none() => {
+                            Err((400, "missing newSettings".into()))
+                        }
+                        _ => Err((403, "not allowed from the phone".into())),
+                    }
+                })
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn http_routes_invoke_and_security_guards_work() {
+        let r = test_remote(true, true);
+
+        let (code, head, body) = send_http(r.clone(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(head.contains("text/html"));
+        assert_eq!(body, b"<html>panel</html>");
+
+        let (code, _, body) = send_http(r.clone(), b"GET /analytics.html HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert_eq!(body, b"<html>analytics</html>");
+
+        let (code, head, _) = send_http(r.clone(), b"GET /assets/app.js HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(head.contains("application/javascript"));
+
+        let (code, _, _) = send_http(r.clone(), b"GET /assets/../secret HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 404);
+
+        let (code, _, body) = send_http(r.clone(), b"GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(String::from_utf8_lossy(&body).contains("\"Alpha\""));
+
+        let (code, head, _) = send_http(r.clone(), b"GET /manifest.webmanifest HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(head.contains("application/manifest+json"));
+
+        let (code, head, body) = send_http(r.clone(), b"GET /icon.png HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(head.contains("image/png"));
+        assert!(body.starts_with(b"\x89PNG"));
+
+        let (code, _, _) = send_http(r.clone(), b"GET /nope HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 404);
+
+        let (code, _, _) = send_http(r.clone(), b"DELETE / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 405);
+
+        let (code, _, _) = send_http(r.clone(), b"POST /other HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}").await;
+        assert_eq!(code, 404);
+
+        let (code, _, body) = send_http(
+            r.clone(),
+            b"POST /api/invoke/get_snapshot HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(body, br#"{"ok":true}"#);
+
+        let (code, _, _) = send_http(
+            r.clone(),
+            b"POST /api/invoke/quit_app HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, _, _) = send_http(
+            r.clone(),
+            b"POST /api/invoke/update_settings HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .await;
+        assert_eq!(code, 400);
+
+        let (code, _, _) = send_http(
+            r.clone(),
+            b"POST /api/invoke/get_snapshot HTTP/1.1\r\nContent-Length: 20000000\r\n\r\n",
+        )
+        .await;
+        assert_eq!(code, 413);
+
+        let fallback = test_remote(false, false);
+        let (code, _, body) = send_http(fallback.clone(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 200);
+        assert!(String::from_utf8_lossy(&body).contains("T3 DeskCat"));
+
+        let (code, _, body) = send_http(fallback, b"GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert_eq!(code, 503);
+        assert_eq!(body, br#"{"loading":true}"#);
     }
 }

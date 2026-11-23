@@ -236,4 +236,17 @@ mod tests {
         assert_eq!(level_for(19, false, 70, 20), Level::Bad);
         assert_eq!(level_for(90, true, 70, 20), Level::Offline);
     }
+
+    #[test]
+    fn all_styles_scores_and_levels_render_valid_rgba() {
+        let expected_len = (SIZE * SIZE * 4) as usize;
+        for style in ["number", "ring"] {
+            for score in [Some(0), Some(5), Some(100), Some(-10), Some(150), None] {
+                for level in [Level::Good, Level::Warn, Level::Bad, Level::Offline] {
+                    let px = render(style, score, level).unwrap();
+                    assert_eq!(px.len(), expected_len);
+                }
+            }
+        }
+    }
 }

@@ -159,4 +159,46 @@ mod tests {
         let svg = qr_svg("http://100.64.0.1:8765").unwrap();
         assert!(svg.contains("<svg"));
     }
+
+    #[test]
+    fn diagnostics_formats_snapshot_and_open_target_rejects_unknown() {
+        use crate::models::{AccountQuota, AppSettings, CatMood, DashboardSnapshot, ProviderKind, QuotaWindow};
+        assert!(open_target("unknown_target").is_err());
+
+        let none_diag = diagnostics(None, "off");
+        assert!(none_diag.contains("T3 DeskCat "));
+        assert!(none_diag.contains("Phone page: off"));
+        assert!(none_diag.contains("Accounts: no snapshot yet"));
+
+        let mut settings = AppSettings::default();
+        settings.extra_account_dirs = vec![r"C:\extra\acc".into()];
+        let snap = DashboardSnapshot {
+            accounts: vec![AccountQuota {
+                id: "claude:main".into(),
+                provider: ProviderKind::Claude,
+                name: "Main".into(),
+                plan: Some("Team".into()),
+                effective_remaining: 88,
+                primary_windows: vec![QuotaWindow { label: "5h".into(), remaining_percent: 88, reset_at: None }],
+                extra_windows: vec![],
+                status: "ok".into(),
+                error: None,
+                updated_at: 0,
+            }],
+            picks: vec![],
+            overall_score: 88,
+            mood: CatMood::Working,
+            tooltip_text: String::new(),
+            last_refreshed_at: 0,
+            settings,
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
+        };
+        let diag = diagnostics(Some(&snap), "http://100.64.0.1:8765");
+        assert!(diag.contains("Accounts (1):"));
+        assert!(diag.contains("claude:main [Team] status=ok"));
+        assert!(diag.contains(r"Extra folders: C:\extra\acc"));
+    }
 }

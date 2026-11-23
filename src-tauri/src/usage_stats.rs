@@ -702,13 +702,44 @@ mod tests {
         assert!(parse_codex_line(&line, &mut st).is_none());
     }
 
+    static OVERRIDE_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn unknown_model_has_no_price_until_overridden() {
+        let _guard = OVERRIDE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(price_of("some-new-model").is_none());
         let mut m = HashMap::new();
         m.insert("Some-New-Model".to_string(), Price { input: 1.0, output: 2.0, cache_read: 0.1, cache_write: 1.0 });
         set_price_overrides(&m);
         assert_eq!(price_of("some-new-model").map(|p| p.1), Some(true));
+        set_price_overrides(&HashMap::new());
+    }
+
+    #[test]
+    fn cost_includes_1h_cache_write_and_custom_override() {
+        let _guard = OVERRIDE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let agg = Agg {
+            input: 1_000_000,
+            output: 500_000,
+            cache_read: 2_000_000,
+            cache_write_5m: 1_000_000,
+            cache_write_1h: 1_000_000,
+            requests: 1,
+        };
+        let mut m = HashMap::new();
+        m.insert(
+            "custom-test-model".to_string(),
+            Price { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
+        );
+        set_price_overrides(&m);
+        let c = cost_of("custom-test-model", &agg).unwrap();
+        assert!((c.input - 3.0).abs() < 1e-9);
+        assert!((c.output - 7.5).abs() < 1e-9);
+        assert!((c.cache_read - 0.6).abs() < 1e-9);
+        // 5m (3.75) + 1h (2 * input = 6.0)
+        assert!((c.cache_write - 9.75).abs() < 1e-9);
+        // 2M * (3.0 - 0.3) = 5.4
+        assert!((c.cache_savings - 5.4).abs() < 1e-9);
         set_price_overrides(&HashMap::new());
     }
 

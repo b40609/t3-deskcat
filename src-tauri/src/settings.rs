@@ -140,4 +140,68 @@ mod tests {
         assert!(!s.account_prefs.contains_key("a"));
         assert_eq!(s.account_prefs["b"].alias.as_deref(), Some("Kai"));
     }
+
+    #[test]
+    fn sanitize_clamps_and_validates_all_fields() {
+        let mut s = AppSettings {
+            pet_size: 10,
+            sleeping_threshold: 95,
+            working_threshold: 10,
+            notify_low_threshold: 0,
+            refresh_interval_secs: 5,
+            ui_scale: 200,
+            appearance: "neon".into(),
+            usage_display: "percent".into(),
+            reset_format: "epoch".into(),
+            language: "fr".into(),
+            pace_tick: "always".into(),
+            quiet_start_min: 1500,
+            quiet_end_min: 2000,
+            pet_anim_speed: "turbo".into(),
+            pet_opacity: 5,
+            pet_click_action: "triple".into(),
+            panel_position: "floating".into(),
+            hotkey: "  Ctrl+Alt+K  ".into(),
+            claude_min_interval_secs: 10,
+            mobile_port: 80,
+            tray_style: "rainbow".into(),
+            account_order: vec!["a".into(), "b".into(), "a".into()],
+            ..Default::default()
+        };
+        s.account_prefs.insert(
+            "x".into(),
+            AccountPref {
+                alias: Some("x".repeat(60)),
+                notify_threshold: Some(0),
+                avatar: Some("https://evil.invalid/x.png".into()),
+                ..Default::default()
+            },
+        );
+        sanitize(&mut s);
+        assert_eq!(s.pet_size, 48);
+        assert_eq!(s.sleeping_threshold, 90);
+        assert_eq!(s.working_threshold, 91);
+        assert_eq!(s.notify_low_threshold, 1);
+        assert_eq!(s.refresh_interval_secs, 30);
+        assert_eq!(s.ui_scale, 125);
+        assert_eq!(s.appearance, "system");
+        assert_eq!(s.usage_display, "used");
+        assert_eq!(s.reset_format, "absolute");
+        assert_eq!(s.language, "system");
+        assert_eq!(s.pace_tick, "ahead");
+        assert_eq!(s.quiet_start_min, 60);
+        assert_eq!(s.quiet_end_min, 560);
+        assert_eq!(s.pet_anim_speed, "normal");
+        assert_eq!(s.pet_opacity, 30);
+        assert_eq!(s.pet_click_action, "single");
+        assert_eq!(s.panel_position, "pet");
+        assert_eq!(s.hotkey, "Ctrl+Alt+K");
+        assert_eq!(s.claude_min_interval_secs, 60);
+        assert_eq!(s.mobile_port, 8765);
+        assert_eq!(s.tray_style, "number");
+        assert_eq!(s.account_order, vec!["a", "b"]);
+        assert_eq!(s.account_prefs["x"].alias.as_ref().unwrap().chars().count(), 40);
+        assert_eq!(s.account_prefs["x"].notify_threshold, Some(1));
+        assert!(s.account_prefs["x"].avatar.is_none());
+    }
 }

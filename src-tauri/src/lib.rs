@@ -1900,3 +1900,213 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod live_probe_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    #[ignore]
+    async fn probe_real_local_environment() {
+        // 1. Read-only account discovery
+        let discovered = discover_accounts(&[]);
+        assert!(!discovered.is_empty(), "expected at least one local account");
+        eprintln!("[1/6] discovered {} accounts:", discovered.len());
+        support::set_sources(discovered.iter().map(|a| (a.id().to_string(), a.source())).collect());
+        let sources = support::sources();
+        for a in &discovered {
+            let src = sources.get(a.id()).map(String::as_str).unwrap_or("?");
+            eprintln!("  - {} source={}", a.id(), src);
+        }
+
+        // 2. One read-only quota fetch per discovered account (in-memory only)
+        let client = Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
+        let mut results = Vec::new();
+        for acc in discovered {
+            let q = match acc {
+                DiscoveredAccount::Claude { id, name, credentials_path } => {
+                    fetch_claude_quota(&client, id, name, &credentials_path).await
+                }
+                DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
+                    fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                }
+                DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                    providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
+                }
+                DiscoveredAccount::Codex { id, name, auth_path } => {
+                    fetch_codex_quota(&client, id, name, &auth_path).await
+                }
+            };
+            eprintln!(
+                "[2/6] {} ({}) plan={:?} status={} eff={}% primary={:?} extra={:?} err={:?}",
+                q.id,
+                q.name,
+                q.plan,
+                q.status,
+                q.effective_remaining,
+                q.primary_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
+                q.extra_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
+                q.error
+            );
+            results.push(q);
+        }
+
+        // 3. Snapshot metrics computation (read-only loaded settings)
+        let loaded_settings = settings::load_settings();
+        let mut snap = DashboardSnapshot {
+            accounts: results,
+            picks: Vec::new(),
+            overall_score: 0,
+            mood: CatMood::Working,
+            tooltip_text: String::new(),
+            last_refreshed_at: Utc::now().timestamp(),
+            settings: loaded_settings.clone(),
+            offline: false,
+            forecasts: HashMap::new(),
+            usage_today: HashMap::new(),
+            burn_rates: HashMap::new(),
+        };
+        recompute_snapshot_metrics(&mut snap, &loaded_settings);
+        eprintln!(
+            "[3/6] metrics: score={} mood={:?} offline={} picks={:?} tooltip={:?}",
+            snap.overall_score,
+            snap.mood,
+            snap.offline,
+            snap.picks.iter().map(|p| format!("{}:{}({}%)", p.provider.short_label(), p.account_name, p.effective_remaining)).collect::<Vec<_>>(),
+            snap.tooltip_text
+        );
+
+        // 4. Support & Tailscale & Diagnostics leak check
+        let ts_ip = mobile::tailscale_ip();
+        let ts_state = support::tailscale_state();
+        let qr = support::qr_svg("http://100.64.0.1:8765").unwrap();
+        let diag = support::diagnostics(Some(&snap), "probe");
+        for secret in ["ya29.", "sk-ant-", "refresh_token", "access_token", "client_secret"] {
+            assert!(!diag.contains(secret), "diagnostics leaked secret marker {secret}");
+        }
+        eprintln!(
+            "[4/6] tailscale={:?} installed={} connected={} qr_len={} diag_lines={}",
+            ts_ip,
+            ts_state.installed,
+            ts_state.connected,
+            qr.len(),
+            diag.lines().count()
+        );
+
+        // 5. Real mobile HTTP server check with compiled ../dist assets over loopback TCP
+        let dist_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("dist");
+        assert!(dist_dir.join("panel.html").is_file(), "dist/panel.html missing");
+        let panel_html = fs::read_to_string(dist_dir.join("panel.html")).unwrap();
+        let asset_rel = panel_html
+            .split("src=\"/")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .unwrap()
+            .to_string();
+        let snap_for_remote = snap.clone();
+        let dist_for_remote = dist_dir.clone();
+        let remote = Arc::new(mobile::Remote {
+            snapshot: Box::new(move || Some(snap_for_remote.clone())),
+            asset: Box::new(move |rel| {
+                let p = dist_for_remote.join(rel);
+                let bytes = fs::read(&p).ok()?;
+                let mime = if rel.ends_with(".html") {
+                    "text/html; charset=utf-8"
+                } else if rel.ends_with(".js") {
+                    "application/javascript; charset=utf-8"
+                } else if rel.ends_with(".css") {
+                    "text/css; charset=utf-8"
+                } else {
+                    "application/octet-stream"
+                };
+                Some((bytes, mime.to_string()))
+            }),
+            invoke: Box::new(|cmd, _args| {
+                Box::pin(async move {
+                    if cmd == "get_snapshot" {
+                        Ok(serde_json::json!({"ok": true}))
+                    } else {
+                        Err((403, "not allowed from the phone".into()))
+                    }
+                })
+            }),
+        });
+        let http_call = |req: String| {
+            let r = remote.clone();
+            async move {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+                let srv = tokio::spawn(async move {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    mobile::test_handle(stream, r).await;
+                });
+                let mut cli = TcpStream::connect(addr).await.unwrap();
+                cli.write_all(req.as_bytes()).await.unwrap();
+                let _ = cli.shutdown().await;
+                let mut raw = Vec::new();
+                cli.read_to_end(&mut raw).await.unwrap();
+                srv.await.unwrap();
+                let sep = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+                let head = String::from_utf8_lossy(&raw[..sep]).to_string();
+                let code = head
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap();
+                (code, head, raw[sep + 4..].to_vec())
+            }
+        };
+        let (c_root, _, b_root) = http_call("GET / HTTP/1.1\r\nHost: x\r\n\r\n".into()).await;
+        assert_eq!(c_root, 200);
+        assert!(!b_root.is_empty());
+        let (c_ana, _, b_ana) = http_call("GET /analytics.html HTTP/1.1\r\nHost: x\r\n\r\n".into()).await;
+        assert_eq!(c_ana, 200);
+        assert!(!b_ana.is_empty());
+        let (c_js, _, b_js) = http_call(format!("GET /{asset_rel} HTTP/1.1\r\nHost: x\r\n\r\n")).await;
+        assert_eq!(c_js, 200);
+        assert!(!b_js.is_empty());
+        let (c_snap, _, b_snap) = http_call("GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n".into()).await;
+        assert_eq!(c_snap, 200);
+        assert!(!b_snap.is_empty());
+        let (c_inv, _, _) = http_call("POST /api/invoke/get_snapshot HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".into()).await;
+        assert_eq!(c_inv, 200);
+        let (c_deny, _, _) = http_call("POST /api/invoke/quit_app HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".into()).await;
+        assert_eq!(c_deny, 403);
+        eprintln!(
+            "[5/6] real dist + mobile HTTP OK: /({}B) /analytics.html({}B) /{}({}B) /api/snapshot({}B) invoke=200 quit=403",
+            b_root.len(),
+            b_ana.len(),
+            asset_rel,
+            b_js.len(),
+            b_snap.len()
+        );
+
+        // 6. Read-only parse check on persisted %APPDATA%\t3-deskcat JSON files
+        let app_dir = dirs::config_dir().unwrap().join("t3-deskcat");
+        let s_raw = fs::read_to_string(app_dir.join("settings.json")).unwrap();
+        let _: AppSettings = serde_json::from_str(&s_raw).unwrap();
+        let h_raw = fs::read_to_string(app_dir.join("history.json")).unwrap();
+        let h_parsed: History = serde_json::from_str(&h_raw).unwrap();
+        let c_raw = fs::read_to_string(app_dir.join("quota_cache.json")).unwrap();
+        let c_parsed: QuotaCache = serde_json::from_str(&c_raw).unwrap();
+        let n_raw = fs::read_to_string(app_dir.join("notify_state.json")).unwrap();
+        let n_parsed: NotifyState = serde_json::from_str(&n_raw).unwrap();
+        let l_raw = fs::read_to_string(app_dir.join("usage-ledger.json")).unwrap();
+        let l_parsed: serde_json::Value = serde_json::from_str(&l_raw).unwrap();
+        assert_eq!(l_parsed.get("version").and_then(|v| v.as_u64()), Some(1));
+        assert!(l_parsed.get("buckets").and_then(|v| v.as_object()).is_some());
+        eprintln!(
+            "[6/6] persisted files valid (read-only): history_series={} cache_accounts={} pending_resets={} ledger_buckets={} ledger_kb={}",
+            h_parsed.samples.len(),
+            c_parsed.last_good.len(),
+            n_parsed.pending_resets.len(),
+            l_parsed["buckets"].as_object().map(|m| m.len()).unwrap_or(0),
+            l_raw.len() / 1024
+        );
+    }
+}
+

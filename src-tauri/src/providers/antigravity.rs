@@ -465,3 +465,126 @@ fn error_account(
         updated_at: now,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "t3_deskcat_ag_{tag}_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_quota_groups_supports_cloud_code_and_agy_shapes() {
+        let cloud = json!({
+            "groups": [
+                {
+                    "displayName": "Gemini 3",
+                    "buckets": [
+                        { "bucketId": "gemini-5h", "remainingFraction": 0.924, "resetTime": "2026-11-23T12:00:00Z" },
+                        { "bucketId": "gemini-weekly", "remainingFraction": 0.87, "resetTime": "2026-11-29T00:00:00Z" }
+                    ]
+                },
+                {
+                    "displayName": "Argon",
+                    "buckets": [
+                        { "bucketId": "argon-5h", "remainingFraction": 1.0 },
+                        { "bucketId": "argon-weekly", "remainingFraction": "0.55" }
+                    ]
+                },
+                {
+                    "displayName": "Claude / GPT",
+                    "buckets": [
+                        { "bucketId": "3p-5h", "remainingFraction": 0.9, "disabled": true },
+                        { "bucketId": "3p-weekly", "remainingFraction": 0.41 }
+                    ]
+                }
+            ]
+        });
+        let (primary, extra) = parse_quota_groups(&cloud);
+        assert_eq!(primary.len(), 2);
+        assert_eq!((primary[0].label.as_str(), primary[0].remaining_percent), ("5h", 92));
+        assert!(primary[0].reset_at.is_some());
+        assert_eq!((primary[1].label.as_str(), primary[1].remaining_percent), ("Wk", 87));
+        assert_eq!(extra.len(), 4);
+        assert_eq!((extra[0].label.as_str(), extra[0].remaining_percent), ("Argon 5h", 100));
+        assert_eq!((extra[1].label.as_str(), extra[1].remaining_percent), ("Argon Wk", 55));
+        assert_eq!((extra[2].label.as_str(), extra[2].remaining_percent), ("3P 5h", 0));
+        assert_eq!((extra[3].label.as_str(), extra[3].remaining_percent), ("3P Wk", 41));
+
+        let agy = json!({
+            "groups": [
+                {
+                    "name": "Gemini",
+                    "buckets": [
+                        { "id": "gem_1", "window": "5h", "remaining_fraction": 1.25, "reset_time": "2026-11-23T12:00:00Z" },
+                        { "id": "gem_2", "window": "weekly", "remaining_fraction": -0.2 }
+                    ]
+                }
+            ]
+        });
+        let (p2, e2) = parse_quota_groups(&agy);
+        assert_eq!(p2.len(), 2);
+        assert_eq!(p2[0].remaining_percent, 100);
+        assert_eq!(p2[1].remaining_percent, 0);
+        assert!(e2.is_empty());
+
+        let (p3, e3) = parse_quota_groups(&json!({}));
+        assert!(p3.is_empty() && e3.is_empty());
+    }
+
+    #[test]
+    fn extract_project_and_tier_handle_all_shapes() {
+        assert_eq!(extract_project(&json!({"cloudaicompanionProject": "proj-1"})), Some("proj-1".into()));
+        assert_eq!(extract_project(&json!({"cloudaicompanionProject": {"id": "proj-2"}})), Some("proj-2".into()));
+        assert_eq!(extract_project(&json!({"cloudaicompanionProject": {"projectId": "proj-3"}})), Some("proj-3".into()));
+        assert_eq!(extract_project(&json!({"cloudaicompanionProject": "  "})), None);
+
+        assert_eq!(
+            extract_tier(&json!({"paidTier": {"name": "Google AI Pro"}, "currentTier": {"name": "Free"}})),
+            Some("Pro".into())
+        );
+        assert_eq!(extract_tier(&json!({"currentTier": {"name": "Standard"}})), Some("Standard".into()));
+        assert_eq!(extract_tier(&json!({})), None);
+    }
+
+    #[tokio::test]
+    async fn fetch_handles_missing_invalid_and_incomplete_tokens() {
+        let dir = tmp_dir("fetch");
+        let client = Client::new();
+
+        let missing = fetch_antigravity_quota(&client, "ag:m".into(), "M".into(), &dir.join("missing.json"), false).await;
+        assert_eq!(missing.status, "error");
+        assert!(missing.error.is_some());
+
+        let bad_json_path = dir.join("bad.json");
+        fs::write(&bad_json_path, "{not-json").unwrap();
+        let bad = fetch_antigravity_quota(&client, "ag:b".into(), "B".into(), &bad_json_path, false).await;
+        assert_eq!(bad.status, "error");
+
+        let no_rt_path = dir.join("no_rt.json");
+        fs::write(&no_rt_path, r#"{"token":{"access_token":"","expiry":"2000-01-01T00:00:00Z"}}"#).unwrap();
+        let no_rt = fetch_antigravity_quota(&client, "ag:n".into(), "N".into(), &no_rt_path, false).await;
+        assert_eq!(no_rt.status, "expired");
+
+        let t3_expired_no_client = dir.join("providers").join("antigravity").join("h").join("antigravity-acp").join("antigravity-oauth-token");
+        fs::create_dir_all(t3_expired_no_client.parent().unwrap()).unwrap();
+        fs::write(&t3_expired_no_client, r#"{"token":{"access_token":"old","refresh_token":"rt","expiry":"2020-01-01T00:00:00Z"}}"#).unwrap();
+        let no_cli = fetch_antigravity_quota(&client, "ag:c".into(), "C".into(), &t3_expired_no_client, false).await;
+        assert_eq!(no_cli.status, "error");
+        assert!(no_cli.error.as_deref().unwrap_or("").contains("Antigravity"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

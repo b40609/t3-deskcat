@@ -210,3 +210,99 @@ fn error_account(
         updated_at: now,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "t3_deskcat_codex_{tag}_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_window_maps_durations_clamps_and_resets() {
+        let now = 1_800_000_000;
+        let w5h = parse_window(
+            Some(&json!({"used_percent": 31.4, "limit_window_seconds": 18000, "reset_at": now + 3600})),
+            "5h",
+            now,
+        )
+        .unwrap();
+        assert_eq!((w5h.label.as_str(), w5h.remaining_percent, w5h.reset_at), ("5h", 69, Some(now + 3600)));
+
+        let wk = parse_window(
+            Some(&json!({"used_percent": -15.0, "limit_window_seconds": 604800, "reset_after_seconds": 500})),
+            "fallback",
+            now,
+        )
+        .unwrap();
+        assert_eq!((wk.label.as_str(), wk.remaining_percent, wk.reset_at), ("Wk", 100, Some(now + 500)));
+
+        let mo = parse_window(
+            Some(&json!({"used_percent": 120.0, "limit_window_seconds": 2592000})),
+            "fallback",
+            now,
+        )
+        .unwrap();
+        assert_eq!((mo.label.as_str(), mo.remaining_percent), ("Mo", 0));
+
+        let d2 = parse_window(
+            Some(&json!({"used_percent": 50.0, "limit_window_seconds": 172800})),
+            "fallback",
+            now,
+        )
+        .unwrap();
+        assert_eq!(d2.label, "2d");
+
+        assert!(parse_window(Some(&Value::Null), "5h", now).is_none());
+        assert!(parse_window(None, "5h", now).is_none());
+        assert!(parse_window(Some(&json!({"used_percent": "bad"})), "5h", now).is_none());
+    }
+
+    #[test]
+    fn format_plan_normalizes_known_tiers() {
+        assert_eq!(format_plan(" free "), "Free");
+        assert_eq!(format_plan("PLUS"), "Plus");
+        assert_eq!(format_plan("pro"), "Pro");
+        assert_eq!(format_plan("Team"), "Team");
+        assert_eq!(format_plan("enterprise"), "enterprise");
+    }
+
+    #[tokio::test]
+    async fn fetch_handles_missing_invalid_and_unauthenticated_files() {
+        let dir = tmp_dir("fetch");
+        let client = Client::new();
+
+        let missing = fetch_codex_quota(&client, "codex:m".into(), "Codex".into(), &dir.join("missing.json")).await;
+        assert_eq!(missing.status, "error");
+
+        let bad_path = dir.join("bad.json");
+        fs::write(&bad_path, "{bad").unwrap();
+        let bad = fetch_codex_quota(&client, "codex:b".into(), "Codex".into(), &bad_path).await;
+        assert_eq!(bad.status, "error");
+
+        let no_tok = dir.join("no_tokens.json");
+        fs::write(&no_tok, r#"{"auth_mode":"none"}"#).unwrap();
+        let r1 = fetch_codex_quota(&client, "codex:n".into(), "Codex".into(), &no_tok).await;
+        assert_eq!(r1.status, "expired");
+
+        let empty_tok = dir.join("empty_token.json");
+        fs::write(&empty_tok, r#"{"tokens":{"access_token":"  "}}"#).unwrap();
+        let r2 = fetch_codex_quota(&client, "codex:e".into(), "Codex".into(), &empty_tok).await;
+        assert_eq!(r2.status, "expired");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
