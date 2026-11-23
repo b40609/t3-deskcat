@@ -649,6 +649,7 @@ function accSettingRow(acc: AccountQuota): string {
 }
 
 function renderAccountSettings(accounts: AccountQuota[]) {
+  if (drag) return;
   const s = cfg();
   const accs = orderedAccounts(accounts);
   const sig = JSON.stringify([
@@ -1279,9 +1280,35 @@ accSettingsEl.addEventListener("keydown", (e) => {
   if (t.classList.contains("text-input") && e.key === "Enter") t.blur();
 });
 
-let drag: { id: string; pointerId: number; target: string | null; after: boolean; lastX: number; lastY: number } | null = null;
+interface DragState {
+  id: string;
+  row: HTMLElement;
+  pointerId: number;
+  startOrder: string[];
+  originTop: number;
+  startClientY: number;
+  lastClientX: number;
+  lastClientY: number;
+  zoom: number;
+}
+
+let drag: DragState | null = null;
 let autoScrollRaf = 0;
 let autoScrollSpeed = 0;
+let settleTimer: number | undefined;
+let pendingOrder: string[] | null = null;
+
+function flushPendingOrder() {
+  if (settleTimer) {
+    window.clearTimeout(settleTimer);
+    settleTimer = undefined;
+  }
+  if (pendingOrder) {
+    const ids = pendingOrder;
+    pendingOrder = null;
+    commitSettings({ accountOrder: ids }, true);
+  }
+}
 
 function stopAutoScroll() {
   autoScrollSpeed = 0;
@@ -1298,56 +1325,85 @@ function stepAutoScroll() {
   }
   const prev = settingsScroll.scrollTop;
   settingsScroll.scrollTop += autoScrollSpeed;
-  if (settingsScroll.scrollTop !== prev) updateDragTarget(drag.lastX, drag.lastY);
+  if (settingsScroll.scrollTop !== prev) {
+    updateLiveDrag(drag.lastClientX, drag.lastClientY);
+  }
   autoScrollRaf = requestAnimationFrame(stepAutoScroll);
 }
 
-function clearDropMarks() {
-  accSettingsEl
-    .querySelectorAll(".drop-before, .drop-after, .dragging")
-    .forEach((el) => el.classList.remove("drop-before", "drop-after", "dragging"));
+/** Animate sibling rows smoothly into their new positions (FLIP). */
+function animateSiblingsFlip(beforeTops: Map<HTMLElement, number>, draggedRow: HTMLElement, zoom: number) {
+  const rows = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set"));
+  const moved: HTMLElement[] = [];
+  for (const r of rows) {
+    if (r === draggedRow) continue;
+    const prevTop = beforeTops.get(r);
+    if (prevTop == null) continue;
+    const dy = (prevTop - r.getBoundingClientRect().top) / zoom;
+    if (Math.abs(dy) < 0.5) continue;
+    r.style.transition = "none";
+    r.style.transform = `translateY(${dy}px)`;
+    moved.push(r);
+  }
+  if (!moved.length) return;
+  void accSettingsEl.offsetHeight;
+  for (const r of moved) {
+    r.style.transition = "transform 0.18s var(--ease)";
+    r.style.transform = "";
+  }
 }
 
-function updateDragTarget(clientX: number, clientY: number) {
+function updateLiveDrag(clientX: number, clientY: number) {
   if (!drag) return;
-  drag.lastX = clientX;
-  drag.lastY = clientY;
+  drag.lastClientX = clientX;
+  drag.lastClientY = clientY;
+
+  const { row, zoom } = drag;
   const rows = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set"));
   if (!rows.length) return;
 
-  // Hit-test via viewport coordinates so touch implicit pointer capture on the
-  // starting `.grip` never pins target resolution to the original row.
-  const hit = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
-  let row = hit?.closest<HTMLElement>(".acc-set") ?? null;
-  if (!row || !accSettingsEl.contains(row)) {
-    const firstRect = rows[0].getBoundingClientRect();
-    const lastRect = rows[rows.length - 1].getBoundingClientRect();
-    if (clientY <= firstRect.top) row = rows[0];
-    else if (clientY >= lastRect.bottom) row = rows[rows.length - 1];
-    else {
-      // Fallback: nearest row vertically when pointer is in a gap or outside X bounds.
-      let best: HTMLElement | null = null;
-      let bestDist = Infinity;
-      for (const r of rows) {
-        const rect = r.getBoundingClientRect();
-        const mid = (rect.top + rect.bottom) / 2;
-        const d = Math.abs(clientY - mid);
-        if (d < bestDist) {
-          bestDist = d;
-          best = r;
-        }
-      }
-      row = best;
+  // Move the dragged row's visual position with the pointer.
+  const applyOffset = () => {
+    const curLayoutTop = row.getBoundingClientRect().top - (parseFloat(row.dataset.dy || "0") * zoom);
+    const desiredTop = drag!.originTop + (clientY - drag!.startClientY);
+    const dy = (desiredTop - curLayoutTop) / zoom;
+    row.dataset.dy = String(dy);
+    row.style.transform = `translateY(${dy}px)`;
+  };
+
+  // Reorder live whenever the pointer crosses a sibling row's midpoint.
+  const from = rows.indexOf(row);
+  let targetIdx = from;
+  for (let i = 0; i < rows.length; i++) {
+    if (i === from) continue;
+    const rect = rows[i].getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    if (i < from && clientY < mid) {
+      targetIdx = i;
+      break;
+    }
+    if (i > from && clientY > mid) {
+      targetIdx = i;
     }
   }
-  if (!row) return;
 
-  const from = rows.findIndex((r) => r.dataset.id === drag!.id);
-  const to = rows.indexOf(row);
-  accSettingsEl.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
-  drag.target = row.dataset.id!;
-  drag.after = to > from;
-  if (to !== from) row.classList.add(drag.after ? "drop-after" : "drop-before");
+  if (targetIdx !== from) {
+    const beforeTops = new Map<HTMLElement, number>();
+    for (const r of rows) {
+      if (r !== row) beforeTops.set(r, r.getBoundingClientRect().top);
+    }
+    // Clear transform temporarily so layout insertion & measurement stay clean.
+    row.style.transform = "";
+    row.dataset.dy = "0";
+    if (targetIdx < from) {
+      accSettingsEl.insertBefore(row, rows[targetIdx]);
+    } else {
+      accSettingsEl.insertBefore(row, rows[targetIdx].nextSibling);
+    }
+    animateSiblingsFlip(beforeTops, row, zoom);
+  }
+
+  applyOffset();
 
   // Auto-scroll when dragging near the top or bottom edge of the scroll viewport.
   const scRect = settingsScroll.getBoundingClientRect();
@@ -1361,6 +1417,7 @@ function updateDragTarget(clientX: number, clientY: number) {
 accSettingsEl.addEventListener("pointerdown", (e) => {
   const grip = (e.target as HTMLElement).closest<HTMLElement>(".grip");
   if (!grip || (e.pointerType === "mouse" && e.button !== 0)) return;
+  flushPendingOrder();
   const row = grip.closest<HTMLElement>(".acc-set")!;
   e.preventDefault();
   try {
@@ -1368,7 +1425,22 @@ accSettingsEl.addEventListener("pointerdown", (e) => {
   } catch {
     // ignore if synthetic pointer
   }
-  drag = { id: row.dataset.id!, pointerId: e.pointerId, target: null, after: false, lastX: e.clientX, lastY: e.clientY };
+  const rows = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set"));
+  const rect = row.getBoundingClientRect();
+  const zoom = row.offsetHeight > 0 ? rect.height / row.offsetHeight : 1;
+  drag = {
+    id: row.dataset.id!,
+    row,
+    pointerId: e.pointerId,
+    startOrder: rows.map((r) => r.dataset.id!),
+    originTop: rect.top,
+    startClientY: e.clientY,
+    lastClientX: e.clientX,
+    lastClientY: e.clientY,
+    zoom,
+  };
+  row.dataset.dy = "0";
+  row.style.transition = "none";
   row.classList.add("dragging");
   accSettingsEl.classList.add("sorting");
 });
@@ -1376,7 +1448,7 @@ accSettingsEl.addEventListener("pointerdown", (e) => {
 window.addEventListener("pointermove", (e) => {
   if (!drag || e.pointerId !== drag.pointerId) return;
   e.preventDefault();
-  updateDragTarget(e.clientX, e.clientY);
+  updateLiveDrag(e.clientX, e.clientY);
 });
 
 window.addEventListener(
@@ -1387,28 +1459,40 @@ window.addEventListener(
   { passive: false },
 );
 
-function endDrag(e?: PointerEvent) {
+function finishDrag(commit: boolean, e?: PointerEvent) {
   if (!drag) return;
   if (e && e.pointerId !== drag.pointerId) return;
-  const { id, target, after } = drag;
+  const { row, startOrder } = drag;
   drag = null;
   stopAutoScroll();
-  clearDropMarks();
   accSettingsEl.classList.remove("sorting");
-  if (!target || target === id || !currentSnapshot) return;
-  const ids = orderedAccounts(currentSnapshot.accounts).map((a) => a.id).filter((x) => x !== id);
-  const at = ids.indexOf(target) + (after ? 1 : 0);
-  ids.splice(at, 0, id);
-  commitSettings({ accountOrder: ids }, true);
+
+  // Settle the dragged row smoothly into its final slot before committing innerHTML re-render.
+  const ids = Array.from(accSettingsEl.querySelectorAll<HTMLElement>(".acc-set")).map((r) => r.dataset.id!);
+  const changed = commit && !!currentSnapshot && ids.length === startOrder.length && ids.some((id, i) => id !== startOrder[i]);
+  if (changed) pendingOrder = ids;
+
+  row.style.transition = "transform 0.16s var(--ease), box-shadow 0.16s var(--ease)";
+  row.style.transform = "";
+  delete row.dataset.dy;
+  settleTimer = window.setTimeout(() => {
+    settleTimer = undefined;
+    row.classList.remove("dragging");
+    row.style.transition = "";
+    accSettingsEl.querySelectorAll<HTMLElement>(".acc-set").forEach((r) => {
+      if (r !== row) r.style.transition = "";
+    });
+    if (pendingOrder) {
+      flushPendingOrder();
+    } else if (!commit && currentSnapshot) {
+      accSettingsSig = "";
+      renderAccountSettings(currentSnapshot.accounts);
+    }
+  }, 165);
 }
-window.addEventListener("pointerup", endDrag);
-window.addEventListener("pointercancel", (e) => {
-  if (!drag || e.pointerId !== drag.pointerId) return;
-  drag = null;
-  stopAutoScroll();
-  clearDropMarks();
-  accSettingsEl.classList.remove("sorting");
-});
+
+window.addEventListener("pointerup", (e) => finishDrag(true, e));
+window.addEventListener("pointercancel", (e) => finishDrag(false, e));
 
 inpAutostart.addEventListener("change", () => commitSettings({ launchAtStartup: inpAutostart.checked }, true));
 

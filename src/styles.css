@@ -1279,27 +1279,20 @@ html.remote .grip {
 }
 
 .acc-set.dragging {
-  opacity: 0.55;
+  position: relative;
+  z-index: 4;
+  background: var(--card);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--stroke);
+  will-change: transform;
 }
 
-.acc-set.drop-before::after,
-.acc-set.drop-after::after {
-  content: "";
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent);
-  z-index: 2;
+.acc-set.dragging::before {
+  display: none;
 }
 
-.acc-set.drop-before::after {
-  top: -1px;
-}
-
-.acc-set.drop-after::after {
-  bottom: -1px;
+#acc-settings.sorting {
+  overflow: visible;
 }
 
 #acc-settings.sorting,
