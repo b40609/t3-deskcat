@@ -28,9 +28,9 @@ const defaultSettings: AppSettings = {
   scoreMode: "max_avg",
   refreshIntervalSecs: 120,
   notifyEnabled: true,
-  notifyLowThreshold: 20,
   showAntigravityExtra: false,
   launchAtStartup: false,
+  showPet: true,
   petX: null,
   petY: null,
   petTheme: "hud_gauge",
@@ -229,7 +229,6 @@ let downX = 0;
 let downY = 0;
 let dragging = false;
 let pointerActive = false;
-let lastClickAt = 0;
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
@@ -272,15 +271,6 @@ canvas.addEventListener("pointerup", (e) => {
   dragging = false;
   if (wasClick) {
     getAnimator(ctx).poke("squish");
-    const mode = (currentSnapshot?.settings ?? defaultSettings).petClickAction ?? "single";
-    const now = performance.now();
-    if (mode === "double") {
-      if (now - lastClickAt > 380) {
-        lastClickAt = now;
-        return;
-      }
-      lastClickAt = 0;
-    }
     invoke("toggle_panel").catch(() => {});
   }
 });

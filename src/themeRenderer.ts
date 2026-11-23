@@ -28,8 +28,8 @@ export function getMuseImage(mood: CatMood): HTMLImageElement | null {
   return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
-export function animSpeedFactor(s: AppSettings): number {
-  return s.petAnimSpeed === "slow" ? 0.6 : s.petAnimSpeed === "fast" ? 1.6 : 1;
+export function animSpeedFactor(_s: AppSettings): number {
+  return 1;
 }
 
 /** Muse cat: layered procedural animation (see museAnimator.ts). */

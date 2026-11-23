@@ -16,6 +16,7 @@
       <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></symbol>
       <symbol id="i-grip" viewBox="0 0 24 24"><path d="M5 8h14M5 12h14M5 16h14" /></symbol>
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></symbol>
       <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18" /><path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c5 0 9 5 10 7a17 17 0 0 1-3 3.9M6.6 6.6C4.3 8 2.7 10.4 2 12c1 2 5 7 10 7a9.6 9.6 0 0 0 4.4-1" /></symbol>
       <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" /></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></symbol>
@@ -126,8 +127,9 @@
           </header>
           <nav class="tabs" role="tablist">
             <button class="tab active" role="tab" data-tab="general" data-i18n>一般</button>
+            <button class="tab" role="tab" data-tab="accounts" data-i18n>帳號</button>
             <button class="tab" role="tab" data-tab="panel" data-i18n>面板</button>
-            <button class="tab" role="tab" data-tab="alerts" data-i18n>額度與通知</button>
+            <button class="tab" role="tab" data-tab="alerts" data-i18n>通知</button>
             <button class="tab desktop-only" role="tab" data-tab="pet" data-i18n>桌寵</button>
           </nav>
 
@@ -192,15 +194,25 @@
                     </div>
                   </div>
                 </div>
-                <div class="group-footer" id="hotkey-hint" data-i18n>點快捷鍵後按下新的組合鍵，Esc 取消</div>
+                <div class="group-footer hidden" id="hotkey-hint"></div>
               </section>
 
               <section class="group">
                 <div class="list">
                   <button class="row row-link desktop-only" data-sub="mobile"><span><span data-i18n>在手機查看</span><small class="row-hint" id="mobile-summary"></small></span><svg class="chev"><use href="#i-chev" /></svg></button>
                   <button class="row row-link" data-sub="advanced"><span data-i18n>進階</span><svg class="chev"><use href="#i-chev" /></svg></button>
-                  <button class="row row-link desktop-only" data-sub="support"><span data-i18n>支援與診斷</span><svg class="chev"><use href="#i-chev" /></svg></button>
                 </div>
+              </section>
+            </div>
+
+            <!-- ===== 帳號 ===== -->
+            <div class="pane hidden" data-pane="accounts">
+              <section class="group">
+                <div class="list" id="acc-settings"></div>
+                <div class="list list-gap desktop-only">
+                  <button class="row row-button" data-sub="add-account"><span data-i18n>新增帳號</span></button>
+                </div>
+                <div class="group-footer" data-i18n>拖曳排序，點眼睛切換顯示，點帳號展開編輯</div>
               </section>
             </div>
 
@@ -223,22 +235,19 @@
                     </div>
                   </div>
                   <div class="row">
-                    <span><span data-i18n>時間刻度</span><small class="row-hint" data-i18n>進度條上標出時間已過多少的直槓</small></span>
-                    <div class="segmented" data-key="paceTick">
-                      <button data-value="on" class="seg-btn" data-i18n>顯示</button>
-                      <button data-value="ahead" class="seg-btn" data-i18n>用太快時</button>
-                      <button data-value="off" class="seg-btn" data-i18n>隱藏</button>
+                    <span data-i18n>顯示範圍</span>
+                    <div class="segmented" id="seg-acc-detail">
+                      <button data-value="compact" class="seg-btn" data-i18n>精簡</button>
+                      <button data-value="standard" class="seg-btn" data-i18n>標準</button>
+                      <button data-value="all" class="seg-btn" data-i18n>全部</button>
                     </div>
                   </div>
                 </div>
+                <div class="group-footer" id="acc-detail-hint"></div>
               </section>
 
               <section class="group">
                 <div class="list">
-                  <label class="row">
-                    <span><span data-i18n>精簡模式</span><small class="row-hint" data-i18n>每個帳號只顯示 5 小時與每週限制</small></span>
-                    <input id="inp-compact" class="switch" type="checkbox" />
-                  </label>
                   <label class="row">
                     <span><span data-i18n>推薦使用</span><small class="row-hint" data-i18n>在最上方列出現在最適合用的帳號</small></span>
                     <input id="inp-show-picks" class="switch" type="checkbox" checked />
@@ -249,13 +258,13 @@
                   </label>
                   <label class="row">
                     <span><span data-i18n>今日用量與花費</span><small class="row-hint" data-i18n>讀本機紀錄，花費以 API 牌價估算</small></span>
-                    <input id="inp-show-usage" class="switch" type="checkbox" checked />
+                    <input id="inp-show-usage" class="switch" type="checkbox" />
                   </label>
                 </div>
               </section>
             </div>
 
-            <!-- ===== 額度與通知 ===== -->
+            <!-- ===== 通知 ===== -->
             <div class="pane hidden" data-pane="alerts">
               <section class="group">
                 <div class="group-header" data-i18n>門檻</div>
@@ -299,115 +308,91 @@
                       <input id="inp-quiet-end" class="time-input" type="time" value="09:00" />
                     </span>
                   </div>
-                  <button id="btn-test-notify" class="row row-button desktop-only" data-i18n>傳送測試通知</button>
                 </div>
-              </section>
-
-              <section class="group">
-                <div class="group-header" data-i18n>帳號</div>
-                <div class="list" id="acc-settings"></div>
-                <div class="list list-gap desktop-only">
-                  <button class="row row-button" data-sub="add-account"><span data-i18n>新增帳號</span></button>
-                </div>
-                <div class="group-footer" data-i18n>拖曳把手調整順序，點帳號可改名、隱藏、設定個別危險線</div>
               </section>
             </div>
 
             <!-- ===== 桌寵 ===== -->
             <div class="pane hidden desktop-only" data-pane="pet">
               <section class="group">
-                <div class="theme-picker" id="theme-selector">
-                  <button data-theme="desk_cat" class="theme-btn">
-                    <span class="theme-thumb cat"><svg><use href="#i-cat" /></svg></span>
-                    <span class="theme-name" data-i18n>Muse 貓</span>
-                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                  </button>
-                  <button data-theme="hud_gauge" class="theme-btn">
-                    <span class="theme-thumb gauge"><svg><use href="#i-gauge" /></svg></span>
-                    <span class="theme-name" data-i18n>圓環儀表</span>
-                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                  </button>
-                  <button data-theme="custom" class="theme-btn">
-                    <span class="theme-thumb custom"><svg><use href="#i-image" /></svg></span>
-                    <span class="theme-name" data-i18n>自訂圖片</span>
-                    <span class="theme-check"><svg><use href="#i-check" /></svg></span>
-                  </button>
-                </div>
-
-                <div id="custom-images-card" class="list hidden list-gap">
-                  <div class="custom-slots">
-                    <label class="custom-slot">
-                      <span class="slot-preview" id="prev-slot-working"></span>
-                      <span class="slot-name" data-i18n>充沛</span>
-                      <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
-                    </label>
-                    <label class="custom-slot">
-                      <span class="slot-preview" id="prev-slot-sweating"></span>
-                      <span class="slot-name" data-i18n>趕工</span>
-                      <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
-                    </label>
-                    <label class="custom-slot">
-                      <span class="slot-preview" id="prev-slot-sleeping"></span>
-                      <span class="slot-name" data-i18n>見底</span>
-                      <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
-                    </label>
-                  </div>
-                  <button id="btn-clear-custom" class="row row-button destructive" data-i18n>清除自訂圖片</button>
-                </div>
-              </section>
-
-              <section class="group">
                 <div class="list">
-                  <div class="row row-slider">
-                    <div class="row-line"><span data-i18n>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
-                    <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
-                  </div>
-                  <div class="row row-slider">
-                    <div class="row-line"><span data-i18n>不透明度</span><span class="value" id="val-pet-opacity">100%</span></div>
-                    <input id="inp-pet-opacity" class="slider" type="range" min="30" max="100" step="5" value="100" />
-                  </div>
-                  <div class="row">
-                    <span data-i18n>動畫速度</span>
-                    <div class="segmented" data-key="petAnimSpeed">
-                      <button data-value="slow" class="seg-btn" data-i18n>慢</button>
-                      <button data-value="normal" class="seg-btn" data-i18n>正常</button>
-                      <button data-value="fast" class="seg-btn" data-i18n>快</button>
-                    </div>
-                  </div>
                   <label class="row">
-                    <span><span data-i18n>動態特效</span><small class="row-hint" data-i18n>音符、Zzz、汗滴、愛心</small></span>
-                    <input id="inp-pet-effects" class="switch" type="checkbox" checked />
+                    <span><span data-i18n>顯示桌面桌寵</span><small class="row-hint" data-i18n>關掉後只保留系統匣與快捷鍵</small></span>
+                    <input id="inp-show-pet" class="switch" type="checkbox" checked />
                   </label>
                 </div>
               </section>
 
-              <section class="group">
-                <div class="list">
-                  <div class="row">
-                    <span data-i18n>開啟面板</span>
-                    <div class="segmented" data-key="petClickAction">
-                      <button data-value="single" class="seg-btn" data-i18n>單擊</button>
-                      <button data-value="double" class="seg-btn" data-i18n>雙擊</button>
-                    </div>
+              <div id="pet-options">
+                <section class="group">
+                  <div class="theme-picker" id="theme-selector">
+                    <button data-theme="desk_cat" class="theme-btn">
+                      <span class="theme-thumb cat"><svg><use href="#i-cat" /></svg></span>
+                      <span class="theme-name" data-i18n>Muse 貓</span>
+                      <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                    </button>
+                    <button data-theme="hud_gauge" class="theme-btn">
+                      <span class="theme-thumb gauge"><svg><use href="#i-gauge" /></svg></span>
+                      <span class="theme-name" data-i18n>圓環儀表</span>
+                      <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                    </button>
+                    <button data-theme="custom" class="theme-btn">
+                      <span class="theme-thumb custom"><svg><use href="#i-image" /></svg></span>
+                      <span class="theme-name" data-i18n>自訂圖片</span>
+                      <span class="theme-check"><svg><use href="#i-check" /></svg></span>
+                    </button>
                   </div>
-                  <label class="row">
-                    <span><span data-i18n>滑鼠離開時淡出</span><small class="row-hint" data-i18n>不擋畫面，滑過去就恢復</small></span>
-                    <input id="inp-pet-idle-fade" class="switch" type="checkbox" />
-                  </label>
-                  <label class="row">
-                    <span><span data-i18n>貼齊螢幕邊緣</span><small class="row-hint" data-i18n>拖到邊緣附近會自動靠邊</small></span>
-                    <input id="inp-pet-snap" class="switch" type="checkbox" checked />
-                  </label>
-                </div>
-                <div class="group-footer" data-i18n>貓的心情跟著剩餘額度：高於注意線上班，介於兩線之間冒汗，低於危險線趴睡</div>
-              </section>
+
+                  <div id="custom-images-card" class="list hidden list-gap">
+                    <div class="custom-slots">
+                      <label class="custom-slot">
+                        <span class="slot-preview" id="prev-slot-working"></span>
+                        <span class="slot-name" data-i18n>充沛</span>
+                        <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
+                      </label>
+                      <label class="custom-slot">
+                        <span class="slot-preview" id="prev-slot-sweating"></span>
+                        <span class="slot-name" data-i18n>趕工</span>
+                        <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
+                      </label>
+                      <label class="custom-slot">
+                        <span class="slot-preview" id="prev-slot-sleeping"></span>
+                        <span class="slot-name" data-i18n>見底</span>
+                        <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
+                      </label>
+                    </div>
+                    <button id="btn-clear-custom" class="row row-button destructive" data-i18n>清除自訂圖片</button>
+                  </div>
+                </section>
+
+                <section class="group">
+                  <div class="list">
+                    <div class="row row-slider">
+                      <div class="row-line"><span data-i18n>尺寸</span><span class="value" id="val-pet-size">64 px</span></div>
+                      <input id="inp-pet-size" class="slider" type="range" min="48" max="128" step="2" value="64" />
+                    </div>
+                    <div class="row row-slider">
+                      <div class="row-line"><span data-i18n>不透明度</span><span class="value" id="val-pet-opacity">100%</span></div>
+                      <input id="inp-pet-opacity" class="slider" type="range" min="30" max="100" step="5" value="100" />
+                    </div>
+                    <label class="row" id="row-pet-effects">
+                      <span><span data-i18n>動態特效</span><small class="row-hint" data-i18n>音符、Zzz、汗滴、愛心</small></span>
+                      <input id="inp-pet-effects" class="switch" type="checkbox" checked />
+                    </label>
+                    <label class="row">
+                      <span><span data-i18n>滑鼠離開時淡出</span><small class="row-hint" data-i18n>不擋畫面，滑過去就恢復</small></span>
+                      <input id="inp-pet-idle-fade" class="switch" type="checkbox" />
+                    </label>
+                  </div>
+                </section>
+              </div>
             </div>
 
             <div class="footnote" id="app-version">T3 DeskCat 0.2.0</div>
           </div>
         </section>
 
-        <!-- ============ Sub pages (mobile, advanced, support, add account) ============ -->
+        <!-- ============ Sub pages (mobile, advanced, add account) ============ -->
         <section id="view-sub" class="view view-push">
           <header class="nav-bar" data-tauri-drag-region>
             <button id="btn-sub-back" class="back-btn" title="返回" data-i18n-attr="title"><svg><use href="#i-back" /></svg></button>
@@ -479,14 +464,6 @@
                 </div>
                 <div class="group-footer" data-i18n>Claude 間隔越長，越不容易被 Anthropic 限流（429）</div>
               </section>
-              <section class="group">
-                <div class="list">
-                  <label class="row">
-                    <span data-i18n>顯示 Antigravity 次要池</span>
-                    <input id="inp-ag-extra" class="switch" type="checkbox" />
-                  </label>
-                </div>
-              </section>
               <section class="group desktop-only">
                 <div class="group-header" data-i18n>帳號資料夾</div>
                 <div class="list">
@@ -496,13 +473,12 @@
                 </div>
                 <div class="group-footer" data-i18n>會自動找 Claude Code、Codex、Antigravity 的登入。帳號放在其他位置（例如設了 CLAUDE_CONFIG_DIR）時，才需要新增資料夾</div>
               </section>
-            </div>
-
-            <div class="subpane hidden" data-subpane="support" data-title="支援與診斷">
-              <section class="group">
+              <section class="group desktop-only">
+                <div class="group-header" data-i18n>診斷</div>
                 <div class="list">
                   <button class="row row-link" data-open="logs"><span data-i18n>開啟記錄檔資料夾</span><svg class="chev"><use href="#i-chev" /></svg></button>
                   <button class="row row-link" id="btn-diag"><span data-i18n>複製診斷資訊</span><span class="value" id="diag-state"></span></button>
+                  <button class="row row-button" id="btn-test-notify" data-i18n>傳送測試通知</button>
                 </div>
                 <div class="group-footer" data-i18n>回報問題時貼上診斷資訊。內容只有帳號狀態與記錄檔，不含登入憑證</div>
               </section>

@@ -50,16 +50,18 @@ const valSweatRange = $("val-sweat-range");
 const inpNotify = $<HTMLInputElement>("inp-notify");
 const inpRefreshSec = $<HTMLInputElement>("inp-refresh-sec");
 const valRefreshSec = $("val-refresh-sec");
-const inpAgExtra = $<HTMLInputElement>("inp-ag-extra");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
+const inpShowPet = $<HTMLInputElement>("inp-show-pet");
+const petOptions = $("pet-options");
+const rowPetEffects = $("row-pet-effects");
 const inpPetEffects = $<HTMLInputElement>("inp-pet-effects");
 const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
+const segAccDetail = $("seg-acc-detail");
+const accDetailHint = $("acc-detail-hint");
 const inpPetOpacity = $<HTMLInputElement>("inp-pet-opacity");
 const valPetOpacity = $("val-pet-opacity");
 const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
-const inpPetSnap = $<HTMLInputElement>("inp-pet-snap");
-const inpCompact = $<HTMLInputElement>("inp-compact");
 const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
 const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
 const offlineNote = $("offline-note");
@@ -98,9 +100,9 @@ const fallbackSettings: AppSettings = {
   scoreMode: "max_avg",
   refreshIntervalSecs: 120,
   notifyEnabled: true,
-  notifyLowThreshold: 20,
   showAntigravityExtra: false,
   launchAtStartup: false,
+  showPet: true,
   petX: null,
   petY: null,
   petTheme: "desk_cat",
@@ -125,10 +127,9 @@ const fallbackSettings: AppSettings = {
   panelPosition: "pet",
   hotkey: "Ctrl+Alt+Q",
   compactAccounts: false,
-  showHistory: true,
   claudeMinIntervalSecs: 90,
   showForecast: true,
-  showUsageStats: true,
+  showUsageStats: false,
   trayStyle: "number",
 };
 
@@ -282,12 +283,11 @@ function renderWindow(
   const tone = getTone(remaining, accId);
   const reset = formatResetAt(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
-  // The tick sits where the fill would be if usage kept pace with time.
-  // "ahead": only when more is used than time has passed.
-  const tickMode = (currentSettings ?? fallbackSettings).paceTick ?? "ahead";
+  // The tick sits where the fill would be if usage kept pace with time,
+  // shown only when usage runs ahead of elapsed time.
   const ahead = elapsed != null && 100 - remaining > elapsed;
   const pace =
-    elapsed == null || tickMode === "off" || (tickMode === "ahead" && !ahead)
+    elapsed == null || !ahead
       ? ""
       : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
   return `
@@ -518,9 +518,13 @@ function syncSettingsForm(s: AppSettings) {
     (l) => `<option value="${l.value}">${l.value === "system" ? t("跟隨系統") : l.label}</option>`,
   ).join("");
   selLanguage.value = s.language ?? "system";
+  const showPet = s.showPet !== false;
+  inpShowPet.checked = showPet;
+  petOptions.classList.toggle("hidden", !showPet);
   const activeTheme = s.petTheme ?? "hud_gauge";
   themeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === activeTheme));
   customCard.classList.toggle("hidden", activeTheme !== "custom");
+  rowPetEffects.classList.toggle("hidden", activeTheme !== "desk_cat");
 
   prevSlotWorking.innerHTML = slotHtml(s.customImageWorking, "i-image", "Working");
   prevSlotSweating.innerHTML = slotHtml(s.customImageSweating, "i-image", "Sweating");
@@ -542,16 +546,25 @@ function syncSettingsForm(s: AppSettings) {
   setRangeIfIdle(inpRefreshSec, s.refreshIntervalSecs);
   valRefreshSec.textContent = t("{n} 秒", { n: s.refreshIntervalSecs });
 
-  inpAgExtra.checked = s.showAntigravityExtra;
   inpAutostart.checked = s.launchAtStartup;
 
   setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
   valPetOpacity.textContent = `${s.petOpacity ?? 100}%`;
   inpPetIdleFade.checked = !!s.petIdleFade;
-  inpPetSnap.checked = s.petSnapEdge !== false;
-  inpCompact.checked = !!s.compactAccounts;
+  const detailMode = s.compactAccounts ? "compact" : s.showAntigravityExtra ? "all" : "standard";
+  const detailBtns = Array.from(segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+  const detailIdx = Math.max(0, detailBtns.findIndex((b) => b.dataset.value === detailMode));
+  detailBtns.forEach((b, i) => b.classList.toggle("active", i === detailIdx));
+  segAccDetail.style.setProperty("--n", String(detailBtns.length));
+  segAccDetail.style.setProperty("--i", String(detailIdx));
+  accDetailHint.textContent =
+    detailMode === "compact"
+      ? t("每個帳號只顯示 5 小時與每週限制")
+      : detailMode === "all"
+        ? t("顯示主要限制與 Antigravity 次要池")
+        : t("顯示每個帳號的主要限制");
   inpShowForecast.checked = s.showForecast !== false;
-  inpShowUsage.checked = s.showUsageStats !== false;
+  inpShowUsage.checked = s.showUsageStats === true;
   inpMobile.checked = s.mobileEnabled === true;
   if (document.activeElement !== selPanelPos) selPanelPos.value = s.panelPosition ?? "pet";
   if (!recordingHotkey) btnHotkey.innerHTML = hotkeyLabel(s.hotkey ?? "");
@@ -613,7 +626,6 @@ function accSettingRow(acc: AccountQuota): string {
   const tags = [providerLabel(acc.provider)];
   if (p.alias?.trim()) tags.push(t("原名 {name}", { name: acc.name }));
   if (p.hidden) tags.push(t("已隱藏"));
-  else if (p.excludeScore) tags.push(t("不計分"));
   if (p.notifyThreshold != null) tags.push(t("危險線 {n}%", { n: p.notifyThreshold }));
   const src = accountSources[acc.id];
   const thOpts = [
@@ -626,8 +638,6 @@ function accSettingRow(acc: AccountQuota): string {
     ? `
       <div class="acc-set-body">
         <div class="row"><span>${t("顯示名稱")}</span><input class="text-input" data-f="alias" maxlength="40" placeholder="${escapeHtml(acc.name)}" value="${escapeHtml(p.alias ?? "")}" /></div>
-        <label class="row"><span>${t("在額度頁顯示")}</span><input class="switch" type="checkbox" data-f="visible" ${p.hidden ? "" : "checked"} /></label>
-        <label class="row ${p.hidden ? "disabled" : ""}"><span>${t("計入總分與心情")}</span><input class="switch" type="checkbox" data-f="score" ${p.excludeScore || p.hidden ? "" : "checked"} ${p.hidden ? "disabled" : ""} /></label>
         <div class="row"><span>${t("危險線")}</span><select class="select" data-f="th">${thOpts}</select></div>
         <div class="row"><span>${t("頭像")}</span><span class="av-actions">${p.avatar ? `<button class="link-btn" data-act="av-clear">${t("還原預設")}</button>` : ""}<label class="link-btn">${t("選擇圖片")}<input type="file" accept="image/*" class="hidden-file-input" data-f="avatar" /></label></span></div>
       </div>`
@@ -638,10 +648,11 @@ function accSettingRow(acc: AccountQuota): string {
         <span class="grip" title="${t("拖曳排序")}"><svg><use href="#i-grip" /></svg></span>
         ${avatarHtml(acc.id, acc.provider)}
         <div class="row-main">
-          <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span>${p.hidden ? `<svg class="tag-ico"><use href="#i-eye-off" /></svg>` : ""}</div>
+          <div class="row-title"><span class="name">${escapeHtml(displayName(acc))}</span></div>
           <span class="row-sub">${escapeHtml(tags.join(" · "))}</span>
           ${src ? `<span class="row-sub muted src" title="${escapeHtml(src)}">${escapeHtml(sourceLabel(src))}</span>` : ""}
         </div>
+        <button class="icon-btn acc-vis-btn${p.hidden ? " is-off" : ""}" data-act="vis" title="${t(p.hidden ? "顯示此帳號" : "隱藏此帳號")}"><svg><use href="#${p.hidden ? "i-eye-off" : "i-eye"}" /></svg></button>
         <svg class="chev"><use href="#i-chev" /></svg>
       </div>${body}
     </div>`;
@@ -843,7 +854,17 @@ segControls.forEach((seg) => {
 });
 
 inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
+inpShowPet.addEventListener("change", () => commitSettings({ showPet: inpShowPet.checked }, true));
 inpPetEffects.addEventListener("change", () => commitSettings({ petEffects: inpPetEffects.checked }, true));
+
+segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const mode = btn.dataset.value;
+    if (mode === "compact") commitSettings({ compactAccounts: true, showAntigravityExtra: false }, true);
+    else if (mode === "all") commitSettings({ compactAccounts: false, showAntigravityExtra: true }, true);
+    else commitSettings({ compactAccounts: false, showAntigravityExtra: false }, true);
+  });
+});
 
 inpNotify.addEventListener("change", () => commitSettings({ notifyEnabled: inpNotify.checked }, true));
 inpNotifyReset.addEventListener("change", () => commitSettings({ notifyOnReset: inpNotifyReset.checked }, true));
@@ -855,8 +876,6 @@ inpClaudeInterval.addEventListener("input", () =>
 );
 inpPetOpacity.addEventListener("input", () => commitSettings({ petOpacity: Number(inpPetOpacity.value) }));
 inpPetIdleFade.addEventListener("change", () => commitSettings({ petIdleFade: inpPetIdleFade.checked }, true));
-inpPetSnap.addEventListener("change", () => commitSettings({ petSnapEdge: inpPetSnap.checked }, true));
-inpCompact.addEventListener("change", () => commitSettings({ compactAccounts: inpCompact.checked }, true));
 inpShowForecast.addEventListener("change", () => commitSettings({ showForecast: inpShowForecast.checked }, true));
 inpShowUsage.addEventListener("change", () => {
   commitSettings({ showUsageStats: inpShowUsage.checked }, true);
@@ -877,6 +896,7 @@ function showTab(name: string) {
   });
   document.querySelectorAll<HTMLElement>(".pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
   settingsScroll.scrollTop = 0;
+  if (name === "accounts") void loadSources();
 }
 document.querySelectorAll<HTMLElement>(".tab").forEach((t) =>
   t.addEventListener("click", () => showTab(t.dataset.tab ?? "general")),
@@ -1148,10 +1168,17 @@ $("btn-acc-login").addEventListener("click", async () => {
 async function showHotkeyStatus() {
   try {
     const err = await invoke<string | null>("hotkey_status");
-    hotkeyHint.textContent = err ?? hotkeyHintText();
-    hotkeyHint.classList.toggle("error", !!err);
+    if (err) {
+      hotkeyHint.textContent = err;
+      hotkeyHint.classList.add("error");
+      hotkeyHint.classList.remove("hidden");
+    } else if (!recordingHotkey) {
+      hotkeyHint.textContent = "";
+      hotkeyHint.classList.remove("error");
+      hotkeyHint.classList.add("hidden");
+    }
   } catch {
-    hotkeyHint.textContent = hotkeyHintText();
+    if (!recordingHotkey) hotkeyHint.classList.add("hidden");
   }
 }
 
@@ -1159,6 +1186,8 @@ function stopRecording() {
   recordingHotkey = false;
   btnHotkey.classList.remove("recording");
   btnHotkey.innerHTML = hotkeyLabel(cfg().hotkey ?? "");
+  hotkeyHint.classList.remove("error");
+  hotkeyHint.classList.add("hidden");
 }
 
 function saveHotkey(hk: string) {
@@ -1192,7 +1221,7 @@ btnHotkey.addEventListener("click", () => {
   btnHotkey.classList.add("recording");
   btnHotkey.textContent = t("按下組合鍵…");
   hotkeyHint.textContent = hotkeyHintText();
-  hotkeyHint.classList.remove("error");
+  hotkeyHint.classList.remove("error", "hidden");
 });
 btnHotkey.addEventListener("blur", () => recordingHotkey && stopRecording());
 btnHotkeyClear.addEventListener("click", () => saveHotkey(""));
@@ -1223,14 +1252,20 @@ window.addEventListener(
 
 // ---- account settings: expand / edit / drag-sort
 accSettingsEl.addEventListener("click", (e) => {
-  const t = e.target as HTMLElement;
-  if (t.closest(".grip")) return;
-  const clear = t.closest<HTMLElement>("[data-act='av-clear']");
+  const target = e.target as HTMLElement;
+  if (target.closest(".grip")) return;
+  const vis = target.closest<HTMLElement>("[data-act='vis']");
+  if (vis) {
+    const id = vis.closest<HTMLElement>(".acc-set")!.dataset.id!;
+    setPref(id, { hidden: !prefOf(id).hidden });
+    return;
+  }
+  const clear = target.closest<HTMLElement>("[data-act='av-clear']");
   if (clear) {
     setPref(clear.closest<HTMLElement>(".acc-set")!.dataset.id!, { avatar: null });
     return;
   }
-  const head = t.closest<HTMLElement>("[data-act='toggle']");
+  const head = target.closest<HTMLElement>("[data-act='toggle']");
   if (!head) return;
   const id = head.closest<HTMLElement>(".acc-set")!.dataset.id!;
   expandedAcc = expandedAcc === id ? null : id;
@@ -1249,8 +1284,6 @@ accSettingsEl.addEventListener("change", (e) => {
     return;
   }
   if (f === "alias") setPref(id, { alias: el.value.trim() || null });
-  else if (f === "visible") setPref(id, { hidden: !(el as HTMLInputElement).checked });
-  else if (f === "score") setPref(id, { excludeScore: !(el as HTMLInputElement).checked });
   else if (f === "th") setPref(id, { notifyThreshold: el.value ? Number(el.value) : null });
 });
 
@@ -1312,7 +1345,6 @@ window.addEventListener("pointercancel", () => {
 });
 
 inpRefreshSec.addEventListener("input", () => commitSettings({ refreshIntervalSecs: Number(inpRefreshSec.value) }));
-inpAgExtra.addEventListener("change", () => commitSettings({ showAntigravityExtra: inpAgExtra.checked }, true));
 inpAutostart.addEventListener("change", () => commitSettings({ launchAtStartup: inpAutostart.checked }, true));
 
 $("btn-test-notify").addEventListener("click", () => {

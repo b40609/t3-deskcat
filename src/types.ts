@@ -78,9 +78,9 @@ export interface AppSettings {
   scoreMode: ScoreMode;
   refreshIntervalSecs: number;
   notifyEnabled: boolean;
-  notifyLowThreshold: number;
   showAntigravityExtra: boolean;
   launchAtStartup: boolean;
+  showPet?: boolean;
   petX: number | null;
   petY: number | null;
   petTheme?: PetTheme;
@@ -115,7 +115,6 @@ export interface AppSettings {
   panelPosition?: PanelPosition;
   hotkey?: string;
   compactAccounts?: boolean;
-  showHistory?: boolean;
   // data
   claudeMinIntervalSecs?: number;
   // forecast / stats / tray

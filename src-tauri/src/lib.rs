@@ -174,6 +174,7 @@ async fn remote_invoke(
                 .map_err(|e| (400u16, e.to_string()))?;
             let cur = state.0.lock().map(|g| g.settings.clone()).map_err(|_| (500u16, "state".to_string()))?;
             next.launch_at_startup = cur.launch_at_startup;
+            next.show_pet = cur.show_pet;
             next.hotkey = cur.hotkey.clone();
             next.panel_position = cur.panel_position.clone();
             next.pet_x = cur.pet_x;
@@ -306,6 +307,7 @@ fn update_settings(
     let new_hotkey;
     let lang_changed;
     let new_pet_size;
+    let new_show_pet;
     let updated_snapshot;
     {
         let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
@@ -336,6 +338,7 @@ fn update_settings(
         usage_stats::set_price_overrides(&clean.model_prices);
         lang_changed = i18n::set_lang(&clean.language);
         new_pet_size = clean.pet_size;
+        new_show_pet = clean.show_pet;
         new_startup = clean.launch_at_startup;
         new_hotkey = clean.hotkey.clone();
 
@@ -360,6 +363,15 @@ fn update_settings(
             new_pet_size as f64,
             new_pet_size as f64,
         )));
+        if new_show_pet {
+            let _ = pet.unminimize();
+            let _ = pet.show();
+        } else {
+            let _ = pet.hide();
+            if let Some(b) = app.get_webview_window("bubble") {
+                let _ = b.hide();
+            }
+        }
     }
 
     if old_startup != new_startup {
@@ -478,29 +490,26 @@ fn save_pet_position(app: AppHandle, state: tauri::State<SharedState>) {
     let Ok(mut pos) = pet.outer_position() else {
         return;
     };
-    let snap = state.0.lock().map(|g| g.settings.pet_snap_edge).unwrap_or(false);
-    if snap {
-        if let (Ok(Some(mon)), Ok(size)) = (pet.current_monitor(), pet.outer_size()) {
-            let wa = mon.work_area();
-            let th = (28.0 * mon.scale_factor()).round() as i32;
-            let (l, t) = (wa.position.x, wa.position.y);
-            let (r, b) = (l + wa.size.width as i32, t + wa.size.height as i32);
-            let (w, h) = (size.width as i32, size.height as i32);
-            let (mut x, mut y) = (pos.x, pos.y);
-            if (x - l).abs() < th {
-                x = l;
-            } else if (r - (x + w)).abs() < th {
-                x = r - w;
-            }
-            if (y - t).abs() < th {
-                y = t;
-            } else if (b - (y + h)).abs() < th {
-                y = b - h;
-            }
-            if (x, y) != (pos.x, pos.y) {
-                let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
-                pos = PhysicalPosition::new(x, y);
-            }
+    if let (Ok(Some(mon)), Ok(size)) = (pet.current_monitor(), pet.outer_size()) {
+        let wa = mon.work_area();
+        let th = (28.0 * mon.scale_factor()).round() as i32;
+        let (l, t) = (wa.position.x, wa.position.y);
+        let (r, b) = (l + wa.size.width as i32, t + wa.size.height as i32);
+        let (w, h) = (size.width as i32, size.height as i32);
+        let (mut x, mut y) = (pos.x, pos.y);
+        if (x - l).abs() < th {
+            x = l;
+        } else if (r - (x + w)).abs() < th {
+            x = r - w;
+        }
+        if (y - t).abs() < th {
+            y = t;
+        } else if (b - (y + h)).abs() < th {
+            y = b - h;
+        }
+        if (x, y) != (pos.x, pos.y) {
+            let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+            pos = PhysicalPosition::new(x, y);
         }
     }
     if let Ok(mut guard) = state.0.lock() {
@@ -617,6 +626,13 @@ fn get_activity() -> activity::Activity {
 /// Hover bubble over (or under) the pet. The pet window composes the lines.
 #[tauri::command]
 fn show_bubble(app: AppHandle, lines: Vec<String>) {
+    let show_pet = app
+        .try_state::<SharedState>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.settings.show_pet))
+        .unwrap_or(true);
+    if !show_pet {
+        return;
+    }
     let (Some(pet), Some(bubble)) = (app.get_webview_window("pet"), app.get_webview_window("bubble")) else {
         return;
     };
@@ -1358,13 +1374,16 @@ fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
 
 /// Place the panel according to the "panel position" setting.
 fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
-    let where_ = app
+    let (mut where_, show_pet) = app
         .try_state::<SharedState>()
-        .and_then(|s| s.0.lock().ok().map(|g| g.settings.panel_position.clone()))
-        .unwrap_or_else(|| "pet".to_string());
+        .and_then(|s| s.0.lock().ok().map(|g| (g.settings.panel_position.clone(), g.settings.show_pet)))
+        .unwrap_or_else(|| ("pet".to_string(), true));
     if where_ == "pet" {
-        position_panel_near_pet(app, panel);
-        return;
+        if show_pet {
+            position_panel_near_pet(app, panel);
+            return;
+        }
+        where_ = "bottom_right".to_string();
     }
     let monitor = app
         .get_webview_window("pet")
@@ -1484,9 +1503,15 @@ pub fn run() {
                 logging::relaunch_guard("second launch hit windowless instance");
                 force_exit(app, 0, "windowless instance on second launch");
             }
-            if let Some(pet) = pet {
-                let _ = pet.unminimize();
-                let _ = pet.show();
+            let show_pet = app
+                .try_state::<SharedState>()
+                .and_then(|s| s.0.lock().ok().map(|g| g.settings.show_pet))
+                .unwrap_or(true);
+            if show_pet {
+                if let Some(pet) = pet {
+                    let _ = pet.unminimize();
+                    let _ = pet.show();
+                }
             }
             if let Some(panel) = panel {
                 position_panel(app, &panel);
@@ -1544,6 +1569,9 @@ pub fn run() {
             let handle = app.handle().clone();
             position_pet_initial(&handle, &loaded_settings);
             if let Some(pet) = app.get_webview_window("pet") {
+                if loaded_settings.show_pet {
+                    let _ = pet.show();
+                }
                 pet.on_window_event(|event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();

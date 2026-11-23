@@ -40,7 +40,6 @@ pub fn sanitize(s: &mut AppSettings) {
     s.pet_size = s.pet_size.clamp(48, 128);
     s.sleeping_threshold = s.sleeping_threshold.clamp(0, 90);
     s.working_threshold = s.working_threshold.clamp(s.sleeping_threshold + 1, 99);
-    s.notify_low_threshold = s.notify_low_threshold.clamp(1, 90);
     s.refresh_interval_secs = s.refresh_interval_secs.clamp(30, 3600);
     s.ui_scale = s.ui_scale.clamp(80, 125);
     if !matches!(s.appearance.as_str(), "system" | "light" | "dark") {
@@ -122,12 +121,13 @@ mod tests {
     #[test]
     fn old_settings_file_gets_new_defaults() {
         let raw = r#"{"petSize":64,"workingThreshold":70,"sleepingThreshold":20,"scoreMode":"max_avg",
-            "refreshIntervalSecs":120,"notifyEnabled":true,"notifyLowThreshold":20,
+            "refreshIntervalSecs":120,"notifyEnabled":true,"notifyLowThreshold":20,"showHistory":true,
             "showAntigravityExtra":false,"launchAtStartup":false,"petX":null,"petY":null}"#;
         let s: AppSettings = serde_json::from_str(raw).unwrap();
         assert_eq!(s.hotkey, "Ctrl+Alt+Q");
         assert_eq!(s.claude_min_interval_secs, 90);
-        assert!(s.notify_on_reset && s.show_history && s.pet_snap_edge);
+        assert!(s.notify_on_reset && s.show_pet && s.pet_snap_edge);
+        assert!(!s.show_usage_stats);
         assert!(s.account_prefs.is_empty());
     }
 
@@ -147,7 +147,6 @@ mod tests {
             pet_size: 10,
             sleeping_threshold: 95,
             working_threshold: 10,
-            notify_low_threshold: 0,
             refresh_interval_secs: 5,
             ui_scale: 200,
             appearance: "neon".into(),
@@ -181,7 +180,6 @@ mod tests {
         assert_eq!(s.pet_size, 48);
         assert_eq!(s.sleeping_threshold, 90);
         assert_eq!(s.working_threshold, 91);
-        assert_eq!(s.notify_low_threshold, 1);
         assert_eq!(s.refresh_interval_secs, 30);
         assert_eq!(s.ui_scale, 125);
         assert_eq!(s.appearance, "system");

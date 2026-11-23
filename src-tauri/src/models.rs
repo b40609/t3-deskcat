@@ -132,9 +132,10 @@ pub struct AppSettings {
     pub score_mode: ScoreMode,
     pub refresh_interval_secs: u64,
     pub notify_enabled: bool,
-    pub notify_low_threshold: i32,
     pub show_antigravity_extra: bool,
     pub launch_at_startup: bool,
+    #[serde(default = "default_true")]
+    pub show_pet: bool,
     pub pet_x: Option<i32>,
     pub pet_y: Option<i32>,
     #[serde(default)]
@@ -218,9 +219,6 @@ pub struct AppSettings {
     /// One (tightest) limit per account.
     #[serde(default)]
     pub compact_accounts: bool,
-    /// 24h usage sparkline per account.
-    #[serde(default = "default_true")]
-    pub show_history: bool,
 
     // ---- Data
     /// Minimum seconds between Claude usage calls per account.
@@ -232,7 +230,7 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub show_forecast: bool,
     /// Today's tokens / equivalent API cost from the local CLI logs.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub show_usage_stats: bool,
     /// System tray icon: "number" | "ring" | "icon"
     #[serde(default = "default_tray_style")]
@@ -316,9 +314,9 @@ impl Default for AppSettings {
             score_mode: ScoreMode::MaxAvg,
             refresh_interval_secs: 120,
             notify_enabled: true,
-            notify_low_threshold: 20,
             show_antigravity_extra: false,
             launch_at_startup: false,
+            show_pet: true,
             pet_x: None,
             pet_y: None,
             pet_theme: PetTheme::HudGauge,
@@ -348,10 +346,9 @@ impl Default for AppSettings {
             panel_position: default_panel_position(),
             hotkey: default_hotkey(),
             compact_accounts: false,
-            show_history: true,
             claude_min_interval_secs: default_claude_interval(),
             show_forecast: true,
-            show_usage_stats: true,
+            show_usage_stats: false,
             tray_style: default_tray_style(),
             mobile_enabled: false,
             mobile_port: default_mobile_port(),

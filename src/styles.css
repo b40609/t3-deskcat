@@ -1338,15 +1338,19 @@ svg {
 .tabs {
   flex: 0 0 auto;
   display: flex;
-  gap: 4px;
-  padding: 8px 12px 0;
+  gap: 2px;
+  padding: 6px 8px 0;
   border-bottom: 1px solid var(--sep);
 }
 
 .tab {
   position: relative;
-  padding: 6px 8px 10px;
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: center;
   color: var(--label-2);
   border-radius: 6px 6px 0 0;
   transition: color 0.12s var(--ease);
@@ -1364,8 +1368,8 @@ svg {
 .tab.active::after {
   content: "";
   position: absolute;
-  left: 8px;
-  right: 8px;
+  left: 6px;
+  right: 6px;
   bottom: -1px;
   height: 3px;
   border-radius: 2px;
@@ -1456,6 +1460,14 @@ svg {
 .icon-btn svg {
   width: 14px;
   height: 14px;
+}
+
+.acc-vis-btn {
+  color: var(--label-2);
+}
+
+.acc-vis-btn.is-off {
+  color: var(--label-3);
 }
 
 .dir-path,
