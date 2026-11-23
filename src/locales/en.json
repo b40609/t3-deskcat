@@ -1,5 +1,9 @@
 {
   "AI 額度": "AI Quota",
+  "額度": "Quota",
+  "用量": "Usage",
+  "{n} 個帳號異常": "{n} accounts need attention",
+  "{n} 個未定價": "{n} unpriced",
   "暫時抓不到最新額度，下面是最後一次成功取得的數字。": "Unable to fetch latest quota right now. Showing numbers from the last successful update.",
   "推薦使用": "Recommended",
   "所有帳號": "All accounts",

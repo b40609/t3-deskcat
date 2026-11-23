@@ -13,6 +13,8 @@
   --label-3: rgba(0, 0, 0, 0.42);
   --ink: rgba(0, 0, 0, 0.62);
   --track: rgba(0, 0, 0, 0.08);
+  --track-strong: rgba(0, 0, 0, 0.16);
+  --mono: "Cascadia Mono", "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
   --accent: #005fb8;
   --on-accent: #ffffff;
   --warn: #9d5d00;
@@ -42,6 +44,7 @@
     --label-3: rgba(255, 255, 255, 0.46);
     --ink: rgba(255, 255, 255, 0.72);
     --track: rgba(255, 255, 255, 0.1);
+    --track-strong: rgba(255, 255, 255, 0.2);
     --accent: #60cdff;
     --on-accent: #000000;
     --warn: #fce100;
@@ -70,6 +73,7 @@
   --label-3: rgba(255, 255, 255, 0.46);
   --ink: rgba(255, 255, 255, 0.72);
   --track: rgba(255, 255, 255, 0.1);
+  --track-strong: rgba(255, 255, 255, 0.2);
   --accent: #60cdff;
   --on-accent: #000000;
   --warn: #fce100;

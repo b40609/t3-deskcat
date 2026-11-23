@@ -8,7 +8,7 @@
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute">
-      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5" /><path d="M20 4v4.5h-4.5" /></symbol>
       <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z" /><path d="M12 13v8" /></symbol>
       <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8" /></symbol>
@@ -35,21 +35,22 @@
       <div class="views">
         <!-- ============ Dashboard ============ -->
         <section id="view-dashboard" class="view">
-          <header class="nav-large" data-tauri-drag-region>
-            <div class="nav-heading">
-              <span class="nav-title" data-i18n>AI 額度</span>
-              <span class="nav-meta" id="last-updated"></span>
+          <header class="nav-top" data-tauri-drag-region>
+            <div class="segmented nav-seg" id="dash-tabs" role="tablist" style="--n: 2; --i: 0">
+              <button class="seg-btn active" role="tab" aria-selected="true" data-dash="quota" data-i18n>額度</button>
+              <button class="seg-btn" role="tab" aria-selected="false" data-dash="analytics" data-i18n>用量</button>
             </div>
+            <span class="nav-drag-spacer" data-tauri-drag-region></span>
             <div class="nav-actions">
-              <button id="btn-analytics" class="circle-btn" title="用量分析" data-i18n-attr="title"><svg><use href="#i-chart" /></svg></button>
               <button id="btn-refresh" class="circle-btn" title="立即刷新" data-i18n-attr="title"><svg><use href="#i-refresh" /></svg></button>
               <button id="btn-pin" class="circle-btn desktop-only" title="釘選面板" data-i18n-attr="title"><svg><use href="#i-pin" /></svg></button>
               <button id="btn-settings" class="circle-btn" title="設定" data-i18n-attr="title"><svg><use href="#i-gear" /></svg></button>
             </div>
           </header>
 
-          <div class="scroll">
+          <div class="scroll" id="dash-quota">
             <div id="offline-note" class="notice hidden" data-i18n>暫時抓不到最新額度，下面是最後一次成功取得的數字。</div>
+            <div id="accounts-alert" class="notice notice-bad hidden"></div>
 
             <section id="sec-picks" class="group">
               <div class="group-header" data-i18n>推薦使用</div>
@@ -57,12 +58,62 @@
             </section>
 
             <section id="sec-accounts" class="group">
-              <div class="group-header">
-                <span data-i18n>所有帳號</span><span id="accounts-count" class="group-header-aside"></span>
-              </div>
               <div class="list" id="accounts-section"></div>
             </section>
+          </div>
 
+          <div class="scroll an-scroll hidden" id="dash-analytics">
+            <div class="an-controls">
+              <div class="an-ctrl-row">
+                <div class="segmented an-seg" id="an-seg-metric" role="tablist" style="--n: 2; --i: 0">
+                  <button class="seg-btn active" data-v="cost" data-i18n>費用</button>
+                  <button class="seg-btn" data-v="tokens" data-i18n>Token</button>
+                </div>
+                <select id="an-sel-account" class="select an-select" aria-label="帳號" data-i18n-attr="aria-label"></select>
+              </div>
+              <div class="segmented an-seg an-seg-period" id="an-seg-period" role="tablist" style="--n: 4; --i: 1">
+                <button class="seg-btn" data-v="day" data-i18n>24 小時</button>
+                <button class="seg-btn active" data-v="week" data-i18n>7 天</button>
+                <button class="seg-btn" data-v="month" data-i18n>30 天</button>
+                <button class="seg-btn" data-v="quarter" data-i18n>90 天</button>
+              </div>
+            </div>
+
+            <section class="an-kpis" id="an-kpis"></section>
+
+            <section class="an-card an-chart-card">
+              <div class="an-card-head">
+                <h2 id="an-chart-title"></h2>
+                <span id="an-chart-note" class="an-muted"></span>
+              </div>
+              <div class="an-chart" id="an-chart"></div>
+              <div class="an-tip" id="an-tip" hidden></div>
+              <ol class="an-legend" id="an-legend"></ol>
+            </section>
+
+            <section class="an-card">
+              <div class="an-card-head"><h2 data-i18n>依類型</h2></div>
+              <div class="an-stack" id="an-type-stack"></div>
+              <ul class="an-rank" id="an-by-type"></ul>
+            </section>
+
+            <section class="an-card">
+              <div class="an-card-head"><h2 data-i18n>依模型</h2></div>
+              <ul class="an-rank" id="an-by-model"></ul>
+            </section>
+
+            <details class="an-card an-prices-details" id="an-prices-wrap">
+              <summary class="an-prices-summary">
+                <span data-i18n>模型價格</span>
+                <span class="an-prices-right">
+                  <span class="an-muted" id="an-prices-meta"></span>
+                  <svg class="chev"><use href="#i-chev" /></svg>
+                </span>
+              </summary>
+              <div class="an-prices" id="an-prices"></div>
+            </details>
+
+            <p class="an-foot" data-i18n>費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code 與 Codex 紀錄，保留 90 天</p>
           </div>
         </section>
 

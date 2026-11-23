@@ -1,6 +1,7 @@
 import { mainWindows } from "./focus";
 import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
 import { call as invoke, isRemote, subscribe } from "./bridge";
+import { createAnalyticsView } from "./analyticsView";
 import { getVersion } from "@tauri-apps/api/app";
 import type {
   AccountPref,
@@ -19,7 +20,10 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const shell = $("app");
 const picksSection = $("picks-section");
 const accountsSection = $("accounts-section");
-const lastUpdatedEl = $("last-updated");
+const accountsAlert = $("accounts-alert");
+const dashTabs = $("dash-tabs");
+const dashQuota = $("dash-quota");
+const dashAnalytics = $("dash-analytics");
 
 const btnRefresh = $("btn-refresh");
 const btnPin = $("btn-pin");
@@ -79,6 +83,8 @@ const valClaudeInterval = $("val-claude-interval");
 let currentSnapshot: DashboardSnapshot | null = null;
 let currentSettings: AppSettings | null = null;
 let showingSettings = false;
+let activeDashTab: "quota" | "analytics" = "quota";
+let refreshing = false;
 let pinned = false;
 let expandedAcc: string | null = null;
 let accSettingsSig = "";
@@ -433,10 +439,9 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
 
 function renderAccounts(snap: DashboardSnapshot) {
   const visible = visibleAccounts(snap.accounts);
-  const okCount = visible.filter((a) => a.status === "ok" || a.status === "stale").length;
-  const hiddenCount = snap.accounts.length - visible.length;
-  $("accounts-count").textContent =
-    t("{ok}/{n} 正常", { ok: okCount, n: visible.length }) + (hiddenCount ? ` · ${t("隱藏 {n}", { n: hiddenCount })}` : "");
+  const badCount = visible.filter((a) => a.status !== "ok" && a.status !== "stale").length;
+  accountsAlert.classList.toggle("hidden", badCount === 0);
+  if (badCount > 0) accountsAlert.textContent = t("{n} 個帳號異常", { n: badCount });
 
   accountsSection.innerHTML =
     snap.accounts.length === 0
@@ -480,8 +485,8 @@ ${formatResetAt(pick.resetAt)}` : "";
     hour: "2-digit",
     minute: "2-digit",
   });
-  lastUpdatedEl.textContent = t("{time} 更新", { time: timeStr });
-  lastUpdatedEl.title = t("每 {n} 秒自動刷新", { n: snap.settings.refreshIntervalSecs });
+  btnRefresh.title = `${t("立即刷新")} · ${t("{time} 更新", { time: timeStr })} · ${t("每 {n} 秒自動刷新", { n: snap.settings.refreshIntervalSecs })}`;
+  analyticsView.syncContext(snap, snap.settings);
 }
 
 // ------------------------------------------------------------------ settings form
@@ -505,7 +510,10 @@ function slotHtml(src: string | null | undefined, fallback: string, alt: string)
 const selLanguage = $<HTMLSelectElement>("sel-language");
 
 function syncSettingsForm(s: AppSettings) {
-  if (setLang(s.language)) applyI18n();
+  if (setLang(s.language)) {
+    applyI18n();
+    analyticsView.retranslate();
+  }
   selLanguage.innerHTML = LANGUAGES.map(
     (l) => `<option value="${l.value}">${l.value === "system" ? t("跟隨系統") : l.label}</option>`,
   ).join("");
@@ -716,12 +724,69 @@ btnPin.addEventListener("click", async () => {
   await invoke("set_panel_pinned", { pinned });
 });
 
+const analyticsView = createAnalyticsView({
+  onSettingsSaved: (snap) => renderDashboard(snap),
+});
+
+function setDashTab(tab: "quota" | "analytics") {
+  activeDashTab = tab;
+  const btns = Array.from(dashTabs.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+  const idx = Math.max(0, btns.findIndex((b) => b.dataset.dash === tab));
+  btns.forEach((b, i) => {
+    const on = i === idx;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  dashTabs.style.setProperty("--n", String(btns.length));
+  dashTabs.style.setProperty("--i", String(idx));
+  dashQuota.classList.toggle("hidden", tab !== "quota");
+  dashAnalytics.classList.toggle("hidden", tab !== "analytics");
+  if (tab === "analytics") {
+    analyticsView.syncContext(currentSnapshot, currentSettings);
+    analyticsView.activate();
+  } else {
+    analyticsView.deactivate();
+  }
+}
+
+dashTabs.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) =>
+  btn.addEventListener("click", () => setDashTab((btn.dataset.dash as "quota" | "analytics") ?? "quota")),
+);
+
+let stopSpinTimer: number | undefined;
+function stopSpinSmoothly() {
+  const svg = btnRefresh.querySelector("svg");
+  if (!svg || !btnRefresh.classList.contains("spinning")) {
+    btnRefresh.classList.remove("spinning");
+    return;
+  }
+  const finish = () => {
+    if (stopSpinTimer) {
+      window.clearTimeout(stopSpinTimer);
+      stopSpinTimer = undefined;
+    }
+    svg.removeEventListener("animationiteration", finish);
+    if (!refreshing) btnRefresh.classList.remove("spinning");
+  };
+  svg.addEventListener("animationiteration", finish, { once: true });
+  stopSpinTimer = window.setTimeout(finish, 900);
+}
+
 btnRefresh.addEventListener("click", async () => {
+  if (refreshing) return;
+  refreshing = true;
+  if (stopSpinTimer) {
+    window.clearTimeout(stopSpinTimer);
+    stopSpinTimer = undefined;
+  }
   btnRefresh.classList.add("spinning");
   try {
-    renderDashboard(await invoke<DashboardSnapshot>("refresh_now"));
+    const snap = await invoke<DashboardSnapshot>("refresh_now");
+    renderDashboard(snap);
+    if (activeDashTab === "analytics") await analyticsView.refresh();
   } finally {
-    btnRefresh.classList.remove("spinning");
+    refreshing = false;
+    stopSpinSmoothly();
   }
 });
 
@@ -1079,11 +1144,6 @@ $("btn-acc-login").addEventListener("click", async () => {
   }
 });
 
-$("btn-analytics").addEventListener("click", () => {
-  if (isRemote) window.location.href = "/analytics.html";
-  else invoke("open_analytics").catch(() => {});
-});
-
 // ---- hotkey recorder
 async function showHotkeyStatus() {
   try {
@@ -1264,6 +1324,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (showingSub) closeSub();
   else if (showingSettings) setSettingsVisible(false);
+  else if (activeDashTab === "analytics") setDashTab("quota");
   else if (!isRemote) invoke("hide_panel").catch(() => {});
 });
 
@@ -1277,6 +1338,10 @@ async function init() {
   document.body.classList.toggle("remote", isRemote);
   document.documentElement.classList.toggle("remote", isRemote);
   await subscribe<DashboardSnapshot>("snapshot-updated", (snap) => renderDashboard(snap), { cmd: "get_snapshot", everyMs: 30000 });
+  await subscribe<string>("open-dash-tab", (tab) => {
+    setSettingsVisible(false);
+    setDashTab(tab === "analytics" ? "analytics" : "quota");
+  });
 
   const existing = await invoke<DashboardSnapshot | null>("get_snapshot");
   if (existing) {
@@ -1284,6 +1349,7 @@ async function init() {
   } else {
     currentSettings = await invoke<AppSettings>("get_settings");
     syncSettingsForm(currentSettings);
+    analyticsView.syncContext(null, currentSettings);
   }
 }
 

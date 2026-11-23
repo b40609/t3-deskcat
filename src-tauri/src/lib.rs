@@ -44,7 +44,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 static SETUP_DONE: AtomicBool = AtomicBool::new(false);
 static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
-static ANALYTICS_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 struct BoolResetGuard(&'static AtomicBool);
 impl Drop for BoolResetGuard {
@@ -243,60 +242,31 @@ fn add_account_login(provider: String, name: String) -> Result<String, String> {
     Ok(dir.map(|d| d.to_string_lossy().to_string()).unwrap_or_default())
 }
 
-/// Opens (or brings back) the usage analytics window.
-/// Must run off the main UI thread on Windows so `WebviewWindowBuilder::build`
-/// does not re-enter WebView2's COM controller creation and deadlock (wry#583).
-fn show_analytics(app: &AppHandle) -> tauri::Result<()> {
-    let _open_guard = ANALYTICS_OPEN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(w) = app.get_webview_window("analytics") {
-        let _ = w.unminimize();
-        w.show()?;
-        return w.set_focus();
-    }
-    let appearance = app
-        .try_state::<SharedState>()
-        .and_then(|s| s.0.lock().ok().map(|g| g.settings.appearance.clone()))
-        .unwrap_or_else(|| "system".to_string());
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        app,
-        "analytics",
-        tauri::WebviewUrl::App("analytics.html".into()),
-    )
-    .title(tr!("用量分析"))
-    .inner_size(1080.0, 760.0)
-    .min_inner_size(380.0, 480.0)
-    .resizable(true)
-    .center();
-    match appearance.as_str() {
-        "dark" => {
-            builder = builder
-                .theme(Some(tauri::Theme::Dark))
-                .background_color(tauri::window::Color(32, 32, 32, 255));
+/// Shows the main panel and switches it to the requested dashboard tab (`"quota"` | `"analytics"`).
+fn show_panel_tab(app: &AppHandle, tab: &str) -> tauri::Result<()> {
+    if let Some(state) = app.try_state::<SharedState>() {
+        if let Ok(mut guard) = state.0.lock() {
+            guard.last_toggle = Instant::now();
         }
-        "light" => {
-            builder = builder
-                .theme(Some(tauri::Theme::Light))
-                .background_color(tauri::window::Color(243, 243, 243, 255));
-        }
-        _ => {}
     }
-    let w = builder.build()?;
-    w.set_focus()
+    if let Some(panel) = app.get_webview_window("panel") {
+        if !panel.is_visible().unwrap_or(false) {
+            position_panel(app, &panel);
+        }
+        let _ = panel.unminimize();
+        panel.show()?;
+        panel.set_focus()?;
+        let _ = panel.emit("open-dash-tab", tab);
+    }
+    Ok(())
 }
 
 #[tauri::command]
-async fn open_analytics(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || show_analytics(&app))
-        .await
-        .map_err(|e| {
-            let msg = format!("analytics task failed: {e}");
-            logging::log(&msg);
-            msg
-        })?
-        .map_err(|e| {
-            logging::log(&format!("open analytics failed: {e}"));
-            e.to_string()
-        })
+fn open_analytics(app: AppHandle) -> Result<(), String> {
+    show_panel_tab(&app, "analytics").map_err(|e| {
+        logging::log(&format!("open analytics tab failed: {e}"));
+        e.to_string()
+    })
 }
 
 /// Token and cost history for the analytics view.
@@ -1650,12 +1620,9 @@ pub fn run() {
                             let _ = toggle_panel_window(app);
                         }
                         "analytics" => {
-                            let h = app.clone();
-                            tauri::async_runtime::spawn_blocking(move || {
-                                if let Err(e) = show_analytics(&h) {
-                                    logging::log(&format!("open analytics from tray failed: {e}"));
-                                }
-                            });
+                            if let Err(e) = show_panel_tab(app, "analytics") {
+                                logging::log(&format!("open analytics tab from tray failed: {e}"));
+                            }
                         }
                         "refresh" => {
                             let h = app.clone();
@@ -1971,20 +1938,13 @@ mod tests {
     }
 
     #[test]
-    fn analytics_window_creation_never_blocks_main_thread() {
-        // Regression guard for Windows WebView2 COM re-entrancy deadlock (wry#583):
-        // creating the analytics WebviewWindow synchronously inside a command or
-        // tray menu handler freezes the entire UI thread on Windows.
+    fn analytics_opens_in_panel_without_spawning_window() {
+        // Usage analytics is embedded inside the main panel so opening it never
+        // constructs a second WebView2 window (which also avoids wry#583 deadlocks).
         let src = include_str!("lib.rs");
         assert!(
-            src.contains("#[tauri::command]\nasync fn open_analytics(")
-                || src.contains("#[tauri::command]\r\nasync fn open_analytics("),
-            "open_analytics must be an async command"
-        );
-        assert!(
-            !src.contains("\"analytics\" => {\n                            let _ = show_analytics(")
-                && !src.contains("\"analytics\" => {\r\n                            let _ = show_analytics("),
-            "tray analytics menu must spawn off main thread instead of calling show_analytics directly"
+            !src.contains(concat!("WebviewWindowBuilder", "::new(")),
+            "analytics must stay embedded in the main panel instead of spawning a new window"
         );
         // Verify BoolResetGuard restores AtomicBool even on panic unwind.
         static TEST_FLAG: AtomicBool = AtomicBool::new(false);
