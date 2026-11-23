@@ -26,6 +26,7 @@ use crate::providers::{
 use chrono::{Local, Timelike, Utc};
 use reqwest::Client;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
@@ -40,6 +41,8 @@ use history::History;
 use notify_state::NotifyState;
 use quota_cache::QuotaCache;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+static SETUP_DONE: AtomicBool = AtomicBool::new(false);
 
 struct InnerState {
     settings: AppSettings,
@@ -613,6 +616,28 @@ fn hide_bubble(app: AppHandle) {
     if let Some(b) = app.get_webview_window("bubble") {
         let _ = b.hide();
     }
+}
+
+/// End the process cleanly and unconditionally. On Windows, Tauri v2's
+/// default exit sequence can leave this tray + WebView2 + tokio app
+/// lingering without windows or tray while still holding the
+/// single-instance lock, blocking every future launch.
+fn force_exit(app: &AppHandle, code: i32, reason: &str) -> ! {
+    logging::log(&format!("exiting (code={code}): {reason}"));
+    // Safety net in case tray removal or cleanup_before_exit() blocks.
+    // Shorter than the 2 s delay in --relaunch so a relaunched copy sees
+    // the single-instance lock released even if cleanup hangs.
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        logging::log(&format!("exit watchdog fired (code={code})"));
+        std::process::exit(code);
+    });
+    if let Some(tray) = app.remove_tray_by_id("main-tray") {
+        drop(tray);
+    }
+    app.cleanup_before_exit();
+    logging::log(&format!("exit complete (code={code})"));
+    std::process::exit(code);
 }
 
 #[tauri::command]
@@ -1414,9 +1439,25 @@ pub fn run() {
         // Must be registered first: a second launch (autostart + double-click)
         // hands over to the running copy instead of fighting over the tray and port.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            logging::log(&format!("second launch ignored, args={args:?}"));
-            if let Some(panel) = app.get_webview_window("panel") {
+            let ready = SETUP_DONE.load(Ordering::Acquire);
+            let pet = app.get_webview_window("pet");
+            let panel = app.get_webview_window("panel");
+            logging::log(&format!(
+                "second launch received, args={args:?}, ready={ready}, has_pet={}, has_panel={}",
+                pet.is_some(),
+                panel.is_some()
+            ));
+            if ready && pet.is_none() && panel.is_none() {
+                logging::relaunch_guard("second launch hit windowless instance");
+                force_exit(app, 0, "windowless instance on second launch");
+            }
+            if let Some(pet) = pet {
+                let _ = pet.unminimize();
+                let _ = pet.show();
+            }
+            if let Some(panel) = panel {
                 position_panel(app, &panel);
+                let _ = panel.unminimize();
                 let _ = panel.show();
                 let _ = panel.set_focus();
             }
@@ -1469,8 +1510,24 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             position_pet_initial(&handle, &loaded_settings);
+            if let Some(pet) = app.get_webview_window("pet") {
+                pet.on_window_event(|event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                    }
+                });
+            }
             if let Some(b) = app.get_webview_window("bubble") {
                 let _ = b.set_ignore_cursor_events(true);
+                let bubble_handle = handle.clone();
+                b.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Some(w) = bubble_handle.get_webview_window("bubble") {
+                            let _ = w.hide();
+                        }
+                    }
+                });
             }
             activity::spawn(handle.clone());
             let hk_err = apply_hotkey(&handle, &loaded_settings.hotkey);
@@ -1483,12 +1540,12 @@ pub fn run() {
                 let _ = panel.set_focus();
             }
 
-            // Auto-hide panel when it loses focus (unless pinned)
+            // Auto-hide panel when it loses focus (unless pinned) and guard against Alt+F4
             if let Some(panel) = app.get_webview_window("panel") {
                 let panel_handle = handle.clone();
                 let panel_state = shared.clone();
-                panel.on_window_event(move |event| {
-                    if let WindowEvent::Focused(false) = event {
+                panel.on_window_event(move |event| match event {
+                    WindowEvent::Focused(false) => {
                         let pinned = panel_state
                             .0
                             .lock()
@@ -1505,6 +1562,13 @@ pub fn run() {
                             }
                         }
                     }
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        if let Some(w) = panel_handle.get_webview_window("panel") {
+                            let _ = w.hide();
+                        }
+                    }
+                    _ => {}
                 });
             }
 
@@ -1583,6 +1647,7 @@ pub fn run() {
                 }
             });
 
+            SETUP_DONE.store(true, Ordering::Release);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1590,17 +1655,17 @@ pub fn run() {
             logging::log(&format!("build failed: {err}"));
             panic!("error while building t3-deskcat: {err}");
         })
-        .run(|_app, event| match event {
+        .run(|app, event| match event {
             tauri::RunEvent::ExitRequested { code, .. } => {
                 logging::log(&format!("exit requested code={code:?}"));
-                // Quit (tray menu / panel) passes an explicit code. `None` means the
-                // last window went away on its own, which this tray app never wants.
-                // Left alone the process lingers with no window and no tray (tested),
-                // so start a fresh copy and end this one for real.
-                if code.is_none() {
+                if let Some(exit_code) = code {
+                    force_exit(app, exit_code, "explicit quit");
+                } else {
+                    // `None` means the last window went away on its own, which this tray app never wants.
+                    // Left alone the process lingers with no window and no tray (tested),
+                    // so start a fresh copy and end this one for real.
                     logging::relaunch_guard("all windows closed unexpectedly");
-                    logging::log("exiting after unexpected window close");
-                    std::process::exit(0);
+                    force_exit(app, 0, "unexpected window close");
                 }
             }
             tauri::RunEvent::Exit => logging::log("exit"),
