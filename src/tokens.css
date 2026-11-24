@@ -1,90 +1,164 @@
-/* Shared colour tokens: panel, analytics, phone. */
+/* Shared colour & surface tokens: panel, analytics, mini-card, phone.
+   Obsidian/Zinc dark & ceramic light palette — restrained chrome, crisp semantic telemetry. */
 
 :root {
   color-scheme: light dark;
-  --bg: #f3f3f3;
-  --card: #fbfbfb;
-  --fill: rgba(0, 0, 0, 0.045);
-  --fill-strong: rgba(0, 0, 0, 0.08);
-  --sep: rgba(0, 0, 0, 0.075);
-  --stroke: rgba(0, 0, 0, 0.1);
-  --label: #1b1b1b;
-  --label-2: rgba(0, 0, 0, 0.6);
-  --label-3: rgba(0, 0, 0, 0.42);
-  --ink: rgba(0, 0, 0, 0.62);
-  --track: rgba(0, 0, 0, 0.08);
-  --track-strong: rgba(0, 0, 0, 0.16);
-  --mono: "Cascadia Mono", "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
-  --accent: #005fb8;
-  --on-accent: #ffffff;
-  --warn: #9d5d00;
-  --good-ink: #0f7b0f;
-  --warn-ink: #a25e00;
-  --bad: #c42b1c;
-  --bad-ink: #c42b1c;
-  --claude: #c96442;
-  --ag: #3367d6;
-  --codex: #10865f;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.08);
+
+  /* Surfaces (Light) */
+  --bg: #f4f5f7;
+  --bg-top: #f8f9fb;
+  --card: #ffffff;
+  --card-hover: #f8f9fc;
+  --elevated: #ffffff;
+  --well: rgba(15, 23, 42, 0.045);
+  --fill: rgba(15, 23, 42, 0.045);
+  --fill-strong: rgba(15, 23, 42, 0.08);
+  --sep: rgba(15, 23, 42, 0.065);
+  --stroke: rgba(15, 23, 42, 0.085);
+  --stroke-strong: rgba(15, 23, 42, 0.14);
+  --shell-border: rgba(15, 23, 42, 0.1);
+  --top-highlight: rgba(255, 255, 255, 0.9);
+  --card-highlight: rgba(255, 255, 255, 0.95);
+
+  /* Ink */
+  --label: #111318;
+  --label-2: #525866;
+  --label-3: #8a909e;
+  --ink: rgba(17, 19, 24, 0.64);
+
+  /* Tracks & controls */
+  --track: rgba(15, 23, 42, 0.08);
+  --track-strong: rgba(15, 23, 42, 0.16);
+  --pace-tick: rgba(15, 23, 42, 0.42);
   --knob: #ffffff;
+  --focus-ring: rgba(59, 130, 246, 0.45);
+
+  /* Typography */
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang TC",
+    "Microsoft JhengHei UI", sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* Brand & semantic (restrained, non-neon) */
+  --accent: #2563eb;
+  --on-accent: #ffffff;
+  --warn: #b45309;
+  --good-ink: #0d9668;
+  --good-bar: linear-gradient(90deg, #059669 0%, #10b981 100%);
+  --warn-ink: #b86e00;
+  --warn-bar: linear-gradient(90deg, #d97706 0%, #f59e0b 100%);
+  --bad: #dc2626;
+  --bad-ink: #dc2626;
+  --bad-bar: linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
+
+  /* Provider identity */
+  --claude: #cf6a46;
+  --ag: #3b6fe8;
+  --codex: #108a62;
+
+  /* Elevation */
+  --shadow: 0 16px 42px rgba(15, 23, 42, 0.14), 0 4px 12px rgba(15, 23, 42, 0.06);
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --menu-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.06);
+
   --ui-zoom: 0.9;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #202020;
-    --card: #2b2b2b;
-    --fill: rgba(255, 255, 255, 0.05);
-    --fill-strong: rgba(255, 255, 255, 0.09);
-    --sep: rgba(255, 255, 255, 0.07);
-    --stroke: rgba(255, 255, 255, 0.1);
-    --label: #ffffff;
-    --label-2: rgba(255, 255, 255, 0.7);
-    --label-3: rgba(255, 255, 255, 0.46);
-    --ink: rgba(255, 255, 255, 0.72);
-    --track: rgba(255, 255, 255, 0.1);
-    --track-strong: rgba(255, 255, 255, 0.2);
-    --accent: #60cdff;
-    --on-accent: #000000;
-    --warn: #fce100;
-    --good-ink: #6ccb5f;
-    --warn-ink: #e3b341;
-    --bad: #ff99a4;
-    --bad-ink: #ff6b7a;
-    --claude: #e08a6a;
-    --ag: #7aa7ff;
-    --codex: #4cc79a;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --bg: #0e1014;
+    --bg-top: #13161c;
+    --card: #15181f;
+    --card-hover: #1a1e27;
+    --elevated: #20242e;
+    --well: rgba(0, 0, 0, 0.34);
+    --fill: rgba(255, 255, 255, 0.045);
+    --fill-strong: rgba(255, 255, 255, 0.085);
+    --sep: rgba(255, 255, 255, 0.055);
+    --stroke: rgba(255, 255, 255, 0.078);
+    --stroke-strong: rgba(255, 255, 255, 0.135);
+    --shell-border: rgba(255, 255, 255, 0.1);
+    --top-highlight: rgba(255, 255, 255, 0.075);
+    --card-highlight: rgba(255, 255, 255, 0.045);
+
+    --label: #f2f4f8;
+    --label-2: #9ba2b1;
+    --label-3: #636a7a;
+    --ink: rgba(242, 244, 248, 0.72);
+
+    --track: rgba(255, 255, 255, 0.068);
+    --track-strong: rgba(255, 255, 255, 0.18);
+    --pace-tick: rgba(255, 255, 255, 0.54);
     --knob: #ffffff;
+    --focus-ring: rgba(148, 178, 255, 0.42);
+
+    --accent: #6c9eff;
+    --on-accent: #0b1020;
+    --warn: #f5c04a;
+    --good-ink: #34d399;
+    --good-bar: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+    --warn-ink: #efb443;
+    --warn-bar: linear-gradient(90deg, #d98f18 0%, #f3c14b 100%);
+    --bad: #f87171;
+    --bad-ink: #f87171;
+    --bad-bar: linear-gradient(90deg, #dc4352 0%, #f87171 100%);
+
+    --claude: #e48a66;
+    --ag: #74a2ff;
+    --codex: #42c997;
+
+    --shadow: 0 20px 54px rgba(0, 0, 0, 0.66), 0 6px 18px rgba(0, 0, 0, 0.42);
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --menu-shadow: 0 16px 40px rgba(0, 0, 0, 0.62), 0 4px 12px rgba(0, 0, 0, 0.36);
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #202020;
-  --card: #2b2b2b;
-  --fill: rgba(255, 255, 255, 0.05);
-  --fill-strong: rgba(255, 255, 255, 0.09);
-  --sep: rgba(255, 255, 255, 0.07);
-  --stroke: rgba(255, 255, 255, 0.1);
-  --label: #ffffff;
-  --label-2: rgba(255, 255, 255, 0.7);
-  --label-3: rgba(255, 255, 255, 0.46);
-  --ink: rgba(255, 255, 255, 0.72);
-  --track: rgba(255, 255, 255, 0.1);
-  --track-strong: rgba(255, 255, 255, 0.2);
-  --accent: #60cdff;
-  --on-accent: #000000;
-  --warn: #fce100;
-  --good-ink: #6ccb5f;
-    --warn-ink: #e3b341;
-  --bad: #ff99a4;
-  --bad-ink: #ff6b7a;
-  --claude: #e08a6a;
-  --ag: #7aa7ff;
-  --codex: #4cc79a;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --bg: #0e1014;
+  --bg-top: #13161c;
+  --card: #15181f;
+  --card-hover: #1a1e27;
+  --elevated: #20242e;
+  --well: rgba(0, 0, 0, 0.34);
+  --fill: rgba(255, 255, 255, 0.045);
+  --fill-strong: rgba(255, 255, 255, 0.085);
+  --sep: rgba(255, 255, 255, 0.055);
+  --stroke: rgba(255, 255, 255, 0.078);
+  --stroke-strong: rgba(255, 255, 255, 0.135);
+  --shell-border: rgba(255, 255, 255, 0.1);
+  --top-highlight: rgba(255, 255, 255, 0.075);
+  --card-highlight: rgba(255, 255, 255, 0.045);
+
+  --label: #f2f4f8;
+  --label-2: #9ba2b1;
+  --label-3: #636a7a;
+  --ink: rgba(242, 244, 248, 0.72);
+
+  --track: rgba(255, 255, 255, 0.068);
+  --track-strong: rgba(255, 255, 255, 0.18);
+  --pace-tick: rgba(255, 255, 255, 0.54);
+  --knob: #ffffff;
+  --focus-ring: rgba(148, 178, 255, 0.42);
+
+  --accent: #6c9eff;
+  --on-accent: #0b1020;
+  --warn: #f5c04a;
+  --good-ink: #34d399;
+  --good-bar: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+  --warn-ink: #efb443;
+  --warn-bar: linear-gradient(90deg, #d98f18 0%, #f3c14b 100%);
+  --bad: #f87171;
+  --bad-ink: #f87171;
+  --bad-bar: linear-gradient(90deg, #dc4352 0%, #f87171 100%);
+
+  --claude: #e48a66;
+  --ag: #74a2ff;
+  --codex: #42c997;
+
+  --shadow: 0 20px 54px rgba(0, 0, 0, 0.66), 0 6px 18px rgba(0, 0, 0, 0.42);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --menu-shadow: 0 16px 40px rgba(0, 0, 0, 0.62), 0 4px 12px rgba(0, 0, 0, 0.36);
   color-scheme: dark;
 }
 

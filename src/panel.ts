@@ -360,12 +360,13 @@ function renderWindow(
   const reset = formatResetAt(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
   // The tick sits where the fill would be if usage kept pace with time,
-  // shown only when usage runs ahead of elapsed time.
-  const ahead = elapsed != null && 100 - remaining > elapsed;
+  // shown only when usage runs ahead of elapsed time and away from 0/100 extremes.
+  const ahead = elapsed != null && remaining > 0 && remaining < 100 && 100 - remaining > elapsed;
+  const pacePos = elapsed == null ? -1 : showUsed ? elapsed : 100 - elapsed;
   const pace =
-    elapsed == null || !ahead
+    !ahead || pacePos < 4 || pacePos > 96
       ? ""
-      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
+      : `<i class="pace" style="left:${pacePos}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
   return `
     <div class="win">
       <div class="win-line">
@@ -550,20 +551,31 @@ function renderDenseWindow(
   const tone = getTone(remaining, accId);
   const reset = formatResetShort(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
-  const ahead = elapsed != null && 100 - remaining > elapsed;
+  const ahead = elapsed != null && remaining > 0 && remaining < 100 && 100 - remaining > elapsed;
+  const pacePos = elapsed == null ? -1 : showUsed ? elapsed : 100 - elapsed;
   const pace =
-    elapsed == null || !ahead
+    !ahead || pacePos < 4 || pacePos > 96
       ? ""
-      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
-  const valText = showUsed ? t("用 {p}%", { p: value }) : t("剩 {p}%", { p: value });
+      : `<i class="pace" style="left:${pacePos}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
+  const valTitle = showUsed ? t("用 {p}%", { p: value }) : t("剩 {p}%", { p: value });
   return `
     <div class="d-cell">
       <div class="d-wline">
         <span class="d-wleft"><span class="d-wname">${escapeHtml(windowName(w.label, provider, true))}</span>${reset ? `<span class="d-wreset">· ${escapeHtml(reset)}</span>` : ""}</span>
-        <span class="d-wval ${tone === "good" ? "" : tone}">${escapeHtml(valText)}</span>
+        <span class="d-wval ${tone === "good" ? "" : tone}" title="${escapeHtml(valTitle)}">${value}<span class="d-wunit">%</span></span>
       </div>
       <div class="bar d-bar"><span class="${tone === "good" ? "" : tone}" style="width:${value}%"></span>${pace}</div>
     </div>`;
+}
+
+function compactZhSpacing(s: string): string {
+  // Tighten extra spaces around digits/units in CJK compact badges ("每週 早 5 天 用完" -> "每週早5天用完", "55 分鐘後" -> "55分後").
+  if (!/[\u4e00-\u9fff]/.test(s)) return s;
+  return s
+    .replace(/分鐘後/g, "分後")
+    .replace(/([\u4e00-\u9fff])\s+(\d)/g, "$1$2")
+    .replace(/(\d)\s+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])\s+([\u4e00-\u9fff])/g, "$1$2");
 }
 
 function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): string {
@@ -573,18 +585,21 @@ function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): st
   const label = windowName(f.label, provider, true).split(" · ")[0];
   const gap = forecastGap(f);
   const when = mins < 60 ? t("{m} 分鐘後", { m: Math.max(1, mins) }) : shortWhen(f.exhaustAt);
-  const shortText =
+  const rawShort =
     mins < 180
       ? t("{label} {when}用完", { label, when })
       : gap != null
         ? t("{label} 早 {gap} 用完", { label, gap: fmtGap(gap) })
         : t("{label} {when}用完", { label, when });
+  const shortText = compactZhSpacing(rawShort);
   const tip =
     t("依近期用量推算，{name} 預計 {when} 耗盡", { name: windowName(f.label, provider), when }) +
     (gap != null ? t("，早於重設 {gap}", { gap: fmtGap(gap) }) : "") +
     (f.resetAt ? t("；{reset}", { reset: formatResetAt(f.resetAt) }) : "") +
     t("。消耗速率 {rate}%/h", { rate: f.ratePerHour });
-  return `<span class="d-badge ${forecastLevel(f)}" title="${escapeHtml(tip)}">${escapeHtml(shortText)}</span>`;
+  const level = forecastLevel(f);
+  const urgent = mins < 120;
+  return `<span class="d-badge ${level}${urgent ? " urgent" : ""}" title="${escapeHtml(tip)}"><i class="d-bdot"></i><span>${escapeHtml(shortText)}</span></span>`;
 }
 
 function denseUsageChip(u: UsageToday | undefined): string {
@@ -618,10 +633,10 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
 
   let badge = "";
   if (isLastKnown) {
-    badge = `<span class="d-badge warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")}</span>`;
+    badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`;
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
-    badge = `<span class="d-badge warn" title="${escapeHtml(acc.error)}">${tag} · ${ageLabel(acc.updatedAt)}</span>`;
+    badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error)}"><i class="d-bdot"></i><span>${tag} · ${ageLabel(acc.updatedAt)}</span></span>`;
   } else if (!isErr && !isCooldown) {
     badge = denseForecastBadge(snap.forecasts?.[acc.id], acc.provider);
   }
@@ -671,10 +686,10 @@ function renderDenseToolbar(visible: AccountQuota[]) {
 
   if (activeProviders.length >= 2) {
     const pills = [
-      `<button type="button" class="prov-pill ${providerFilter === "all" ? "active" : ""}" data-pf="all">${t("全部")} ${visible.length}</button>`,
+      `<button type="button" class="prov-pill ${providerFilter === "all" ? "active" : ""}" data-pf="all"><span>${t("全部")}</span><span class="pill-cnt">${visible.length}</span></button>`,
       ...activeProviders.map(
         (p) =>
-          `<button type="button" class="prov-pill ${providerFilter === p.kind ? "active" : ""}" data-pf="${p.kind}">${providerBadgeLabel(p.kind)} ${counts[p.kind]}</button>`,
+          `<button type="button" class="prov-pill ${providerFilter === p.kind ? "active" : ""}" data-pf="${p.kind}"><span>${providerBadgeLabel(p.kind)}</span><span class="pill-cnt">${counts[p.kind]}</span></button>`,
       ),
     ];
     provFilterPills.innerHTML = pills.join("");
@@ -685,7 +700,7 @@ function renderDenseToolbar(visible: AccountQuota[]) {
   }
 
   const showUsed = (cfg().usageDisplay ?? "used") === "used";
-  btnQuickDisplay.innerHTML = `${showUsed ? t("已使用%") : t("剩餘%")} <span class="swap-glyph">⇄</span>`;
+  btnQuickDisplay.innerHTML = `<span>${showUsed ? t("已使用%") : t("剩餘%")}</span><svg><use href="#i-swap" /></svg>`;
   btnQuickDisplay.title = t("點此切換剩餘 / 已使用百分比");
 }
 
@@ -998,7 +1013,7 @@ function applyDisplay(s: AppSettings) {
   shell.dataset.layout = layout;
   const useEl = btnLayout.querySelector("use");
   if (useEl) useEl.setAttribute("href", layout === "dense" ? "#i-layout-classic" : "#i-layout-dense");
-  btnLayout.classList.toggle("active", layout === "dense");
+  btnLayout.classList.remove("active");
   btnLayout.title =
     layout === "dense"
       ? t("目前：緊湊畫面（點此切回卡片）")
@@ -1981,6 +1996,19 @@ $("btn-test-notify").addEventListener("click", () => {
   invoke("test_notification").catch(() => {});
 });
 
+
+// Track keyboard vs pointer navigation so opening the window never leaves a harsh focus ring.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" || e.key.startsWith("Arrow")) {
+    document.documentElement.classList.add("kbd-nav");
+  }
+}, true);
+window.addEventListener("pointerdown", () => {
+  document.documentElement.classList.remove("kbd-nav");
+}, true);
+window.addEventListener("focus", () => {
+  document.documentElement.classList.remove("kbd-nav");
+});
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
