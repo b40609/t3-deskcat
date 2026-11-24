@@ -210,9 +210,25 @@ pub struct AppSettings {
     pub pet_snap_edge: bool,
 
     // ---- Panel
-    /// "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center"
+    /// "pet" | "remember" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center"
     #[serde(default = "default_panel_position")]
     pub panel_position: String,
+    /// Dashboard visual layout: "classic" (cards) | "dense" (high-density dual-column)
+    #[serde(default = "default_panel_layout")]
+    pub panel_layout: String,
+    /// Remembered desktop pinned state (stays open, non-always-on-top, shown on taskbar).
+    #[serde(default)]
+    pub panel_pinned: bool,
+    /// Remembered panel outer position (physical px).
+    #[serde(default)]
+    pub panel_x: Option<i32>,
+    #[serde(default)]
+    pub panel_y: Option<i32>,
+    /// Remembered panel logical size (px).
+    #[serde(default)]
+    pub panel_width: Option<u32>,
+    #[serde(default)]
+    pub panel_height: Option<u32>,
     /// Global shortcut that toggles the panel ("" = off).
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
@@ -275,6 +291,9 @@ fn default_click_action() -> String {
 }
 fn default_panel_position() -> String {
     "pet".to_string()
+}
+fn default_panel_layout() -> String {
+    "classic".to_string()
 }
 fn default_hotkey() -> String {
     "Ctrl+Alt+Q".to_string()
@@ -344,6 +363,12 @@ impl Default for AppSettings {
             pet_click_action: default_click_action(),
             pet_snap_edge: true,
             panel_position: default_panel_position(),
+            panel_layout: default_panel_layout(),
+            panel_pinned: false,
+            panel_x: None,
+            panel_y: None,
+            panel_width: None,
+            panel_height: None,
             hotkey: default_hotkey(),
             compact_accounts: false,
             claude_min_interval_secs: default_claude_interval(),

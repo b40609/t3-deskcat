@@ -142,9 +142,11 @@ const PRICES: &[(&str, Price)] = &[
     ("orchestrator-neon", Price::gemini(3.0, 15.0, 0.15)),
     ("gemini-4-argon", Price::gemini(2.0, 10.0, 0.10)),
     ("orchestrator-argon", Price::gemini(2.0, 10.0, 0.10)),
+    ("gemini-pro-orchestrator", Price::gemini(3.0, 15.0, 0.15)),
     ("gemini-4-carbon", Price::gemini(2.0, 10.0, 0.10)),
     ("gemini-4-hydrogen", Price::gemini(1.5, 7.5, 0.075)),
     ("gemini-3.8-flash", Price::gemini(0.75, 3.75, 0.075)),
+    ("gemini-flash-worker", Price::gemini(0.75, 3.75, 0.075)),
     ("gemini-3-pro", Price::gemini(2.0, 12.0, 0.20)),
     ("gemini-3-flash", Price::gemini(0.50, 3.0, 0.05)),
     ("gemini-2.5-pro", Price::gemini(1.25, 10.0, 0.125)),
@@ -793,6 +795,8 @@ mod tests {
         assert_eq!((r1.agg.input, r1.agg.cache_read, r1.agg.output, r1.agg.requests), (3000, 50000, 400, 1));
         assert_eq!(r1.model, "gemini-4-neon-xhigh");
         assert!(cost_of(&r1.model, &r1.agg).is_some());
+        assert!(price_of("gemini-pro-orchestrator-g1-pro").is_some());
+        assert!(price_of("gemini-flash-worker-agy").is_some());
 
         // CHECKPOINT omits model and should inherit the preceding planner model.
         let checkpoint = format!(

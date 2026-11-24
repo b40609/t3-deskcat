@@ -66,7 +66,8 @@ export interface AccountPref {
   avatar?: string | null;
 }
 
-export type PanelPosition = "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";
+export type PanelPosition = "pet" | "remember" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";
+export type PanelLayout = "classic" | "dense";
 
 export type PetTheme = "hud_gauge" | "desk_cat" | "custom";
 
@@ -113,6 +114,12 @@ export interface AppSettings {
   petSnapEdge?: boolean;
   // panel
   panelPosition?: PanelPosition;
+  panelLayout?: PanelLayout;
+  panelPinned?: boolean;
+  panelX?: number | null;
+  panelY?: number | null;
+  panelWidth?: number | null;
+  panelHeight?: number | null;
   hotkey?: string;
   compactAccounts?: boolean;
   // data

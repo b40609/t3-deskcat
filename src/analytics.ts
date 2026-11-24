@@ -1,5 +1,6 @@
 import { call, isRemote } from "./bridge";
 import { applyI18n, locale, setLang, t } from "./i18n";
+import { buildAccountLabelMap, prettyModelName } from "./modelFormat";
 import type { AppSettings, Cost, DashboardSnapshot, Price, ProviderKind, ReportRow, UsageReport } from "./types";
 
 /**
@@ -20,6 +21,7 @@ let account = ""; // "" = all
 let report: UsageReport | null = null;
 let settings: AppSettings | null = null;
 let names: Record<string, { name: string; provider: ProviderKind }> = {};
+let accountLabels: Record<string, string> = {};
 
 // ------------------------------------------------------------------ format
 
@@ -61,7 +63,7 @@ function rows(): ReportRow[] {
 }
 
 function nameOf(id: string): string {
-  return names[id]?.name ?? id.replace(/^[a-z]+:/, "");
+  return accountLabels[id] ?? names[id]?.name ?? id.replace(/^[a-z]+:/, "");
 }
 
 function slots(): number[] {
@@ -85,7 +87,7 @@ function seriesKey(r: ReportRow): string {
 }
 
 function seriesLabel(k: string): string {
-  return account ? k.replace(/^claude-/, "") : nameOf(k);
+  return account ? prettyModelName(k) : nameOf(k);
 }
 
 // Colours: each provider keeps its own hue; accounts of one provider step in
@@ -301,7 +303,7 @@ function renderModels(list: ReportRow[]) {
   const top = entries[0]?.[1] ?? 0;
   $("by-model").innerHTML = entries.length
     ? entries
-        .map(([m, v], i) => `<li class="bar-row"><span class="rk-n mono">${esc(m)}</span><span class="rk-v">${esc(fmt(v))}</span><span class="rk-bar"><span style="width:${(v / top) * 100}%" class="${i === 0 ? "lead" : ""}"></span></span></li>`)
+        .map(([m, v], i) => `<li class="bar-row"><span class="rk-n" title="${esc(m)}">${esc(prettyModelName(m))}</span><span class="rk-v">${esc(fmt(v))}</span><span class="rk-bar"><span style="width:${(v / top) * 100}%" class="${i === 0 ? "lead" : ""}"></span></span></li>`)
         .join("")
     : `<li class="empty">${esc(t("這段時間沒有用量"))}</li>`;
 }
@@ -321,7 +323,7 @@ function renderPrices() {
         const p = m.price;
         const state = m.custom ? t("自訂") : p ? t("牌價") : t("未定價");
         return `<div class="price-row${p ? "" : " unpriced"}" data-model="${esc(m.model)}">
-          <span class="mono pm">${esc(m.model || "?")}</span>
+          <span class="pm" title="${esc(m.model || "?")}">${esc(prettyModelName(m.model || "?"))}</span>
           ${(["input", "output", "cacheRead", "cacheWrite"] as (keyof Price)[])
             .map((k) => `<input class="num" inputmode="decimal" data-k="${k}" value="${num(p?.[k])}" placeholder="${esc(head[["input", "output", "cacheRead", "cacheWrite"].indexOf(k) + 1])}" aria-label="${esc(head[["input", "output", "cacheRead", "cacheWrite"].indexOf(k) + 1])}">`)
             .join("")}
@@ -409,6 +411,7 @@ async function init() {
     for (const a of snap?.accounts ?? []) {
       names[a.id] = { name: settings.accountPrefs?.[a.id]?.alias?.trim() || a.name, provider: a.provider };
     }
+    accountLabels = buildAccountLabelMap(names);
   } catch {
     /* show what we can */
   }

@@ -2,13 +2,16 @@ import { mainWindows } from "./focus";
 import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
 import { call as invoke, isRemote, subscribe } from "./bridge";
 import { createAnalyticsView } from "./analyticsView";
+import { providerBadgeLabel } from "./modelFormat";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AccountPref,
   AccountQuota,
   AppSettings,
   DashboardSnapshot,
   Forecast,
+  PanelLayout,
   PanelPosition,
   PetTheme,
   ProviderKind,
@@ -24,10 +27,25 @@ const accountsAlert = $("accounts-alert");
 const dashTabs = $("dash-tabs");
 const dashQuota = $("dash-quota");
 const dashAnalytics = $("dash-analytics");
+const denseToolbar = $("dense-toolbar");
+const provFilterPills = $("prov-filter-pills");
+const btnQuickDisplay = $<HTMLButtonElement>("btn-quick-display");
+const secAccounts = $("sec-accounts");
+const secExpired = $("sec-expired");
+const expiredCount = $("expired-count");
+const expiredSection = $("expired-section");
+const accCtxMenu = $("acc-ctx-menu");
+const renameModal = $("rename-modal");
+const renameForm = $<HTMLFormElement>("rename-form");
+const renameOrig = $("rename-orig");
+const inpRename = $<HTMLInputElement>("inp-rename");
+const btnRenameCancel = $("btn-rename-cancel");
 
+const btnLayout = $("btn-layout");
 const btnRefresh = $("btn-refresh");
 const btnPin = $("btn-pin");
 const btnSettings = $("btn-settings");
+const btnClose = $("btn-close");
 const btnBack = $("btn-back");
 
 const themeButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".theme-btn"));
@@ -87,6 +105,9 @@ let pinned = false;
 let expandedAcc: string | null = null;
 let accSettingsSig = "";
 let recordingHotkey = false;
+let providerFilter: "all" | ProviderKind = "all";
+let ctxAccId: string | null = null;
+let renameAccId: string | null = null;
 const hotkeyHintText = () => t("點快捷鍵後按下新的組合鍵，Esc 取消、Backspace 清除");
 
 const fallbackSettings: AppSettings = {
@@ -121,6 +142,12 @@ const fallbackSettings: AppSettings = {
   petClickAction: "single",
   petSnapEdge: true,
   panelPosition: "pet",
+  panelLayout: "classic",
+  panelPinned: false,
+  panelX: null,
+  panelY: null,
+  panelWidth: null,
+  panelHeight: null,
   hotkey: "Ctrl+Alt+Q",
   compactAccounts: false,
   claudeMinIntervalSecs: 90,
@@ -244,12 +271,65 @@ function formatResetAt(resetAt: number | null): string {
   return t("{date} {time} 重設", { date: `${d.getMonth() + 1}/${d.getDate()}`, time });
 }
 
-/** Window label → Claude-style name ("5 小時限制", "每週 · 所有模型", "每週 · Sonnet") */
-function windowName(label: string, provider: ProviderKind): string {
+/** Short reset text for dense dual-column cells ("3小時後", "4天後", "19:00", "明天 09:00"). */
+function formatResetShort(resetAt: number | null): string {
+  if (!resetAt) return "";
+  const diffSec = resetAt - Math.floor(Date.now() / 1000);
+  if (diffSec <= 0) return t("即將重設");
+  const fmt = (currentSettings ?? fallbackSettings).resetFormat ?? "absolute";
+  if (fmt === "relative") {
+    const hours = Math.floor(diffSec / 3600);
+    const mins = Math.floor((diffSec % 3600) / 60);
+    if (hours >= 24) return t("{d}天後", { d: Math.floor(hours / 24) });
+    if (hours > 0) return t("{h}小時後", { h: hours });
+    return t("{m}分後", { m: Math.max(1, mins) });
+  }
+  const d = new Date(resetAt * 1000);
+  const now = new Date();
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === tomorrow.toDateString()) return t("明天 {time}", { time: hm });
+  if (diffSec < 6.5 * 86400) return `${weekday(d)} ${hm}`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** Window label → localized readable name ("5 小時", "每週", "每週 · Fable"). */
+function windowName(label: string, provider: ProviderKind, dense = false): string {
   const [base, ...rest] = label.split(" ");
   const pool = rest.join(" ");
-  if (/^(Argon|3P)$/.test(base) && rest.length) return `${base === "3P" ? "Claude/GPT" : base} · ${windowName(pool, provider)}`;
-  return pool ? `${base === "週" ? "Wk" : base} · ${pool}` : base === "週" ? "Wk" : base;
+  if (/^(Argon|3P)$/.test(base) && rest.length) {
+    return `${base === "3P" ? "Claude/GPT" : base} · ${windowName(pool, provider, dense)}`;
+  }
+  const head =
+    base === "5h"
+      ? dense
+        ? t("5小時")
+        : t("5 小時")
+      : base === "Wk" || base === "週"
+        ? t("每週")
+        : base === "Mo"
+          ? t("每月")
+          : base;
+  return pool ? `${head} · ${pool}` : head;
+}
+
+function panelLayout(): PanelLayout {
+  return cfg().panelLayout === "dense" ? "dense" : "classic";
+}
+
+function duplicateNameSet(accounts: AccountQuota[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const a of accounts) {
+    const k = displayName(a).trim().toLowerCase();
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const dups = new Set<string>();
+  for (const [k, c] of counts) {
+    if (c > 1) dups.add(k);
+  }
+  return dups;
 }
 
 /** Length of a limit window in seconds, from its label ("5h", "Wk", "3P Wk"). */
@@ -322,9 +402,19 @@ function forecastLevel(f: Forecast): "bad" | "warn" {
 
 function fmtGap(secs: number): string {
   const m = Math.round(secs / 60);
-  if (m < 60) return `${Math.max(1, m)}m`;
+  if (m < 60) return t("{m} 分", { m: Math.max(1, m) });
   const h = secs / 3600;
-  return h < 10 ? `${(Math.round(h * 2) / 2).toString()}h` : `${Math.round(h)}h`;
+  if (h < 24) {
+    const val = h < 10 ? Math.round(h * 2) / 2 : Math.round(h);
+    return t("{h} 小時", { h: val });
+  }
+  let days = Math.floor(secs / 86400);
+  let remH = Math.round((secs % 86400) / 3600);
+  if (remH === 24) {
+    days += 1;
+    remH = 0;
+  }
+  return days >= 2 || remH === 0 ? t("{d} 天", { d: days }) : t("{d} 天 {h} 小時", { d: days, h: remH });
 }
 
 /** "11:18", "明天 11:18", "週四 11:18" (24h, compact). */
@@ -385,7 +475,18 @@ function ageLabel(ts: number): string {
 
 // ------------------------------------------------------------------ rendering
 
-function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
+function pickWindows(acc: AccountQuota, showExtra: boolean) {
+  let wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
+  if (cfg().compactAccounts) {
+    // Only the 5-hour and weekly limits; model and pool limits are dropped.
+    const { short, long } = mainWindows(acc);
+    const main = [short, long].filter((w): w is NonNullable<typeof w> => !!w);
+    if (main.length) wins = main;
+  }
+  return wins;
+}
+
+function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
   const showExtra = snap.settings.showAntigravityExtra;
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
@@ -393,6 +494,10 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   // Expired but with last-known numbers: show them, marked.
   const isLastKnown = isExpired && acc.primaryWindows.length > 0;
   const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  const nameKey = displayName(acc).trim().toLowerCase();
+  const provChip = dupNames.has(nameKey)
+    ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
+    : "";
   const plan = acc.plan ? `<span class="plan">${escapeHtml(acc.plan)}</span>` : "";
   const extras = forecastHtml(snap.forecasts?.[acc.id], acc.provider) + usageHtml(snap.usageToday?.[acc.id]);
 
@@ -405,13 +510,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   } else if (isCooldown) {
     body = `<span class="status cooldown">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</span>`;
   } else {
-    let wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
-    if (cfg().compactAccounts) {
-      // Only the 5-hour and weekly limits; model and pool limits are dropped.
-      const { short, long } = mainWindows(acc);
-      const main = [short, long].filter((w): w is NonNullable<typeof w> => !!w);
-      if (main.length) wins = main;
-    }
+    const wins = pickWindows(acc, showExtra);
     body = wins.length
       ? wins.map((w) => renderWindow(w, acc.provider, acc.id)).join("")
       : `<span class="status stale">${t("沒有用量資料")}</span>`;
@@ -423,14 +522,165 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot): string {
   }
 
   return `
-    <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}">
+    <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
       ${avatarHtml(acc.id, acc.provider)}
       <div class="row-main">
-        <div class="row-title"><span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>${plan}${note}</div>
+        <div class="row-title">
+          <span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>
+          ${provChip}${plan}${note}
+          <button type="button" class="row-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
+        </div>
         <div class="wins">${body}</div>
         ${extras ? `<div class="acc-extras">${extras}</div>` : ""}
       </div>
     </div>`;
+}
+
+function renderDenseWindow(
+  w: { label: string; remainingPercent: number; resetAt: number | null },
+  provider: ProviderKind,
+  accId: string,
+): string {
+  const showUsed = (cfg().usageDisplay ?? "used") === "used";
+  const remaining = Math.max(0, Math.min(100, w.remainingPercent));
+  const value = showUsed ? 100 - remaining : remaining;
+  const tone = getTone(remaining, accId);
+  const reset = formatResetShort(w.resetAt);
+  const elapsed = elapsedPercent(w.label, w.resetAt);
+  const ahead = elapsed != null && 100 - remaining > elapsed;
+  const pace =
+    elapsed == null || !ahead
+      ? ""
+      : `<i class="pace" style="left:${showUsed ? elapsed : 100 - elapsed}%" title="${t("時間已過 {p}%：{hint}", { p: elapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
+  const valText = showUsed ? t("用 {p}%", { p: value }) : t("剩 {p}%", { p: value });
+  return `
+    <div class="d-cell">
+      <div class="d-wline">
+        <span class="d-wleft"><span class="d-wname">${escapeHtml(windowName(w.label, provider, true))}</span>${reset ? `<span class="d-wreset">· ${escapeHtml(reset)}</span>` : ""}</span>
+        <span class="d-wval ${tone === "good" ? "" : tone}">${escapeHtml(valText)}</span>
+      </div>
+      <div class="bar d-bar"><span class="${tone === "good" ? "" : tone}" style="width:${value}%"></span>${pace}</div>
+    </div>`;
+}
+
+function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): string {
+  if (!f || cfg().showForecast === false) return "";
+  const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
+  if (mins < 0) return "";
+  const label = windowName(f.label, provider, true).split(" · ")[0];
+  const gap = forecastGap(f);
+  const when = mins < 60 ? t("{m} 分鐘後", { m: Math.max(1, mins) }) : shortWhen(f.exhaustAt);
+  const shortText =
+    mins < 180
+      ? t("{label} {when}用完", { label, when })
+      : gap != null
+        ? t("{label} 早 {gap} 用完", { label, gap: fmtGap(gap) })
+        : t("{label} {when}用完", { label, when });
+  const tip =
+    t("依近期用量推算，{name} 預計 {when} 耗盡", { name: windowName(f.label, provider), when }) +
+    (gap != null ? t("，早於重設 {gap}", { gap: fmtGap(gap) }) : "") +
+    (f.resetAt ? t("；{reset}", { reset: formatResetAt(f.resetAt) }) : "") +
+    t("。消耗速率 {rate}%/h", { rate: f.ratePerHour });
+  return `<span class="d-badge ${forecastLevel(f)}" title="${escapeHtml(tip)}">${escapeHtml(shortText)}</span>`;
+}
+
+function denseUsageChip(u: UsageToday | undefined): string {
+  if (!u || cfg().showUsageStats !== true || u.requests === 0) return "";
+  const label =
+    u.costUsd != null
+      ? `$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`
+      : fmtTokens(u.totalTokens);
+  const tip = [
+    t("今日 {n}", { n: fmtTokens(u.totalTokens) }),
+    t("{n} 次", { n: u.requests }),
+    t("輸入 {n}", { n: fmtTokens(u.inputTokens) }),
+    t("輸出 {n}", { n: fmtTokens(u.outputTokens) }),
+    t("快取讀取 {n}", { n: fmtTokens(u.cacheReadTokens) }),
+  ].join(" · ");
+  return `<span class="d-cost" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
+}
+
+function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
+  const showExtra = snap.settings.showAntigravityExtra;
+  const isStale = acc.status === "stale";
+  const isCooldown = acc.status === "cooldown";
+  const isExpired = acc.status === "expired";
+  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  const nameKey = displayName(acc).trim().toLowerCase();
+  const provChip =
+    dupNames.has(nameKey) && providerFilter === "all"
+      ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
+      : "";
+
+  let badge = "";
+  if (isLastKnown) {
+    badge = `<span class="d-badge warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")}</span>`;
+  } else if (!isErr && !isCooldown) {
+    badge = denseForecastBadge(snap.forecasts?.[acc.id], acc.provider);
+  }
+  const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
+
+  let body: string;
+  if (isExpired && !isLastKnown) {
+    body = `<span class="status expired">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
+  } else if (isErr) {
+    body = `<span class="status error">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
+  } else if (isCooldown) {
+    body = `<span class="status cooldown">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</span>`;
+  } else {
+    const wins = pickWindows(acc, showExtra);
+    body = wins.length
+      ? `<div class="d-wins ${wins.length === 1 ? "single" : ""}">${wins.map((w) => renderDenseWindow(w, acc.provider, acc.id)).join("")}</div>`
+      : `<span class="status stale">${t("沒有用量資料")}</span>`;
+  }
+
+  return `
+    <div class="dense-acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
+      <div class="d-head">
+        ${avatarHtml(acc.id, acc.provider)}
+        <span class="d-name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>
+        ${provChip}
+        ${badge}
+        <span class="d-spacer"></span>
+        ${costChip}
+        <button type="button" class="row-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
+      </div>
+      ${body}
+    </div>`;
+}
+
+function renderDenseToolbar(visible: AccountQuota[]) {
+  const isDense = panelLayout() === "dense";
+  denseToolbar.classList.toggle("hidden", !isDense || visible.length === 0);
+  if (!isDense || visible.length === 0) return;
+
+  const counts: Partial<Record<ProviderKind, number>> = {};
+  for (const a of visible) counts[a.provider] = (counts[a.provider] ?? 0) + 1;
+  const activeProviders = PROVIDERS.filter((p) => (counts[p.kind] ?? 0) > 0);
+
+  if (providerFilter !== "all" && !(counts[providerFilter] ?? 0)) {
+    providerFilter = "all";
+  }
+
+  if (activeProviders.length >= 2) {
+    const pills = [
+      `<button type="button" class="prov-pill ${providerFilter === "all" ? "active" : ""}" data-pf="all">${t("全部")} ${visible.length}</button>`,
+      ...activeProviders.map(
+        (p) =>
+          `<button type="button" class="prov-pill ${providerFilter === p.kind ? "active" : ""}" data-pf="${p.kind}">${providerBadgeLabel(p.kind)} ${counts[p.kind]}</button>`,
+      ),
+    ];
+    provFilterPills.innerHTML = pills.join("");
+    provFilterPills.classList.remove("hidden");
+  } else {
+    provFilterPills.innerHTML = "";
+    provFilterPills.classList.add("hidden");
+  }
+
+  const showUsed = (cfg().usageDisplay ?? "used") === "used";
+  btnQuickDisplay.innerHTML = `${showUsed ? t("已使用%") : t("剩餘%")} <span class="swap-glyph">⇄</span>`;
+  btnQuickDisplay.title = t("點此切換剩餘 / 已使用百分比");
 }
 
 function renderAccounts(snap: DashboardSnapshot) {
@@ -439,12 +689,87 @@ function renderAccounts(snap: DashboardSnapshot) {
   accountsAlert.classList.toggle("hidden", badCount === 0);
   if (badCount > 0) accountsAlert.textContent = t("{n} 個帳號異常", { n: badCount });
 
-  accountsSection.innerHTML =
-    snap.accounts.length === 0
-      ? `<div class="empty">${t("尚未找到 Claude / Antigravity / ChatGPT 的登入憑證")}</div>`
-      : visible.length === 0
-        ? `<div class="empty">${t("所有帳號都已隱藏，可在設定 → 帳號中開啟")}</div>`
-        : visible.map((acc) => renderAccountRow(acc, snap)).join("");
+  renderDenseToolbar(visible);
+  const dupNames = duplicateNameSet(visible);
+
+  if (snap.accounts.length === 0) {
+    secAccounts.classList.remove("hidden");
+    secExpired.classList.add("hidden");
+    accountsSection.innerHTML = `<div class="empty">${t("尚未找到 Claude / Antigravity / ChatGPT 的登入憑證")}</div>`;
+    return;
+  }
+  if (visible.length === 0) {
+    secAccounts.classList.remove("hidden");
+    secExpired.classList.add("hidden");
+    accountsSection.innerHTML = `<div class="empty">${t("所有帳號都已隱藏，可在設定 → 帳號中開啟")}</div>`;
+    return;
+  }
+
+  if (panelLayout() === "dense") {
+    const filtered = providerFilter === "all" ? visible : visible.filter((a) => a.provider === providerFilter);
+    const healthy = filtered.filter((a) => a.status !== "expired");
+    const expired = filtered.filter((a) => a.status === "expired");
+    secAccounts.classList.toggle("hidden", healthy.length === 0 && expired.length > 0);
+    accountsSection.innerHTML = healthy.map((acc) => renderDenseAccountRow(acc, snap, dupNames)).join("");
+    secExpired.classList.toggle("hidden", expired.length === 0);
+    expiredCount.textContent = String(expired.length);
+    expiredSection.innerHTML = expired.map((acc) => renderDenseAccountRow(acc, snap, dupNames)).join("");
+  } else {
+    secAccounts.classList.remove("hidden");
+    secExpired.classList.add("hidden");
+    accountsSection.innerHTML = visible.map((acc) => renderAccountRow(acc, snap, dupNames)).join("");
+  }
+}
+
+function localizePickReason(reason: string): string {
+  return reason
+    .replace(/\b5h\b/g, t("5小時"))
+    .replace(/\bWk\b/g, t("每週"))
+    .replace(/\bMo\b/g, t("每月"));
+}
+
+function renderPicks(snap: DashboardSnapshot) {
+  const secPicks = $("sec-picks");
+  secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
+  if (panelLayout() === "dense") {
+    picksSection.className = "picks-grid";
+    picksSection.innerHTML = snap.picks
+      .map((pick) => {
+        const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
+        const reason = localizePickReason(pick.reason);
+        const sub = pick.note ? pick.note : reason;
+        return `
+        <div class="pick-card ${pick.useBeforeReset ? "pick-soon" : ""}" title="${escapeHtml(reason + reset)}">
+          <div class="pick-card-top">
+            <span class="pick-tag ${pick.provider}">${providerBadgeLabel(pick.provider)} ${t("首選")}</span>
+            <span class="pick-card-pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}">${t("剩 {p}%", { p: pick.effectiveRemaining })}</span>
+          </div>
+          <div class="pick-card-name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</div>
+          <div class="pick-card-sub">${escapeHtml(sub)}</div>
+        </div>`;
+      })
+      .join("");
+    return;
+  }
+
+  picksSection.className = "list";
+  picksSection.innerHTML = snap.picks
+    .map((pick) => {
+      const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
+      const reason = localizePickReason(pick.reason);
+      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(reason)}`;
+      return `
+      <div class="row ${pick.useBeforeReset ? "pick-soon" : ""}">
+        ${avatarHtml(pick.accountId, pick.provider)}
+        <div class="row-main">
+          <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
+          <span class="row-sub" title="${escapeHtml(reason + reset)}">${sub}</span>
+          ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
+        </div>
+        <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">${t("剩餘")}</small>${pick.effectiveRemaining}<small>%</small></span>
+      </div>`;
+    })
+    .join("");
 }
 
 function renderDashboard(snap: DashboardSnapshot) {
@@ -453,26 +778,7 @@ function renderDashboard(snap: DashboardSnapshot) {
   syncSettingsForm(snap.settings);
 
   offlineNote.classList.toggle("hidden", !snap.offline);
-  const secPicks = $("sec-picks");
-  secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
-  picksSection.innerHTML = snap.picks
-    .map((pick) => {
-      const reset = pick.resetAt ? `
-${formatResetAt(pick.resetAt)}` : "";
-      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(pick.reason)}`;
-      return `
-      <div class="row ${pick.useBeforeReset ? "pick-soon" : ""}">
-        ${avatarHtml(pick.accountId, pick.provider)}
-        <div class="row-main">
-          <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
-          <span class="row-sub" title="${escapeHtml(pick.reason + reset)}">${sub}</span>
-          ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
-        </div>
-        <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">${t("剩餘")}</small>${pick.effectiveRemaining}<small>%</small></span>
-      </div>`;
-    })
-    .join("");
-
+  renderPicks(snap);
   renderAccounts(snap);
   $("mobile-summary").textContent = snap.settings.mobileEnabled ? t("已開啟") : t("未開啟");
 
@@ -674,6 +980,20 @@ function applyDisplay(s: AppSettings) {
   if (appearance === "system") delete root.dataset.theme;
   else root.dataset.theme = appearance;
   root.style.setProperty("--ui-zoom", String((s.uiScale ?? 90) / 100));
+
+  const layout: PanelLayout = s.panelLayout === "dense" ? "dense" : "classic";
+  shell.dataset.layout = layout;
+  const useEl = btnLayout.querySelector("use");
+  if (useEl) useEl.setAttribute("href", layout === "dense" ? "#i-layout-classic" : "#i-layout-dense");
+  btnLayout.classList.toggle("active", layout === "dense");
+  btnLayout.title =
+    layout === "dense"
+      ? t("目前：緊湊畫面（點此切回卡片）")
+      : t("目前：卡片畫面（點此切換緊湊）");
+
+  pinned = s.panelPinned === true;
+  btnPin.classList.toggle("active", pinned);
+  btnPin.title = pinned ? t("已釘選常駐（點此恢復自動收合）") : t("釘選為桌面常駐視窗");
 }
 
 let saveTimer: number | undefined;
@@ -685,6 +1005,12 @@ function commitSettings(patch: Partial<AppSettings>, immediate = false) {
   }
   currentSettings = next;
   syncSettingsForm(next);
+  if (currentSnapshot) {
+    const previewSnap: DashboardSnapshot = { ...currentSnapshot, settings: next };
+    currentSnapshot = previewSnap;
+    renderPicks(previewSnap);
+    renderAccounts(previewSnap);
+  }
 
   const send = async () => {
     try {
@@ -720,11 +1046,144 @@ document.querySelectorAll<HTMLInputElement>(".slider").forEach((inp) => {
   inp.addEventListener("input", () => paintSlider(inp));
 });
 
+btnLayout.addEventListener("click", () => {
+  closeCtxMenu();
+  const next: PanelLayout = panelLayout() === "dense" ? "classic" : "dense";
+  commitSettings({ panelLayout: next }, true);
+});
+
+btnClose.addEventListener("click", () => {
+  closeCtxMenu();
+  if (!isRemote) invoke("hide_panel", { force: true }).catch(() => {});
+});
+
 btnPin.addEventListener("click", async () => {
   pinned = !pinned;
   btnPin.classList.toggle("active", pinned);
+  btnPin.title = pinned ? t("已釘選常駐（點此恢復自動收合）") : t("釘選為桌面常駐視窗");
+  if (currentSettings) currentSettings = { ...currentSettings, panelPinned: pinned };
   await invoke("set_panel_pinned", { pinned });
 });
+
+provFilterPills.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-pf]");
+  if (!btn) return;
+  providerFilter = (btn.dataset.pf as "all" | ProviderKind) ?? "all";
+  if (currentSnapshot) renderAccounts(currentSnapshot);
+});
+
+btnQuickDisplay.addEventListener("click", () => {
+  const next = (cfg().usageDisplay ?? "used") === "used" ? "remaining" : "used";
+  commitSettings({ usageDisplay: next }, true);
+});
+
+// ---- quick account context menu & inline rename dialog
+function closeCtxMenu() {
+  ctxAccId = null;
+  accCtxMenu.classList.add("hidden");
+}
+
+function openCtxMenu(accId: string, clientX: number, clientY: number) {
+  ctxAccId = accId;
+  accCtxMenu.classList.remove("hidden");
+  const sr = shell.getBoundingClientRect();
+  const mw = accCtxMenu.offsetWidth || 136;
+  const mh = accCtxMenu.offsetHeight || 104;
+  const left = Math.max(8, Math.min(sr.width - mw - 8, clientX - sr.left - mw + 24));
+  const top = Math.max(44, Math.min(sr.height - mh - 8, clientY - sr.top + 6));
+  accCtxMenu.style.left = `${left}px`;
+  accCtxMenu.style.top = `${top}px`;
+}
+
+function openRenameModal(accId: string) {
+  const acc = currentSnapshot?.accounts.find((a) => a.id === accId);
+  if (!acc) return;
+  renameAccId = accId;
+  renameOrig.textContent = `${providerLabel(acc.provider)} · ${acc.name}`;
+  inpRename.value = prefOf(accId).alias?.trim() ?? "";
+  inpRename.placeholder = acc.name;
+  renameModal.classList.remove("hidden");
+  window.setTimeout(() => {
+    inpRename.focus();
+    inpRename.select();
+  }, 0);
+}
+
+function closeRenameModal() {
+  renameAccId = null;
+  renameModal.classList.add("hidden");
+}
+
+dashQuota.addEventListener("contextmenu", (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>("[data-acc-id]");
+  if (!row?.dataset.accId) return;
+  e.preventDefault();
+  openCtxMenu(row.dataset.accId, e.clientX, e.clientY);
+});
+
+dashQuota.addEventListener("click", (e) => {
+  const more = (e.target as HTMLElement).closest<HTMLElement>("[data-acc-more]");
+  if (more?.dataset.accMore) {
+    e.stopPropagation();
+    const rect = more.getBoundingClientRect();
+    openCtxMenu(more.dataset.accMore, rect.right, rect.bottom);
+  }
+});
+
+accCtxMenu.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-ctx]");
+  const id = ctxAccId;
+  if (!btn || !id) return;
+  const act = btn.dataset.ctx;
+  closeCtxMenu();
+  if (act === "rename") {
+    openRenameModal(id);
+  } else if (act === "top") {
+    const allIds = orderedAccounts(currentSnapshot?.accounts ?? []).map((a) => a.id);
+    const nextOrder = [id, ...allIds.filter((x) => x !== id)];
+    commitSettings({ accountOrder: nextOrder }, true);
+  } else if (act === "hide") {
+    setPref(id, { hidden: true });
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (!ctxAccId) return;
+  const target = e.target as HTMLElement;
+  if (!accCtxMenu.contains(target) && !target.closest("[data-acc-more]")) {
+    closeCtxMenu();
+  }
+});
+
+dashQuota.addEventListener("scroll", () => {
+  if (ctxAccId) closeCtxMenu();
+}, { passive: true });
+
+btnRenameCancel.addEventListener("click", closeRenameModal);
+renameModal.addEventListener("click", (e) => {
+  if (e.target === renameModal) closeRenameModal();
+});
+renameForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!renameAccId) return;
+  const id = renameAccId;
+  const alias = inpRename.value.trim() || null;
+  closeRenameModal();
+  setPref(id, { alias });
+});
+
+// ---- frameless desktop resize edges
+if (!isRemote) {
+  type ResizeDir = Parameters<ReturnType<typeof getCurrentWindow>["startResizeDragging"]>[0];
+  document.querySelectorAll<HTMLElement>(".resize-edge[data-resize]").forEach((el) => {
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const dir = el.dataset.resize as ResizeDir;
+      void getCurrentWindow().startResizeDragging(dir).catch(() => {});
+    });
+  });
+}
 
 const analyticsView = createAnalyticsView({
   onSettingsSaved: (snap) => renderDashboard(snap),
@@ -1178,11 +1637,22 @@ function stopRecording() {
   hotkeyHint.classList.add("hidden");
 }
 
+function showHotkeyBrowserWarning(hk: string) {
+  if (hotkeyHint.classList.contains("error")) return;
+  if (/^Ctrl\+[A-Z]$/i.test(hk)) {
+    hotkeyHint.textContent = t("提醒：{combo} 為全域快捷鍵，可能會覆蓋瀏覽器等軟體的同組合鍵", { combo: hk });
+    hotkeyHint.classList.remove("error", "hidden");
+  }
+}
+
 function saveHotkey(hk: string) {
   stopRecording();
   commitSettings({ hotkey: hk }, true);
   btnHotkey.innerHTML = hotkeyLabel(hk);
-  window.setTimeout(() => void showHotkeyStatus(), 400);
+  showHotkeyBrowserWarning(hk);
+  window.setTimeout(() => {
+    void showHotkeyStatus().then(() => showHotkeyBrowserWarning(hk));
+  }, 400);
 }
 
 /** KeyboardEvent → "Ctrl+Alt+Q"; null = only modifiers so far; "" = missing modifier. */
@@ -1503,10 +1973,12 @@ $("btn-test-notify").addEventListener("click", () => {
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (showingSub) closeSub();
+  if (renameAccId) closeRenameModal();
+  else if (ctxAccId) closeCtxMenu();
+  else if (showingSub) closeSub();
   else if (showingSettings) setSettingsVisible(false);
   else if (activeDashTab === "analytics") setDashTab("quota");
-  else if (!isRemote) invoke("hide_panel").catch(() => {});
+  else if (!isRemote) invoke("hide_panel", { force: true }).catch(() => {});
 });
 
 selLanguage.addEventListener("change", () =>

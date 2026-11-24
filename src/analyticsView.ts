@@ -1,5 +1,6 @@
 import { call } from "./bridge";
 import { locale, t } from "./i18n";
+import { buildAccountLabelMap, prettyModelName } from "./modelFormat";
 import type { AppSettings, Cost, DashboardSnapshot, Price, ProviderKind, ReportRow, UsageReport } from "./types";
 
 /**
@@ -96,6 +97,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
   let report: UsageReport | null = null;
   let settings: AppSettings | null = null;
   let names: Record<string, { name: string; provider: ProviderKind }> = {};
+  let accountLabels: Record<string, string> = {};
   let current: Stacked | null = null;
   let pollTimer: number | undefined;
   let loadSeq = 0;
@@ -108,7 +110,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
   }
 
   function nameOf(id: string): string {
-    return names[id]?.name ?? id.replace(/^[a-z]+:/, "");
+    return accountLabels[id] ?? names[id]?.name ?? id.replace(/^[a-z]+:/, "");
   }
 
   function slotLabel(ts: number, long = false): string {
@@ -144,7 +146,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
   }
 
   function seriesLabel(k: string): string {
-    return account ? k.replace(/^claude-/, "") : nameOf(k);
+    return account ? prettyModelName(k) : nameOf(k);
   }
 
   function colours(keys: string[]): Record<string, string> {
@@ -364,7 +366,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
       ? entries
           .map(
             ([m, v], i) =>
-              `<li class="bar-row"><span class="an-rk-n an-mono">${esc(m)}</span><span class="an-rk-v">${esc(fmt(v))}</span><span class="an-rk-bar"><span style="width:${(v / top) * 100}%" class="${i === 0 ? "lead" : ""}"></span></span></li>`,
+              `<li class="bar-row"><span class="an-rk-n" title="${esc(m)}">${esc(prettyModelName(m))}</span><span class="an-rk-v">${esc(fmt(v))}</span><span class="an-rk-bar"><span style="width:${(v / top) * 100}%" class="${i === 0 ? "lead" : ""}"></span></span></li>`,
           )
           .join("")
       : `<li class="an-empty">${esc(t("這段時間沒有用量"))}</li>`;
@@ -396,7 +398,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
           const state = m.custom ? t("自訂") : p ? t("牌價") : t("未定價");
           return `<div class="an-price-item${p ? "" : " unpriced"}" data-model="${esc(m.model)}">
             <div class="an-price-head">
-              <span class="an-mono an-pm" title="${esc(m.model || "?")}">${esc(m.model || "?")}</span>
+              <span class="an-pm" title="${esc(m.model || "?")}">${esc(prettyModelName(m.model || "?"))}</span>
               <span class="an-pstate">${m.custom ? `<button class="link-btn" data-reset>${esc(t("還原"))}</button>` : esc(state)}</span>
             </div>
             <div class="an-price-grid">
@@ -558,6 +560,7 @@ export function createAnalyticsView(opts: AnalyticsViewOptions = {}): AnalyticsV
           };
         }
         names = nextNames;
+        accountLabels = buildAccountLabelMap(nextNames);
         if (active && report) {
           fillAccounts();
           render();

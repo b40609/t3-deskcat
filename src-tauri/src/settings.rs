@@ -68,10 +68,15 @@ pub fn sanitize(s: &mut AppSettings) {
     }
     if !matches!(
         s.panel_position.as_str(),
-        "pet" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center"
+        "pet" | "remember" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center"
     ) {
         s.panel_position = "pet".to_string();
     }
+    if !matches!(s.panel_layout.as_str(), "classic" | "dense") {
+        s.panel_layout = "classic".to_string();
+    }
+    s.panel_width = s.panel_width.map(|w| w.clamp(320, 680));
+    s.panel_height = s.panel_height.map(|h| h.clamp(420, 1080));
     s.hotkey = s.hotkey.trim().to_string();
     s.claude_min_interval_secs = s.claude_min_interval_secs.clamp(60, 1800);
     if s.mobile_port < 1024 {
@@ -125,6 +130,9 @@ mod tests {
             "showAntigravityExtra":false,"launchAtStartup":false,"petX":null,"petY":null}"#;
         let s: AppSettings = serde_json::from_str(raw).unwrap();
         assert_eq!(s.hotkey, "Ctrl+Alt+Q");
+        assert_eq!(s.panel_layout, "classic");
+        assert!(!s.panel_pinned);
+        assert!(s.panel_x.is_none() && s.panel_width.is_none());
         assert_eq!(s.claude_min_interval_secs, 90);
         assert!(s.notify_on_reset && s.show_pet && s.pet_snap_edge);
         assert!(!s.show_usage_stats);
@@ -160,6 +168,9 @@ mod tests {
             pet_opacity: 5,
             pet_click_action: "triple".into(),
             panel_position: "floating".into(),
+            panel_layout: "grid".into(),
+            panel_width: Some(120),
+            panel_height: Some(2500),
             hotkey: "  Ctrl+Alt+K  ".into(),
             claude_min_interval_secs: 10,
             mobile_port: 80,
@@ -193,6 +204,9 @@ mod tests {
         assert_eq!(s.pet_opacity, 30);
         assert_eq!(s.pet_click_action, "single");
         assert_eq!(s.panel_position, "pet");
+        assert_eq!(s.panel_layout, "classic");
+        assert_eq!(s.panel_width, Some(320));
+        assert_eq!(s.panel_height, Some(1080));
         assert_eq!(s.hotkey, "Ctrl+Alt+K");
         assert_eq!(s.claude_min_interval_secs, 60);
         assert_eq!(s.mobile_port, 8765);

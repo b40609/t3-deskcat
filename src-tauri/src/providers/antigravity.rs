@@ -104,7 +104,7 @@ pub async fn fetch_antigravity_quota(
                 id,
                 name,
                 now,
-                "error",
+                if t3_token.is_some() { "expired" } else { "error" },
                 if t3_token.is_some() {
                     crate::tr!("憑證已過期：開啟 Antigravity（或 T3 Code）會自動刷新")
                 } else {
@@ -582,7 +582,7 @@ mod tests {
         fs::create_dir_all(t3_expired_no_client.parent().unwrap()).unwrap();
         fs::write(&t3_expired_no_client, r#"{"token":{"access_token":"old","refresh_token":"rt","expiry":"2020-01-01T00:00:00Z"}}"#).unwrap();
         let no_cli = fetch_antigravity_quota(&client, "ag:c".into(), "C".into(), &t3_expired_no_client, false).await;
-        assert_eq!(no_cli.status, "error");
+        assert_eq!(no_cli.status, "expired");
         assert!(no_cli.error.as_deref().unwrap_or("").contains("Antigravity"));
 
         let _ = fs::remove_dir_all(&dir);

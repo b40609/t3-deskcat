@@ -64,6 +64,8 @@ struct InnerState {
     notify: NotifyState,
     panel_pinned: bool,
     last_toggle: Instant,
+    last_auto_position: Instant,
+    bounds_save_seq: u64,
     tray_id: String,
     cache: QuotaCache,
     history: History,
@@ -182,6 +184,11 @@ async fn remote_invoke(
             next.show_pet = cur.show_pet;
             next.hotkey = cur.hotkey.clone();
             next.panel_position = cur.panel_position.clone();
+            next.panel_pinned = cur.panel_pinned;
+            next.panel_x = cur.panel_x;
+            next.panel_y = cur.panel_y;
+            next.panel_width = cur.panel_width;
+            next.panel_height = cur.panel_height;
             next.pet_x = cur.pet_x;
             next.pet_y = cur.pet_y;
             next.extra_account_dirs = cur.extra_account_dirs.clone();
@@ -256,7 +263,13 @@ fn show_panel_tab(app: &AppHandle, tab: &str) -> tauri::Result<()> {
         }
     }
     if let Some(panel) = app.get_webview_window("panel") {
+        let pinned = app
+            .try_state::<SharedState>()
+            .and_then(|s| s.0.lock().ok().map(|g| g.panel_pinned))
+            .unwrap_or(false);
         if !panel.is_visible().unwrap_or(false) {
+            apply_saved_panel_size(app, &panel);
+            apply_panel_pin_state(&panel, pinned);
             position_panel(app, &panel);
         }
         let _ = panel.unminimize();
@@ -321,7 +334,21 @@ fn update_settings(
         let mut clean = new_settings;
         settings::sanitize(&mut clean);
 
-        // Preserve saved pet coordinates if caller passed None
+        // Preserve saved pet / panel window bounds if caller omitted them, and keep pin state
+        // owned by `set_panel_pinned` so settings updates never clobber live pin toggles.
+        clean.panel_pinned = guard.panel_pinned;
+        if clean.panel_x.is_none() {
+            clean.panel_x = guard.settings.panel_x;
+        }
+        if clean.panel_y.is_none() {
+            clean.panel_y = guard.settings.panel_y;
+        }
+        if clean.panel_width.is_none() {
+            clean.panel_width = guard.settings.panel_width;
+        }
+        if clean.panel_height.is_none() {
+            clean.panel_height = guard.settings.panel_height;
+        }
         if clean.pet_x.is_none() {
             clean.pet_x = guard.settings.pet_x;
         }
@@ -424,7 +451,14 @@ fn toggle_panel_window(app: &AppHandle) -> Option<bool> {
         let _ = panel.hide();
         Some(false)
     } else {
+        let pinned = app
+            .try_state::<SharedState>()
+            .and_then(|s| s.0.lock().ok().map(|g| g.panel_pinned))
+            .unwrap_or(false);
+        apply_saved_panel_size(app, &panel);
+        apply_panel_pin_state(&panel, pinned);
         position_panel(app, &panel);
+        let _ = panel.unminimize();
         let _ = panel.show();
         let _ = panel.set_focus();
         Some(true)
@@ -470,9 +504,9 @@ fn get_history(state: tauri::State<SharedState>) -> HashMap<String, Vec<(i64, i3
 }
 
 #[tauri::command]
-fn hide_panel(app: AppHandle, state: tauri::State<SharedState>) {
+fn hide_panel(app: AppHandle, state: tauri::State<SharedState>, force: Option<bool>) {
     let pinned = state.0.lock().map(|g| g.panel_pinned).unwrap_or(false);
-    if pinned {
+    if pinned && !force.unwrap_or(false) {
         return;
     }
     if let Some(panel) = app.get_webview_window("panel") {
@@ -480,10 +514,57 @@ fn hide_panel(app: AppHandle, state: tauri::State<SharedState>) {
     }
 }
 
+/// Pinned mode behaves as a normal desktop widget window (does not block other apps,
+/// appears on taskbar/Alt+Tab, remembers position & size). Unpinned acts as a flyout.
+fn apply_panel_pin_state(panel: &tauri::WebviewWindow, pinned: bool) {
+    let _ = panel.set_always_on_top(!pinned);
+    let _ = panel.set_skip_taskbar(!pinned);
+}
+
 #[tauri::command]
-fn set_panel_pinned(state: tauri::State<SharedState>, pinned: bool) {
-    if let Ok(mut guard) = state.0.lock() {
+fn set_panel_pinned(app: AppHandle, state: tauri::State<SharedState>, pinned: bool) {
+    let bounds = app.get_webview_window("panel").and_then(|panel| {
+        if !panel.is_visible().unwrap_or(false) {
+            return None;
+        }
+        let pos = panel.outer_position().ok()?;
+        let size = panel.inner_size().ok()?;
+        let scale = panel.scale_factor().unwrap_or(1.0).max(0.5);
+        let w = (size.width as f64 / scale).round() as u32;
+        let h = (size.height as f64 / scale).round() as u32;
+        Some((pos.x, pos.y, w, h))
+    });
+
+    let snap_to_emit = if let Ok(mut guard) = state.0.lock() {
         guard.panel_pinned = pinned;
+        guard.settings.panel_pinned = pinned;
+        if let Some((x, y, w, h)) = bounds {
+            if x > -10_000 && y > -10_000 {
+                guard.settings.panel_x = Some(x);
+                guard.settings.panel_y = Some(y);
+            }
+            if w >= 300 && h >= 360 {
+                guard.settings.panel_width = Some(w.clamp(320, 680));
+                guard.settings.panel_height = Some(h.clamp(420, 1080));
+            }
+        }
+        let _ = settings::save_settings(&guard.settings);
+        let clean = guard.settings.clone();
+        if let Some(ref mut snap) = guard.snapshot {
+            snap.settings = clean;
+            Some(snap.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(panel) = app.get_webview_window("panel") {
+        apply_panel_pin_state(&panel, pinned);
+    }
+    if let Some(snap) = snap_to_emit {
+        let _ = app.emit("snapshot-updated", &snap);
     }
 }
 
@@ -1154,13 +1235,21 @@ fn resets_soon(acc: &AccountQuota, now: i64) -> Option<i64> {
 fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
     let mut picks = Vec::new();
     for provider in [ProviderKind::Claude, ProviderKind::Antigravity] {
-        let candidates: Vec<&AccountQuota> = accounts
+        let all_usable: Vec<&AccountQuota> = accounts
             .iter()
             .filter(|a| a.provider == provider && is_usable(a) && a.effective_remaining > 0)
             .collect();
-        if candidates.is_empty() {
+        if all_usable.is_empty() {
             continue;
         }
+        // Never let expired cached snapshots crowd out ready-to-use active accounts;
+        // only fall back to expired last-known entries when every account for this provider expired.
+        let active: Vec<&AccountQuota> = all_usable
+            .iter()
+            .copied()
+            .filter(|a| a.status != "expired")
+            .collect();
+        let candidates = if active.is_empty() { all_usable } else { active };
 
         let soon = candidates
             .iter()
@@ -1388,12 +1477,80 @@ fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
     }
 }
 
-/// Place the panel according to the "panel position" setting.
+fn apply_saved_panel_size(app: &AppHandle, panel: &tauri::WebviewWindow) {
+    let saved = app.try_state::<SharedState>().and_then(|s| {
+        s.0.lock().ok().map(|mut g| {
+            g.last_auto_position = Instant::now();
+            (g.settings.panel_width, g.settings.panel_height)
+        })
+    });
+    if let Some((Some(w), Some(h))) = saved {
+        let _ = panel.set_size(Size::Logical(LogicalSize::new(
+            w.clamp(320, 680) as f64,
+            h.clamp(420, 1080) as f64,
+        )));
+    }
+}
+
+fn panel_pos_on_any_monitor(panel: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    let Ok(monitors) = panel.available_monitors() else {
+        return false;
+    };
+    let (pw, ph) = panel
+        .outer_size()
+        .map(|s| (s.width as i32, s.height as i32))
+        .unwrap_or((376, 620));
+    let cx = x + pw / 2;
+    let cy = y + (ph / 2).min(120);
+    monitors.iter().any(|m| {
+        let wa = m.work_area();
+        let l = wa.position.x;
+        let t = wa.position.y;
+        let r = l + wa.size.width as i32;
+        let b = t + wa.size.height as i32;
+        cx >= l && cx <= r && cy >= t && cy <= b
+    })
+}
+
+fn schedule_bounds_save(state: SharedState, seq: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        if let Ok(guard) = state.0.lock() {
+            if guard.bounds_save_seq == seq {
+                let _ = settings::save_settings(&guard.settings);
+            }
+        }
+    });
+}
+
+/// Place the panel according to the "panel position" setting (or saved bounds when pinned/remembered).
 fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
-    let (mut where_, show_pet) = app
+    let (mut where_, show_pet, pinned, saved_pos) = app
         .try_state::<SharedState>()
-        .and_then(|s| s.0.lock().ok().map(|g| (g.settings.panel_position.clone(), g.settings.show_pet)))
-        .unwrap_or_else(|| ("pet".to_string(), true));
+        .and_then(|s| {
+            s.0.lock().ok().map(|mut g| {
+                g.last_auto_position = Instant::now();
+                (
+                    g.settings.panel_position.clone(),
+                    g.settings.show_pet,
+                    g.panel_pinned,
+                    g.settings.panel_x.zip(g.settings.panel_y),
+                )
+            })
+        })
+        .unwrap_or_else(|| ("pet".to_string(), true, false, None));
+
+    if (pinned || where_ == "remember")
+        && saved_pos.is_some_and(|(x, y)| panel_pos_on_any_monitor(panel, x, y))
+    {
+        let (x, y) = saved_pos.unwrap();
+        let _ = panel.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+        return;
+    }
+
+    if where_ == "remember" {
+        where_ = if show_pet { "pet".to_string() } else { "bottom_right".to_string() };
+    }
     if where_ == "pet" {
         if show_pet {
             position_panel_near_pet(app, panel);
@@ -1493,8 +1650,10 @@ pub fn run() {
         settings: loaded_settings.clone(),
         snapshot: None,
         notify: NotifyState::load(),
-        panel_pinned: false,
+        panel_pinned: loaded_settings.panel_pinned,
         last_toggle: Instant::now() - Duration::from_secs(5),
+        last_auto_position: Instant::now() - Duration::from_secs(5),
+        bounds_save_seq: 0,
         tray_id: "main-tray".to_string(),
         cache: QuotaCache::load(),
         history: History::load(),
@@ -1530,6 +1689,12 @@ pub fn run() {
                 }
             }
             if let Some(panel) = panel {
+                let pinned = app
+                    .try_state::<SharedState>()
+                    .and_then(|s| s.0.lock().ok().map(|g| g.panel_pinned))
+                    .unwrap_or(false);
+                apply_saved_panel_size(app, &panel);
+                apply_panel_pin_state(&panel, pinned);
                 position_panel(app, &panel);
                 let _ = panel.unminimize();
                 let _ = panel.show();
@@ -1612,12 +1777,14 @@ pub fn run() {
                 g.hotkey_error = hk_err;
             }
             if let Some(ref panel) = app.get_webview_window("panel") {
+                apply_saved_panel_size(&handle, panel);
+                apply_panel_pin_state(panel, loaded_settings.panel_pinned);
                 position_panel(&handle, panel);
                 let _ = panel.show();
                 let _ = panel.set_focus();
             }
 
-            // Auto-hide panel when it loses focus (unless pinned) and guard against Alt+F4
+            // Auto-hide panel when it loses focus (unless pinned), remember user moves/resizes, and guard against Alt+F4
             if let Some(panel) = app.get_webview_window("panel") {
                 let panel_handle = handle.clone();
                 let panel_state = shared.clone();
@@ -1636,6 +1803,57 @@ pub fn run() {
                         if !pinned && !recently_toggled && !DIALOG_OPEN.load(Ordering::Acquire) {
                             if let Some(w) = panel_handle.get_webview_window("panel") {
                                 let _ = w.hide();
+                            }
+                        }
+                    }
+                    WindowEvent::Moved(pos) => {
+                        let visible = panel_handle
+                            .get_webview_window("panel")
+                            .and_then(|w| w.is_visible().ok())
+                            .unwrap_or(false);
+                        if !visible || pos.x < -10_000 || pos.y < -10_000 {
+                            return;
+                        }
+                        if let Ok(mut g) = panel_state.0.lock() {
+                            if g.last_auto_position.elapsed() < Duration::from_millis(350) {
+                                return;
+                            }
+                            if g.settings.panel_x != Some(pos.x) || g.settings.panel_y != Some(pos.y) {
+                                g.settings.panel_x = Some(pos.x);
+                                g.settings.panel_y = Some(pos.y);
+                                g.bounds_save_seq = g.bounds_save_seq.wrapping_add(1);
+                                let seq = g.bounds_save_seq;
+                                drop(g);
+                                schedule_bounds_save(panel_state.clone(), seq);
+                            }
+                        }
+                    }
+                    WindowEvent::Resized(size) => {
+                        let Some(w_win) = panel_handle.get_webview_window("panel") else {
+                            return;
+                        };
+                        if !w_win.is_visible().unwrap_or(false) {
+                            return;
+                        }
+                        let scale = w_win.scale_factor().unwrap_or(1.0).max(0.5);
+                        let lw = (size.width as f64 / scale).round() as u32;
+                        let lh = (size.height as f64 / scale).round() as u32;
+                        if lw < 300 || lh < 360 {
+                            return;
+                        }
+                        let cw = lw.clamp(320, 680);
+                        let ch = lh.clamp(420, 1080);
+                        if let Ok(mut g) = panel_state.0.lock() {
+                            if g.last_auto_position.elapsed() < Duration::from_millis(350) {
+                                return;
+                            }
+                            if g.settings.panel_width != Some(cw) || g.settings.panel_height != Some(ch) {
+                                g.settings.panel_width = Some(cw);
+                                g.settings.panel_height = Some(ch);
+                                g.bounds_save_seq = g.bounds_save_seq.wrapping_add(1);
+                                let seq = g.bounds_save_seq;
+                                drop(g);
+                                schedule_bounds_save(panel_state.clone(), seq);
                             }
                         }
                     }
@@ -1886,9 +2104,15 @@ mod tests {
         let mut idle = mock_acc("c1", ProviderKind::Claude, "Idle", 100);
         idle.status = "expired".into();
         let busy = mock_acc("c2", ProviderKind::Claude, "Busy", 30);
-        let picks = compute_picks(&[idle, busy], 0);
-        assert_eq!(picks[0].account_name, "Idle");
-        assert!(picks[0].note.is_some());
+        // Active accounts always beat expired cached snapshots in SmartPick.
+        let picks = compute_picks(&[idle.clone(), busy], 0);
+        assert_eq!(picks[0].account_name, "Busy");
+        assert!(picks[0].note.is_none());
+
+        // When every usable account for a provider is expired, fall back to last-known with a note.
+        let fallback_picks = compute_picks(&[idle], 0);
+        assert_eq!(fallback_picks[0].account_name, "Idle");
+        assert!(fallback_picks[0].note.is_some());
 
         // Without cached numbers an expired account is not usable.
         let mut empty = mock_acc("c3", ProviderKind::Claude, "Gone", 0);
