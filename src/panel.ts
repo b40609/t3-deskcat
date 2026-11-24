@@ -691,9 +691,16 @@ function renderDenseToolbar(visible: AccountQuota[]) {
 
 function renderAccounts(snap: DashboardSnapshot) {
   const visible = visibleAccounts(snap.accounts);
-  const badCount = visible.filter((a) => a.status !== "ok" && a.status !== "stale").length;
-  accountsAlert.classList.toggle("hidden", badCount === 0);
-  if (badCount > 0) accountsAlert.textContent = t("{n} 個帳號異常", { n: badCount });
+  // Idle expired tokens already show per-row badges and the bottom expired group;
+  // reserve the top red alert banner for real fetch / connection failures and name them.
+  const badAccounts = visible.filter(
+    (a) => a.status !== "ok" && a.status !== "stale" && a.status !== "expired",
+  );
+  accountsAlert.classList.toggle("hidden", badAccounts.length === 0);
+  if (badAccounts.length > 0) {
+    const names = badAccounts.map((a) => displayName(a)).join("、");
+    accountsAlert.textContent = `${t("{n} 個帳號異常", { n: badAccounts.length })}：${names}`;
+  }
 
   renderDenseToolbar(visible);
   const dupNames = duplicateNameSet(visible);
