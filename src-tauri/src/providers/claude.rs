@@ -17,6 +17,16 @@ pub async fn fetch_claude_quota(
     name: String,
     credentials_path: &Path,
 ) -> FetchOutcome {
+    fetch_claude_quota_at(client, id, name, credentials_path, CLAUDE_USAGE_URL).await
+}
+
+async fn fetch_claude_quota_at(
+    client: &Client,
+    id: String,
+    name: String,
+    credentials_path: &Path,
+    usage_url: &str,
+) -> FetchOutcome {
     let now = Utc::now().timestamp();
 
     let raw_creds = match fs::read_to_string(credentials_path) {
@@ -93,7 +103,7 @@ pub async fn fetch_claude_quota(
     }
 
     let resp = client
-        .get(CLAUDE_USAGE_URL)
+        .get(usage_url)
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {access_token}"))
         .header("anthropic-beta", CLAUDE_BETA_HEADER)
         .header(reqwest::header::ACCEPT, "application/json")
@@ -462,6 +472,93 @@ mod tests {
         assert_eq!(q.primary_windows.len(), 2);
         assert_eq!((q.primary_windows[0].label.as_str(), q.primary_windows[0].remaining_percent), ("5h", 78));
         assert_eq!((q.primary_windows[1].label.as_str(), q.primary_windows[1].remaining_percent), ("Wk", 55));
+    }
+
+    #[tokio::test]
+    async fn mock_http_verifies_ok_429_retry_after_and_local_expiry_shortcircuit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits_srv = hits.clone();
+        let srv = tokio::spawn(async move {
+            let responses = [
+                (
+                    "200 OK",
+                    "",
+                    r#"{"five_hour":{"utilization":15.0,"resets_at":"2026-11-24T20:00:00Z"},"seven_day":{"utilization":40.0,"resets_at":"2026-11-30T00:00:00Z"}}"#,
+                ),
+                ("429 Too Many Requests", "Retry-After: 420\r\n", r#"{"error":"rate_limit"}"#),
+                ("429 Too Many Requests", "Retry-After: 0\r\n", r#"{"error":"rate_limit"}"#),
+                ("401 Unauthorized", "", r#"{"error":"expired"}"#),
+            ];
+            for (status, extra_hdr, body) in responses {
+                let (mut s, _) = listener.accept().await.unwrap();
+                hits_srv.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_hdr}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("dc_claude_mock_{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let valid_path = tmp.join("valid.json");
+        let future_ms = (Utc::now().timestamp() + 3600) * 1000;
+        fs::write(
+            &valid_path,
+            format!(r#"{{"claudeAiOauth":{{"accessToken":"tok","subscriptionType":"team","expiresAt":{future_ms}}}}}"#),
+        )
+        .unwrap();
+
+        let client = Client::new();
+        let url = format!("http://{addr}/api/oauth/usage");
+
+        // 1. 200 OK
+        let r1 = fetch_claude_quota_at(&client, "claude:t".into(), "T".into(), &valid_path, &url).await;
+        assert!(r1.network_hit);
+        assert_eq!(r1.quota.status, "ok");
+        assert_eq!(r1.quota.effective_remaining, 60);
+
+        // 2. 429 with Retry-After: 420
+        let r2 = fetch_claude_quota_at(&client, "claude:t".into(), "T".into(), &valid_path, &url).await;
+        assert!(r2.network_hit);
+        assert_eq!(r2.quota.status, "cooldown");
+        assert_eq!(r2.retry_after_secs, Some(420));
+
+        // 3. 429 with Retry-After: 0 (Anthropic bug)
+        let r3 = fetch_claude_quota_at(&client, "claude:t".into(), "T".into(), &valid_path, &url).await;
+        assert!(r3.network_hit);
+        assert_eq!(r3.quota.status, "cooldown");
+        assert_eq!(r3.retry_after_secs, Some(0));
+
+        // 4. 401 expired
+        let r4 = fetch_claude_quota_at(&client, "claude:t".into(), "T".into(), &valid_path, &url).await;
+        assert!(r4.network_hit);
+        assert_eq!(r4.quota.status, "expired");
+
+        // 5. Locally expired token MUST NOT hit the network
+        let exp_path = tmp.join("expired.json");
+        fs::write(
+            &exp_path,
+            r#"{"claudeAiOauth":{"accessToken":"tok","subscriptionType":"pro","expiresAt":1000}}"#,
+        )
+        .unwrap();
+        let r5 = fetch_claude_quota_at(&client, "claude:t".into(), "T".into(), &exp_path, &url).await;
+        assert!(!r5.network_hit);
+        assert_eq!(r5.quota.status, "expired");
+
+        srv.await.unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 4);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
 

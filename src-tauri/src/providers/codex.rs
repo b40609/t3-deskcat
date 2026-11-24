@@ -18,6 +18,16 @@ pub async fn fetch_codex_quota(
     name: String,
     auth_path: &Path,
 ) -> FetchOutcome {
+    fetch_codex_quota_at(client, id, name, auth_path, CODEX_USAGE_URL).await
+}
+
+async fn fetch_codex_quota_at(
+    client: &Client,
+    id: String,
+    name: String,
+    auth_path: &Path,
+    usage_url: &str,
+) -> FetchOutcome {
     let now = Utc::now().timestamp();
 
     let raw = match fs::read_to_string(auth_path) {
@@ -88,7 +98,7 @@ pub async fn fetch_codex_quota(
         .filter(|s| !s.is_empty());
 
     let mut req = client
-        .get(CODEX_USAGE_URL)
+        .get(usage_url)
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {access_token}"))
         .header(
@@ -621,6 +631,38 @@ mod tests {
         assert_eq!(r2.quota.status, "expired");
         assert!(!r2.network_hit);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn mock_http_handles_codex_429_and_retry_after() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let srv = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf).await;
+            let body = r#"{"detail":"rate limited"}"#;
+            let resp = format!(
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 240\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = s.write_all(resp.as_bytes()).await;
+        });
+
+        let dir = tmp_dir("429");
+        let auth = dir.join("auth.json");
+        fs::write(&auth, r#"{"tokens":{"access_token":"opaque_valid_tok"}}"#).unwrap();
+        let client = Client::new();
+        let url = format!("http://{addr}/wham/usage");
+        let r = fetch_codex_quota_at(&client, "codex:t".into(), "Codex".into(), &auth, &url).await;
+        assert!(r.network_hit);
+        assert_eq!(r.quota.status, "cooldown");
+        assert_eq!(r.retry_after_secs, Some(240));
+        srv.await.unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 }

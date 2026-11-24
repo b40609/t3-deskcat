@@ -87,6 +87,18 @@ pub async fn fetch_antigravity_quota(
     token_path: &Path,
     is_legacy_gemini: bool,
 ) -> FetchOutcome {
+    fetch_antigravity_quota_at(client, id, name, token_path, is_legacy_gemini, CODE_ASSIST_BASE)
+        .await
+}
+
+async fn fetch_antigravity_quota_at(
+    client: &Client,
+    id: String,
+    name: String,
+    token_path: &Path,
+    is_legacy_gemini: bool,
+    code_assist_base: &str,
+) -> FetchOutcome {
     let now = Utc::now().timestamp();
 
     let raw = match fs::read_to_string(token_path) {
@@ -247,6 +259,7 @@ pub async fn fetch_antigravity_quota(
     } else {
         let load_res = post_code_assist(
             client,
+            code_assist_base,
             &access_token,
             "v1internal:loadCodeAssist",
             &json!({
@@ -313,6 +326,7 @@ pub async fn fetch_antigravity_quota(
     // Cloud Code requires fetchAvailableModels before retrieveUserQuotaSummary returns buckets.
     if let Err(err) = post_code_assist(
         client,
+        code_assist_base,
         &access_token,
         "v1internal:fetchAvailableModels",
         &project_payload,
@@ -331,6 +345,7 @@ pub async fn fetch_antigravity_quota(
 
     let quota = match post_code_assist(
         client,
+        code_assist_base,
         &access_token,
         "v1internal:retrieveUserQuotaSummary",
         &project_payload,
@@ -451,13 +466,14 @@ async fn refresh_google_token(
 
 async fn post_code_assist(
     client: &Client,
+    code_assist_base: &str,
     access_token: &str,
     endpoint: &str,
     payload: &Value,
     user_agent: &str,
     now: i64,
 ) -> Result<Value, ApiErr> {
-    let url = format!("{CODE_ASSIST_BASE}/{endpoint}");
+    let url = format!("{code_assist_base}/{endpoint}");
     let resp = client
         .post(&url)
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {access_token}"))
@@ -783,6 +799,121 @@ mod tests {
         assert!(!no_cli.network_hit);
         assert!(no_cli.quota.error.as_deref().unwrap_or("").contains("Antigravity"));
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn mock_http_caches_oauth_token_and_load_code_assist_and_handles_429_401() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let oauth_hits = Arc::new(AtomicUsize::new(0));
+        let load_hits = Arc::new(AtomicUsize::new(0));
+        let models_hits = Arc::new(AtomicUsize::new(0));
+        let quota_hits = Arc::new(AtomicUsize::new(0));
+        let mode = Arc::new(AtomicUsize::new(0)); // 0=ok, 1=429, 2=401
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (oh, lh, mh, qh, m_srv) = (
+            oauth_hits.clone(),
+            load_hits.clone(),
+            models_hits.clone(),
+            quota_hits.clone(),
+            mode.clone(),
+        );
+        let srv = tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = listener.accept().await else { break };
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
+                let cur_mode = m_srv.load(Ordering::SeqCst);
+                let (status, extra_hdr, body) = if path == "/oauth/token" {
+                    oh.fetch_add(1, Ordering::SeqCst);
+                    ("200 OK", "", r#"{"access_token":"cached_tok_1","expires_in":3600}"#)
+                } else if path.contains("loadCodeAssist") {
+                    lh.fetch_add(1, Ordering::SeqCst);
+                    (
+                        "200 OK",
+                        "",
+                        r#"{"cloudaicompanionProject":"proj-123","paidTier":{"name":"Google AI Pro"}}"#,
+                    )
+                } else if path.contains("fetchAvailableModels") {
+                    mh.fetch_add(1, Ordering::SeqCst);
+                    if cur_mode == 1 {
+                        ("429 Too Many Requests", "Retry-After: 300\r\n", r#"{"error":"RESOURCE_EXHAUSTED"}"#)
+                    } else if cur_mode == 2 {
+                        ("401 Unauthorized", "", r#"{"error":"UNAUTHENTICATED"}"#)
+                    } else {
+                        ("200 OK", "", "{}")
+                    }
+                } else if path.contains("retrieveUserQuotaSummary") {
+                    qh.fetch_add(1, Ordering::SeqCst);
+                    (
+                        "200 OK",
+                        "",
+                        r#"{"groups":[{"displayName":"Gemini","buckets":[{"bucketId":"gemini-5h","remainingFraction":0.8},{"bucketId":"gemini-weekly","remainingFraction":0.9}]}]}"#,
+                    )
+                } else {
+                    ("404 Not Found", "", "{}")
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_hdr}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let dir = tmp_dir("cache_mock");
+        let tok_path = dir.join("acp_token.json");
+        let base = format!("http://{addr}");
+        fs::write(
+            &tok_path,
+            format!(
+                r#"{{"client_id":"cid","client_secret":"csec","refresh_token":"rt_unique","token_uri":"{base}/oauth/token"}}"#
+            ),
+        )
+        .unwrap();
+
+        let id = format!("ag:mock_cache_{}", std::process::id());
+        let client = Client::new();
+
+        // 3 consecutive successful polls: oauth_token & loadCodeAssist must each run ONLY ONCE!
+        for _ in 0..3 {
+            let r = fetch_antigravity_quota_at(&client, id.clone(), "Mock".into(), &tok_path, false, &base).await;
+            assert!(r.network_hit);
+            assert_eq!(r.quota.status, "ok");
+            assert_eq!(r.quota.effective_remaining, 80);
+            assert_eq!(r.quota.plan.as_deref(), Some("Pro"));
+        }
+        assert_eq!(oauth_hits.load(Ordering::SeqCst), 1, "OAuth refresh must be cached in memory");
+        assert_eq!(load_hits.load(Ordering::SeqCst), 1, "loadCodeAssist must be cached for 6h");
+        assert_eq!(models_hits.load(Ordering::SeqCst), 3);
+        assert_eq!(quota_hits.load(Ordering::SeqCst), 3);
+
+        // 429 with Retry-After: 300 -> cooldown + retry_after_secs = Some(300)
+        mode.store(1, Ordering::SeqCst);
+        let r429 = fetch_antigravity_quota_at(&client, id.clone(), "Mock".into(), &tok_path, false, &base).await;
+        assert_eq!(r429.quota.status, "cooldown");
+        assert_eq!(r429.retry_after_secs, Some(300));
+
+        // 401 -> expired and evicts token & meta caches so next recovery re-runs them
+        mode.store(2, Ordering::SeqCst);
+        let r401 = fetch_antigravity_quota_at(&client, id.clone(), "Mock".into(), &tok_path, false, &base).await;
+        assert_eq!(r401.quota.status, "expired");
+
+        mode.store(0, Ordering::SeqCst);
+        let r_rec = fetch_antigravity_quota_at(&client, id.clone(), "Mock".into(), &tok_path, false, &base).await;
+        assert_eq!(r_rec.quota.status, "ok");
+        assert_eq!(oauth_hits.load(Ordering::SeqCst), 2, "evicted token cache must refresh after 401");
+        assert_eq!(load_hits.load(Ordering::SeqCst), 2, "evicted meta cache must refresh after 401");
+
+        srv.abort();
         let _ = fs::remove_dir_all(&dir);
     }
 }

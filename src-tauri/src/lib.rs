@@ -3175,5 +3175,215 @@ mod live_probe_tests {
             );
         }
     }
+
+    /// Multi-round real-world scheduler soak test (read-only, in-memory cache).
+    /// Runs 12 ticks × 30s = 6 minutes against the real local accounts, including
+    /// simulated OnDemand (panel open) and Manual refresh, verifying:
+    /// - zero false "stale" states on healthy throttled accounts
+    /// - zero 429 rate-limit bursts
+    /// - drastically reduced HTTP call volume on idle & unchanged-expired accounts
+    #[tokio::test]
+    #[ignore]
+    async fn soak_test_real_local_scheduler() {
+        let ticks: usize = std::env::var("SOAK_TICKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12);
+        let tick_secs: u64 = std::env::var("SOAK_TICK_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let settings = settings::load_settings();
+        let client = Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
+        let mut cache = QuotaCache::default();
+        let mut cred_stamps: HashMap<String, (i64, u64)> = HashMap::new();
+
+        let mut total_claude_http = 0usize;
+        let mut total_ag_http = 0usize;
+        let mut total_codex_http = 0usize;
+        let mut total_429 = 0usize;
+        let mut total_false_stale = 0usize;
+
+        for tick in 0..ticks {
+            let reason = match tick {
+                0 => RefreshReason::Startup,
+                3 => RefreshReason::OnDemand,
+                7 => RefreshReason::Manual,
+                _ => RefreshReason::Scheduled,
+            };
+            let now = Utc::now().timestamp();
+            let discovered = discover_accounts(&settings.extra_account_dirs);
+
+            let mut tick_claude_http = 0usize;
+            let mut tick_ag_http = 0usize;
+            let mut tick_codex_http = 0usize;
+            let mut tick_skipped = 0usize;
+            let mut tick_local = 0usize;
+            let mut statuses: Vec<String> = Vec::new();
+            let mut consecutive_claude_429 = 0u32;
+
+            for acc in discovered {
+                let id = acc.id().to_string();
+                let provider = discovered_provider(&acc);
+                let name = discovered_name(&acc).to_string();
+                let placeholder = placeholder_account(&acc, now);
+
+                let cred_changed = if let Some(st) = cred_stamp(&acc) {
+                    let prev = cred_stamps.insert(id.clone(), st);
+                    if prev.is_some_and(|p| p != st) {
+                        cache.clear_expired(&id);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if settings.is_hidden(&id) {
+                    tick_skipped += 1;
+                    continue;
+                }
+
+                // Zero-network local cache checks
+                if let DiscoveredAccount::Claude { ref credentials_path, .. } = acc {
+                    let min_ts = cache.last_good_updated_at(&id).unwrap_or(0);
+                    if let Some(lq) = read_local_claude_quota(&id, &name, credentials_path, min_ts, now) {
+                        let rec = cache.reconcile_outcome(lq, None, now);
+                        tick_local += 1;
+                        statuses.push(format!("{}:{}({}%)", rec.name, rec.status, rec.effective_remaining));
+                        continue;
+                    }
+                }
+                if let DiscoveredAccount::Codex { ref auth_path, .. } = acc {
+                    if let Some(home) = auth_path.parent() {
+                        let min_ts = cache.last_good_updated_at(&id).unwrap_or(0);
+                        if let Some(lq) = read_local_codex_quota(&id, &name, home, min_ts, now) {
+                            let rec = cache.reconcile_outcome(lq, None, now);
+                            tick_local += 1;
+                            statuses.push(format!("{}:{}({}%)", rec.name, rec.status, rec.effective_remaining));
+                            continue;
+                        }
+                    }
+                }
+
+                let skip_expired = !cred_changed
+                    && !matches!(reason, RefreshReason::Manual | RefreshReason::Startup)
+                    && cache.is_known_expired(&id);
+                if skip_expired {
+                    let sk = cache.skipped(&id, placeholder, now);
+                    tick_skipped += 1;
+                    statuses.push(format!("{}:{}", sk.name, sk.status));
+                    continue;
+                }
+
+                let active = activity::is_account_active(&id, now, ACTIVE_WINDOW_SECS);
+                let reset_passed = cache.has_passed_reset(&id, now);
+                let min_interval = account_min_interval(
+                    provider,
+                    is_ag_cli(&acc),
+                    &reason,
+                    active,
+                    cred_changed,
+                    reset_passed,
+                );
+                let allow_retry =
+                    matches!(reason, RefreshReason::Manual | RefreshReason::Startup) || cred_changed;
+                if !cache.may_fetch(&id, now, min_interval, allow_retry) {
+                    let sk = cache.skipped(&id, placeholder, now);
+                    if sk.status == "stale" && sk.error.is_none() {
+                        total_false_stale += 1;
+                    }
+                    tick_skipped += 1;
+                    statuses.push(format!("{}:{}({}%)", sk.name, sk.status, sk.effective_remaining));
+                    continue;
+                }
+
+                if provider == ProviderKind::Claude && consecutive_claude_429 >= 2 {
+                    let sk = cache.skipped(&id, placeholder, now);
+                    tick_skipped += 1;
+                    statuses.push(format!("{}:{}(breaker)", sk.name, sk.status));
+                    continue;
+                }
+
+                let outcome = match acc {
+                    DiscoveredAccount::Claude { id, name, credentials_path } => {
+                        if tick_claude_http > 0 {
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                        }
+                        fetch_claude_quota(&client, id, name, &credentials_path).await
+                    }
+                    DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
+                        if tick_ag_http > 0 {
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                        }
+                        fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                    }
+                    DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                        providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
+                    }
+                    DiscoveredAccount::Codex { id, name, auth_path } => {
+                        fetch_codex_quota(&client, id, name, &auth_path).await
+                    }
+                };
+
+                if outcome.network_hit {
+                    cache.note_attempt(&id, now);
+                    match provider {
+                        ProviderKind::Claude => tick_claude_http += 1,
+                        ProviderKind::Antigravity => tick_ag_http += 1,
+                        ProviderKind::Codex => tick_codex_http += 1,
+                    }
+                }
+                if outcome.quota.status == "cooldown" {
+                    total_429 += 1;
+                    if provider == ProviderKind::Claude {
+                        consecutive_claude_429 += 1;
+                    }
+                } else if outcome.network_hit && provider == ProviderKind::Claude {
+                    consecutive_claude_429 = 0;
+                }
+                let rec = cache.reconcile_outcome(outcome.quota, outcome.retry_after_secs, now);
+                if rec.status == "stale" && rec.error.is_none() {
+                    total_false_stale += 1;
+                }
+                statuses.push(format!(
+                    "{}:{}({}%){}",
+                    rec.name,
+                    rec.status,
+                    rec.effective_remaining,
+                    if outcome.network_hit { "*" } else { "" }
+                ));
+            }
+
+            total_claude_http += tick_claude_http;
+            total_ag_http += tick_ag_http;
+            total_codex_http += tick_codex_http;
+            eprintln!(
+                "[soak tick={:02}/{} reason={:?}] http(claude={}, ag={}, codex={}) local={} skipped={} | {}",
+                tick + 1,
+                ticks,
+                reason,
+                tick_claude_http,
+                tick_ag_http,
+                tick_codex_http,
+                tick_local,
+                tick_skipped,
+                statuses.join(", ")
+            );
+
+            if tick + 1 < ticks {
+                tokio::time::sleep(Duration::from_secs(tick_secs)).await;
+            }
+        }
+
+        eprintln!(
+            "[soak SUMMARY] ticks={} total_http(claude={}, ag={}, codex={}) total_429={} total_false_stale={}",
+            ticks, total_claude_http, total_ag_http, total_codex_http, total_429, total_false_stale
+        );
+        assert_eq!(total_false_stale, 0, "must never emit false stale without error");
+        assert_eq!(total_429, 0, "soak test must not trigger any 429 rate limits");
+    }
 }
 

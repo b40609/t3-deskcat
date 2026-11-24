@@ -174,6 +174,19 @@ impl QuotaCache {
                 self.backoff.remove(&fresh.id);
                 self.last_error.remove(&fresh.id);
                 self.last_expired.remove(&fresh.id);
+                // Anchor `last_attempt` to at least `fresh.updated_at` so a fresh zero-network
+                // local read (`.claude.json` / Codex `.jsonl`) also satisfies the refresh interval
+                // instead of triggering a redundant HTTP call on the very next 30 s tick.
+                if fresh.updated_at > 0 {
+                    self.last_attempt
+                        .entry(fresh.id.clone())
+                        .and_modify(|prev| {
+                            if fresh.updated_at > *prev {
+                                *prev = fresh.updated_at;
+                            }
+                        })
+                        .or_insert(fresh.updated_at);
+                }
                 self.last_good.insert(fresh.id.clone(), fresh.clone());
                 fresh
             }
@@ -463,5 +476,16 @@ mod tests {
         let mut other = fresh;
         other.id = "claude:b".into();
         assert!(c.reconcile(other, 1100).primary_windows.is_empty());
+    }
+
+    #[test]
+    fn fresh_local_observation_satisfies_interval_without_redundant_http() {
+        let mut c = QuotaCache::default();
+        // Local `.claude.json` observed at t=1000 (no note_attempt called beforehand)
+        c.reconcile(acc("ok", 89, None), 1000);
+        // 30 s later: still within 300 s interval -> must NOT hit the network
+        assert!(!c.may_fetch("claude:a", 1030, 300, false));
+        // 300 s later: interval elapsed -> allowed to fetch
+        assert!(c.may_fetch("claude:a", 1300, 300, false));
     }
 }
