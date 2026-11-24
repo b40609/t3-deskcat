@@ -428,39 +428,30 @@ fn update_settings(
     let new_startup;
     let old_hotkey;
     let new_hotkey;
+    let old_panel_position;
+    let new_panel_position;
     let lang_changed;
     let new_pet_size;
     let new_pet_theme;
     let new_show_pet;
-    let updated_snapshot;
+    let mut updated_snapshot;
     {
         let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
         old_startup = guard.settings.launch_at_startup;
         old_hotkey = guard.settings.hotkey.clone();
+        old_panel_position = guard.settings.panel_position.clone();
         let mut clean = new_settings;
         settings::sanitize(&mut clean);
 
-        // Preserve saved pet / panel window bounds if caller omitted them, and keep pin state
-        // owned by `set_panel_pinned` so settings updates never clobber live pin toggles.
+        // Keep window bounds and pin state owned by the backend window event handlers
+        // so stale coordinates cached in the frontend settings object never clobber recent drags/resizes.
         clean.panel_pinned = guard.panel_pinned;
-        if clean.panel_x.is_none() {
-            clean.panel_x = guard.settings.panel_x;
-        }
-        if clean.panel_y.is_none() {
-            clean.panel_y = guard.settings.panel_y;
-        }
-        if clean.panel_width.is_none() {
-            clean.panel_width = guard.settings.panel_width;
-        }
-        if clean.panel_height.is_none() {
-            clean.panel_height = guard.settings.panel_height;
-        }
-        if clean.pet_x.is_none() {
-            clean.pet_x = guard.settings.pet_x;
-        }
-        if clean.pet_y.is_none() {
-            clean.pet_y = guard.settings.pet_y;
-        }
+        clean.panel_x = guard.settings.panel_x;
+        clean.panel_y = guard.settings.panel_y;
+        clean.panel_width = guard.settings.panel_width;
+        clean.panel_height = guard.settings.panel_height;
+        clean.pet_x = guard.settings.pet_x;
+        clean.pet_y = guard.settings.pet_y;
         if clean.custom_image_working.is_none() {
             clean.custom_image_working = guard.settings.custom_image_working.clone();
         }
@@ -480,6 +471,7 @@ fn update_settings(
         new_show_pet = clean.show_pet;
         new_startup = clean.launch_at_startup;
         new_hotkey = clean.hotkey.clone();
+        new_panel_position = clean.panel_position.clone();
 
         if let Some(ref mut snap) = guard.snapshot {
             recompute_snapshot_metrics(snap, &clean);
@@ -508,6 +500,31 @@ fn update_settings(
             let _ = pet.hide();
             if let Some(b) = app.get_webview_window("bubble") {
                 let _ = b.hide();
+            }
+        }
+    }
+
+    if new_panel_position != old_panel_position {
+        if let Some(panel) = app.get_webview_window("panel") {
+            if panel.is_visible().unwrap_or(false) {
+                if new_panel_position == "remember" {
+                    if let Ok(pos) = panel.outer_position() {
+                        if pos.x > -10_000 && pos.y > -10_000 {
+                            if let Ok(mut guard) = state.0.lock() {
+                                guard.settings.panel_x = Some(pos.x);
+                                guard.settings.panel_y = Some(pos.y);
+                                let _ = settings::save_settings(&guard.settings);
+                                if let Some(ref mut snap) = guard.snapshot {
+                                    snap.settings.panel_x = Some(pos.x);
+                                    snap.settings.panel_y = Some(pos.y);
+                                    updated_snapshot = Some(snap.clone());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    position_panel(&app, &panel);
+                }
             }
         }
     }
@@ -621,8 +638,8 @@ fn hide_panel(app: AppHandle, state: tauri::State<SharedState>, force: Option<bo
     }
 }
 
-/// Pinned mode behaves as a normal desktop widget window (does not block other apps,
-/// appears on taskbar/Alt+Tab, remembers position & size). Unpinned acts as a flyout.
+/// Pinned mode behaves as a normal desktop widget window (does not auto-hide on blur,
+/// does not stay always-on-top, appears on taskbar/Alt+Tab). Open placement still follows `panel_position`.
 fn apply_panel_pin_state(panel: &tauri::WebviewWindow, pinned: bool) {
     let _ = panel.set_always_on_top(!pinned);
     let _ = panel.set_skip_taskbar(!pinned);
@@ -2135,9 +2152,133 @@ fn schedule_bounds_save(state: SharedState, seq: u64) {
     });
 }
 
-/// Place the panel according to the "panel position" setting (or saved bounds when pinned/remembered).
+fn should_restore_saved_panel_pos(where_: &str, saved_pos: Option<(i32, i32)>) -> bool {
+    where_ == "remember" && saved_pos.is_some()
+}
+
+fn compute_panel_position_in_work_area(
+    where_: &str,
+    work_area: (i32, i32, i32, i32),
+    panel_size: (i32, i32),
+    scale: f64,
+) -> (i32, i32) {
+    let (l, t, wa_w, wa_h) = work_area;
+    let r = l + wa_w;
+    let b = t + wa_h;
+    let (w, h) = panel_size;
+    let m = (12.0 * scale).round() as i32;
+    let max_x = (r - w - m).max(l);
+    let max_y = (b - h - m).max(t);
+    let (raw_x, raw_y) = match where_ {
+        "top_left" => (l + m, t + m),
+        "bottom_left" => (l + m, b - h - m),
+        "top_right" => (r - w - m, t + m),
+        "bottom_right" => (r - w - m, b - h - m),
+        _ => (l + (wa_w - w) / 2, t + (wa_h - h) / 2),
+    };
+    let min_x = (l + m).min(max_x);
+    let min_y = (t + m).min(max_y);
+    (raw_x.clamp(min_x, max_x), raw_y.clamp(min_y, max_y))
+}
+
+fn compute_panel_position_near_pet(
+    work_area: (i32, i32, i32, i32),
+    pet_rect: (i32, i32, i32, i32),
+    panel_size: (i32, i32),
+    scale: f64,
+) -> (i32, i32) {
+    let (wa_left, wa_top, wa_w, wa_h) = work_area;
+    let wa_right = wa_left + wa_w;
+    let wa_bottom = wa_top + wa_h;
+    let (pet_x, pet_y, pet_w, pet_h) = pet_rect;
+    let (pw, ph) = panel_size;
+    let gap = (10.0 * scale).round() as i32;
+    let margin = (8.0 * scale).round() as i32;
+    let max_x = (wa_right - pw - margin).max(wa_left + margin);
+    let max_y = (wa_bottom - ph - margin).max(wa_top + margin);
+
+    let pet_cx = pet_x + pet_w / 2;
+    let wa_cx = wa_left + wa_w / 2;
+    let aligned_x = if pet_cx < wa_cx {
+        // Pet is on the left half of the monitor: align panel left edge with pet left edge.
+        pet_x
+    } else {
+        // Pet is on the right half: align panel right edge with pet right edge.
+        pet_x + pet_w - pw
+    };
+    let clamped_x = aligned_x.clamp(wa_left + margin, max_x);
+
+    let space_above = pet_y - wa_top;
+    let space_below = wa_bottom - (pet_y + pet_h);
+    let fits_above = space_above >= ph + gap;
+    let fits_below = space_below >= ph + gap;
+
+    let pet_cy = pet_y + pet_h / 2;
+    let wa_cy = wa_top + wa_h / 2;
+
+    if fits_above && (!fits_below || pet_cy >= wa_cy) {
+        return (clamped_x, (pet_y - ph - gap).clamp(wa_top + margin, max_y));
+    }
+    if fits_below {
+        return (clamped_x, (pet_y + pet_h + gap).clamp(wa_top + margin, max_y));
+    }
+
+    // Neither above nor below fits completely (e.g. pet parked near vertical center):
+    // open beside the pet if there is room so we don't cover it.
+    let space_right = wa_right - (pet_x + pet_w);
+    let space_left = pet_x - wa_left;
+    let side_y = pet_y.clamp(wa_top + margin, max_y);
+    if space_right >= pw + gap && (space_right >= space_left || pet_cx < wa_cx) {
+        return ((pet_x + pet_w + gap).clamp(wa_left + margin, max_x), side_y);
+    }
+    if space_left >= pw + gap {
+        return ((pet_x - pw - gap).clamp(wa_left + margin, max_x), side_y);
+    }
+
+    let fallback_y = if space_above >= space_below {
+        (pet_y - ph - gap).clamp(wa_top + margin, max_y)
+    } else {
+        (pet_y + pet_h + gap).clamp(wa_top + margin, max_y)
+    };
+    (clamped_x, fallback_y)
+}
+
+fn panel_physical_size_for_monitor(
+    panel: &tauri::WebviewWindow,
+    target_scale: f64,
+    saved_size: (Option<u32>, Option<u32>),
+) -> (i32, i32) {
+    let target_scale = target_scale.max(0.5);
+    if let (Some(w), Some(h)) = saved_size {
+        let lw = w.clamp(320, 680) as f64;
+        let lh = h.clamp(420, 1080) as f64;
+        return ((lw * target_scale).round() as i32, (lh * target_scale).round() as i32);
+    }
+    let cur_scale = panel.scale_factor().unwrap_or(target_scale).max(0.5);
+    if let Ok(size) = panel.outer_size() {
+        if (cur_scale - target_scale).abs() < 0.01 {
+            return (size.width as i32, size.height as i32);
+        }
+        let ratio = target_scale / cur_scale;
+        return (
+            (size.width as f64 * ratio).round() as i32,
+            (size.height as f64 * ratio).round() as i32,
+        );
+    }
+    ((376.0 * target_scale).round() as i32, (620.0 * target_scale).round() as i32)
+}
+
+fn mark_auto_position(app: &AppHandle) {
+    if let Some(state) = app.try_state::<SharedState>() {
+        if let Ok(mut g) = state.0.lock() {
+            g.last_auto_position = Instant::now();
+        }
+    }
+}
+
+/// Place the panel according to the "panel position" setting.
 fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
-    let (mut where_, show_pet, pinned, saved_pos) = app
+    let (mut where_, show_pet, saved_pos, saved_size) = app
         .try_state::<SharedState>()
         .and_then(|s| {
             s.0.lock().ok().map(|mut g| {
@@ -2145,18 +2286,19 @@ fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
                 (
                     g.settings.panel_position.clone(),
                     g.settings.show_pet,
-                    g.panel_pinned,
                     g.settings.panel_x.zip(g.settings.panel_y),
+                    (g.settings.panel_width, g.settings.panel_height),
                 )
             })
         })
-        .unwrap_or_else(|| ("pet".to_string(), true, false, None));
+        .unwrap_or_else(|| ("pet".to_string(), true, None, (None, None)));
 
-    if (pinned || where_ == "remember")
+    if should_restore_saved_panel_pos(&where_, saved_pos)
         && saved_pos.is_some_and(|(x, y)| panel_pos_on_any_monitor(panel, x, y))
     {
         let (x, y) = saved_pos.unwrap();
         let _ = panel.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+        mark_auto_position(app);
         return;
     }
 
@@ -2165,35 +2307,47 @@ fn position_panel(app: &AppHandle, panel: &tauri::WebviewWindow) {
     }
     if where_ == "pet" {
         if show_pet {
-            position_panel_near_pet(app, panel);
+            position_panel_near_pet(app, panel, saved_size);
+            mark_auto_position(app);
             return;
         }
         where_ = "bottom_right".to_string();
     }
-    let monitor = app
-        .get_webview_window("pet")
-        .and_then(|p| p.current_monitor().ok().flatten())
-        .or_else(|| panel.primary_monitor().ok().flatten());
-    let (Some(mon), Ok(size)) = (monitor, panel.outer_size()) else {
-        position_panel_near_pet(app, panel);
+    let monitor = if show_pet {
+        app.get_webview_window("pet")
+            .and_then(|p| p.current_monitor().ok().flatten())
+            .or_else(|| panel.current_monitor().ok().flatten())
+            .or_else(|| panel.primary_monitor().ok().flatten())
+    } else {
+        panel
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| panel.primary_monitor().ok().flatten())
+    };
+    let Some(mon) = monitor else {
+        position_panel_near_pet(app, panel, saved_size);
+        mark_auto_position(app);
         return;
     };
     let wa = mon.work_area();
-    let m = (12.0 * mon.scale_factor()).round() as i32;
-    let (l, t) = (wa.position.x, wa.position.y);
-    let (r, b) = (l + wa.size.width as i32, t + wa.size.height as i32);
-    let (w, h) = (size.width as i32, size.height as i32);
-    let (x, y) = match where_.as_str() {
-        "top_left" => (l + m, t + m),
-        "bottom_left" => (l + m, b - h - m),
-        "top_right" => (r - w - m, t + m),
-        "bottom_right" => (r - w - m, b - h - m),
-        _ => (l + (r - l - w) / 2, t + (b - t - h) / 2),
-    };
+    let scale = mon.scale_factor();
+    let panel_size = panel_physical_size_for_monitor(panel, scale, saved_size);
+    let (x, y) = compute_panel_position_in_work_area(
+        &where_,
+        (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32),
+        panel_size,
+        scale,
+    );
     let _ = panel.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    mark_auto_position(app);
 }
 
-fn position_panel_near_pet(app: &AppHandle, panel: &tauri::WebviewWindow) {
+fn position_panel_near_pet(
+    app: &AppHandle,
+    panel: &tauri::WebviewWindow,
+    saved_size: (Option<u32>, Option<u32>),
+) {
     let Some(pet) = app.get_webview_window("pet") else {
         return;
     };
@@ -2201,9 +2355,6 @@ fn position_panel_near_pet(app: &AppHandle, panel: &tauri::WebviewWindow) {
         return;
     };
     let Ok(pet_size) = pet.outer_size() else {
-        return;
-    };
-    let Ok(panel_size) = panel.outer_size() else {
         return;
     };
 
@@ -2216,28 +2367,13 @@ fn position_panel_near_pet(app: &AppHandle, panel: &tauri::WebviewWindow) {
     if let Some(mon) = monitor {
         let wa = mon.work_area();
         let scale = mon.scale_factor();
-        let gap = (10.0 * scale).round() as i32;
-
-        let wa_left = wa.position.x;
-        let wa_top = wa.position.y;
-        let wa_right = wa.position.x + wa.size.width as i32;
-        let wa_bottom = wa.position.y + wa.size.height as i32;
-
-        let pw = panel_size.width as i32;
-        let ph = panel_size.height as i32;
-
-        // Align horizontally with pet's right edge, clamped inside work area
-        let mut x = pet_pos.x + pet_size.width as i32 - pw;
-        x = x.clamp(wa_left + 8, (wa_right - pw - 8).max(wa_left + 8));
-
-        // Prefer opening above the pet if there's room, otherwise below
-        let space_above = pet_pos.y - wa_top;
-        let y = if space_above >= ph + gap {
-            pet_pos.y - ph - gap
-        } else {
-            (pet_pos.y + pet_size.height as i32 + gap).min((wa_bottom - ph - 8).max(wa_top + 8))
-        };
-
+        let panel_size = panel_physical_size_for_monitor(panel, scale, saved_size);
+        let (x, y) = compute_panel_position_near_pet(
+            (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32),
+            (pet_pos.x, pet_pos.y, pet_size.width as i32, pet_size.height as i32),
+            panel_size,
+            scale,
+        );
         let _ = panel.set_position(Position::Physical(PhysicalPosition::new(x, y)));
     } else {
         let _ = panel.set_position(Position::Logical(LogicalPosition::new(100.0, 100.0)));
@@ -2458,7 +2594,7 @@ pub fn run() {
                             return;
                         }
                         if let Ok(mut g) = panel_state.0.lock() {
-                            if g.last_auto_position.elapsed() < Duration::from_millis(350) {
+                            if g.last_auto_position.elapsed() < Duration::from_millis(500) {
                                 return;
                             }
                             if g.settings.panel_x != Some(pos.x) || g.settings.panel_y != Some(pos.y) {
@@ -2487,7 +2623,7 @@ pub fn run() {
                         let cw = lw.clamp(320, 680);
                         let ch = lh.clamp(420, 1080);
                         if let Ok(mut g) = panel_state.0.lock() {
-                            if g.last_auto_position.elapsed() < Duration::from_millis(350) {
+                            if g.last_auto_position.elapsed() < Duration::from_millis(500) {
                                 return;
                             }
                             if g.settings.panel_width != Some(cw) || g.settings.panel_height != Some(ch) {
@@ -2654,6 +2790,52 @@ mod tests {
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 128), (217.0, 78.0));
         assert_eq!(pet_window_dimensions(&PetTheme::DeskCat, 96), (96.0, 96.0));
         assert_eq!(pet_window_dimensions(&PetTheme::Custom, 64), (64.0, 64.0));
+    }
+
+    #[test]
+    fn saved_panel_position_is_only_restored_in_remember_mode() {
+        let saved = Some((500, 300));
+        assert!(should_restore_saved_panel_pos("remember", saved));
+        assert!(!should_restore_saved_panel_pos("remember", None));
+        for mode in ["pet", "top_left", "top_right", "bottom_left", "bottom_right", "center"] {
+            assert!(
+                !should_restore_saved_panel_pos(mode, saved),
+                "mode {mode} must not be overridden by saved coordinates"
+            );
+        }
+    }
+
+    #[test]
+    fn panel_position_in_work_area_handles_all_presets_and_secondary_monitor() {
+        let wa = (1920, 0, 1920, 1040);
+        let size = (400, 600);
+        assert_eq!(compute_panel_position_in_work_area("top_left", wa, size, 1.0), (1932, 12));
+        assert_eq!(compute_panel_position_in_work_area("top_right", wa, size, 1.0), (3428, 12));
+        assert_eq!(compute_panel_position_in_work_area("bottom_left", wa, size, 1.0), (1932, 428));
+        assert_eq!(compute_panel_position_in_work_area("bottom_right", wa, size, 1.0), (3428, 428));
+        assert_eq!(compute_panel_position_in_work_area("center", wa, size, 1.0), (2680, 220));
+    }
+
+    #[test]
+    fn panel_position_near_pet_aligns_to_pet_edge_and_avoids_overlap() {
+        let wa = (0, 0, 1920, 1040);
+        let panel = (400, 620);
+
+        // Pet near top-left: align panel left edge with pet left edge, open below pet.
+        let (x, y) = compute_panel_position_near_pet(wa, (40, 20, 178, 64), panel, 1.0);
+        assert_eq!((x, y), (40, 94));
+
+        // Pet near bottom-right: align panel right edge with pet right edge, open above pet.
+        let (x, y) = compute_panel_position_near_pet(wa, (1718, 952, 178, 64), panel, 1.0);
+        assert_eq!((x, y), (1496, 322));
+
+        // Pet near top-right: align panel right edge with pet right edge, open below pet.
+        let (x, y) = compute_panel_position_near_pet(wa, (1718, 20, 178, 64), panel, 1.0);
+        assert_eq!((x, y), (1496, 94));
+
+        // Pet near vertical center on left side: neither above nor below fits -> open to the right of pet.
+        let (x, y) = compute_panel_position_near_pet(wa, (40, 500, 178, 64), panel, 1.0);
+        assert_eq!((x, y), (228, 412));
     }
 
     #[test]
