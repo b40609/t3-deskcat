@@ -37,8 +37,6 @@ Transparent, frameless, and resizable (`48px – 128px`, defaults to `64px`), fr
 
 - **🧭 Professional HUD Radial Gauge (Default & Productivity-focused)**:  
   Tailored for software engineers and deep-work sessions. A translucent cybernetic disc that renders real-time quota percentage (e.g. `88%`), a neon status progress arc (Cyan `>70%` / Amber `20~70%` / Crimson `<20%`), and a rotating scanner pulse. Sleek, distraction-free, and perfect for screen sharing.
-- **🐱 DeskCat Classic Pixel Cat**:  
-  The beloved 32×32 side-view cat typing at a desk, featuring 3 reactive animation states (Working `>70%`, Sweating `20%~70%`, and Sleeping `<20%`).
 - **🖼️ Custom Virtual Pets (User Uploads)**:  
   Replace the avatar with any pet, anime character, or mascot of your choice (PNG, JPG, or animated GIF). Upload distinct images for each state, or provide a single favorite image that automatically reacts with tremor shakes and floating `Zzz` bubbles!
 

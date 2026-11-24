@@ -2788,7 +2788,6 @@ mod tests {
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 48), (157.0, 56.0));
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 64), (178.0, 64.0));
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 128), (217.0, 78.0));
-        assert_eq!(pet_window_dimensions(&PetTheme::DeskCat, 96), (96.0, 96.0));
         assert_eq!(pet_window_dimensions(&PetTheme::Custom, 64), (64.0, 64.0));
     }
 

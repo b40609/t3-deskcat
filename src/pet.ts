@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { animSpeedFactor, hudCardScale, petLogicalSize, renderAvatar } from "./themeRenderer";
-import { getAnimator } from "./museAnimator";
+import { animSpeedFactor, hudCardScale, normalizePetTheme, petLogicalSize, renderAvatar } from "./themeRenderer";
 import {
   elapsedShare,
   focusOf,
@@ -29,8 +28,6 @@ let petSize = 64;
 let tick = 0;
 let activity: AgentActivity = { state: "unknown", accountId: null, lastWrite: 0 };
 let focus: Focus | null = null;
-/** Last remaining % per account window, to spot resets. */
-let lastWindows: Map<string, number> | null = null;
 
 const defaultSettings: AppSettings = {
   petSize: 64,
@@ -66,7 +63,7 @@ function applyAppearance(s: AppSettings) {
 
 function syncCanvasSize(logicalSize: number, theme?: AppSettings["petTheme"]) {
   petSize = logicalSize;
-  const activeTheme = theme ?? currentSnapshot?.settings.petTheme ?? defaultSettings.petTheme ?? "hud_gauge";
+  const activeTheme = normalizePetTheme(theme ?? currentSnapshot?.settings.petTheme ?? defaultSettings.petTheme);
   const isHud = activeTheme === "hud_gauge";
   hudCard.classList.toggle("hidden", !isHud);
   canvas.classList.toggle("hidden", isHud);
@@ -203,61 +200,24 @@ function scheduleIdle(ms: number) {
   }, ms);
 }
 
-/** Who the pet talks about, how fast the cat types and whether it types at all. */
-function updateDrive() {
+/** Who the pet talks about right now. */
+function updateFocus() {
   const snap = currentSnapshot;
   const live = activity.state === "working" || activity.state === "done" || activity.state === "error";
   focus = focusOf(snap, live ? activity.accountId : null);
-  const anim = getAnimator(ctx);
-  const rates = snap?.burnRates ?? {};
-  const rateOf = (id: string | undefined) => (id != null ? rates[id] : undefined);
-  const focusRate = rateOf(focus?.acc.id);
-  // 80 BPM idle pace up to 160 BPM at 40 %/h and above.
-  anim.tempo = 80 + (Math.min(40, Math.max(0, focusRate ?? 15)) / 40) * 80;
-  if (activity.state === "working") {
-    anim.busy = true;
-  } else if (activity.state === "unknown") {
-    // No Claude Code / Codex logs to watch: go by the burn rate alone.
-    const all = Object.values(rates);
-    anim.busy = all.length === 0 || Math.max(...all) > 0.5;
-  } else {
-    // Logs say nobody is working; Antigravity has no logs, so its burn rate still counts.
-    const ag = (snap?.accounts ?? []).filter((a) => a.provider === "antigravity").map((a) => rates[a.id] ?? 0);
-    anim.busy = ag.some((r) => r > 1);
-    if (anim.busy) anim.tempo = 80 + (Math.min(40, Math.max(...ag)) / 40) * 80;
-  }
-}
-
-/** A window going from mostly used to (nearly) full means it just reset. */
-function detectReset(snap: DashboardSnapshot) {
-  const now = new Map<string, number>();
-  for (const a of snap.accounts) {
-    if (a.status !== "ok" || snap.settings.accountPrefs?.[a.id]?.hidden) continue;
-    for (const w of a.primaryWindows) now.set(`${a.id}|${w.label}`, w.remainingPercent);
-  }
-  if (lastWindows) {
-    for (const [k, v] of now) {
-      const before = lastWindows.get(k);
-      if (before != null && before < 50 && v >= 95) {
-        getAnimator(ctx).celebrate();
-        break;
-      }
-    }
-  }
-  lastWindows = now;
 }
 
 function applySnapshot(snap: DashboardSnapshot) {
   currentSnapshot = snap;
   currentMood = snap.mood;
   applyAppearance(snap.settings);
-  detectReset(snap);
-  updateDrive();
+  updateFocus();
   if (bubbleShown) showBubble();
-  syncCanvasSize(snap.settings.petSize || 64, snap.settings.petTheme);
-  // Greyed out while no account returns fresh data (for canvas cat/custom themes).
+  const activeTheme = normalizePetTheme(snap.settings.petTheme);
+  syncCanvasSize(snap.settings.petSize || 64, activeTheme);
+  // Greyed out while no account returns fresh data (for canvas custom theme).
   canvas.style.filter = snap.offline ? "grayscale(1) brightness(0.9)" : "";
-  if ((snap.settings.petTheme ?? "hud_gauge") === "hud_gauge") {
+  if (activeTheme === "hud_gauge") {
     renderHudCard();
   }
   applyOpacity();
@@ -273,7 +233,7 @@ function frame(now: number) {
   if (moving || document.hidden || now - lastFrame < FRAME_MS) return;
   lastFrame = now;
   const settings = currentSnapshot?.settings ?? defaultSettings;
-  const theme = settings.petTheme ?? "hud_gauge";
+  const theme = normalizePetTheme(settings.petTheme);
   if (theme === "hud_gauge") {
     renderHudCard();
     return;
@@ -331,19 +291,15 @@ function hideBubble() {
 }
 
 function applyActivity(next: AgentActivity) {
-  const prev = activity.state;
   activity = next;
-  if (prev === "working" && next.state === "done") getAnimator(ctx).finish();
-  if (next.state === "error" && prev !== "error") getAnimator(ctx).oops();
-  updateDrive();
-  if ((currentSnapshot?.settings.petTheme ?? "hud_gauge") === "hud_gauge") {
+  updateFocus();
+  if (normalizePetTheme(currentSnapshot?.settings.petTheme) === "hud_gauge") {
     renderHudCard();
   }
   if (bubbleShown) showBubble();
 }
 
-// Hover: show detailed bubble (and squish cat if cat theme)
-let lastHover = 0;
+// Hover: show detailed bubble
 rootEl.addEventListener("pointerenter", () => {
   hovering = true;
   if (bubbleTimer) window.clearTimeout(bubbleTimer);
@@ -351,10 +307,6 @@ rootEl.addEventListener("pointerenter", () => {
   idle = false;
   if (idleTimer) window.clearTimeout(idleTimer);
   applyOpacity();
-  const now = performance.now();
-  if (now - lastHover < 2500) return;
-  lastHover = now;
-  getAnimator(ctx).poke("squish");
 });
 
 rootEl.addEventListener("pointerleave", () => {
@@ -409,7 +361,6 @@ rootEl.addEventListener("pointerup", (e) => {
   pointerActive = false;
   dragging = false;
   if (wasClick) {
-    getAnimator(ctx).poke("squish");
     invoke("toggle_panel").catch(() => {});
   }
 });

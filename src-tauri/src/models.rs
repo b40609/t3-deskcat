@@ -95,17 +95,30 @@ pub enum CatMood {
     Sleeping,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PetTheme {
     HudGauge,
-    DeskCat,
     Custom,
 }
 
 impl Default for PetTheme {
     fn default() -> Self {
         Self::HudGauge
+    }
+}
+
+impl<'de> Deserialize<'de> for PetTheme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = Option::<String>::deserialize(deserializer)?;
+        Ok(match raw.as_deref() {
+            Some("custom") => Self::Custom,
+            // Removed themes (e.g. legacy "desk_cat" / Muse) and unknown values fall back to default.
+            _ => Self::HudGauge,
+        })
     }
 }
 

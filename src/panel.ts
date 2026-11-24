@@ -3,6 +3,7 @@ import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
 import { call as invoke, isRemote, subscribe } from "./bridge";
 import { createAnalyticsView } from "./analyticsView";
 import { providerBadgeLabel } from "./modelFormat";
+import { normalizePetTheme } from "./themeRenderer";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
@@ -13,7 +14,6 @@ import type {
   Forecast,
   PanelLayout,
   PanelPosition,
-  PetTheme,
   ProviderKind,
   UsageToday,
 } from "./types";
@@ -70,8 +70,6 @@ const inpAutostart = $<HTMLInputElement>("inp-autostart");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
 const inpShowPet = $<HTMLInputElement>("inp-show-pet");
 const petOptions = $("pet-options");
-const rowPetEffects = $("row-pet-effects");
-const inpPetEffects = $<HTMLInputElement>("inp-pet-effects");
 const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
 const segAccDetail = $("seg-acc-detail");
 const accDetailHint = $("acc-detail-hint");
@@ -122,7 +120,7 @@ const fallbackSettings: AppSettings = {
   showPet: true,
   petX: null,
   petY: null,
-  petTheme: "desk_cat",
+  petTheme: "hud_gauge",
   uiScale: 90,
   appearance: "system",
   usageDisplay: "used",
@@ -851,10 +849,9 @@ function syncSettingsForm(s: AppSettings) {
   const showPet = s.showPet !== false;
   inpShowPet.checked = showPet;
   petOptions.classList.toggle("hidden", !showPet);
-  const activeTheme = s.petTheme ?? "hud_gauge";
+  const activeTheme = normalizePetTheme(s.petTheme);
   themeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === activeTheme));
   customCard.classList.toggle("hidden", activeTheme !== "custom");
-  rowPetEffects.classList.toggle("hidden", activeTheme !== "desk_cat");
 
   prevSlotWorking.innerHTML = slotHtml(s.customImageWorking, "i-image", "Working");
   prevSlotSweating.innerHTML = slotHtml(s.customImageSweating, "i-image", "Sweating");
@@ -904,7 +901,6 @@ function syncSettingsForm(s: AppSettings) {
   if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
 
   inpShowPicks.checked = s.showPicks !== false;
-  inpPetEffects.checked = s.petEffects !== false;
 
   segControls.forEach((seg) => {
     const key = seg.dataset.key as keyof AppSettings;
@@ -1280,7 +1276,7 @@ btnRefresh.addEventListener("click", async () => {
 });
 
 themeButtons.forEach((btn) => {
-  btn.addEventListener("click", () => commitSettings({ petTheme: btn.dataset.theme as PetTheme }, true));
+  btn.addEventListener("click", () => commitSettings({ petTheme: normalizePetTheme(btn.dataset.theme) }, true));
 });
 
 function handleImageUpload(
@@ -1333,7 +1329,6 @@ segControls.forEach((seg) => {
 
 inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
 inpShowPet.addEventListener("change", () => commitSettings({ showPet: inpShowPet.checked }, true));
-inpPetEffects.addEventListener("change", () => commitSettings({ petEffects: inpPetEffects.checked }, true));
 
 segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {
   btn.addEventListener("click", () => {

@@ -216,4 +216,31 @@ mod tests {
         assert_eq!(s.account_prefs["x"].notify_threshold, Some(1));
         assert!(s.account_prefs["x"].avatar.is_none());
     }
+
+    #[test]
+    fn removed_muse_theme_falls_back_to_hud_gauge_without_losing_settings() {
+        use crate::models::PetTheme;
+
+        let raw = r#"{"petSize":80,"workingThreshold":65,"sleepingThreshold":15,"scoreMode":"all_avg",
+            "refreshIntervalSecs":180,"notifyEnabled":false,"showAntigravityExtra":true,
+            "launchAtStartup":false,"petX":100,"petY":200,"petTheme":"desk_cat","language":"en"}"#;
+        let mut parsed: AppSettings = serde_json::from_str(raw).unwrap();
+        sanitize(&mut parsed);
+        assert_eq!(parsed.pet_theme, PetTheme::HudGauge);
+        assert_eq!(parsed.pet_size, 80);
+        assert_eq!(parsed.language, "en");
+        assert_eq!(parsed.pet_x, Some(100));
+
+        let muse_raw = raw.replace("\"desk_cat\"", "\"muse\"");
+        let muse_parsed: AppSettings = serde_json::from_str(&muse_raw).unwrap();
+        assert_eq!(muse_parsed.pet_theme, PetTheme::HudGauge);
+
+        let null_raw = raw.replace("\"desk_cat\"", "null");
+        let null_parsed: AppSettings = serde_json::from_str(&null_raw).unwrap();
+        assert_eq!(null_parsed.pet_theme, PetTheme::HudGauge);
+
+        let custom_raw = raw.replace("\"desk_cat\"", "\"custom\"");
+        let custom_parsed: AppSettings = serde_json::from_str(&custom_raw).unwrap();
+        assert_eq!(custom_parsed.pet_theme, PetTheme::Custom);
+    }
 }

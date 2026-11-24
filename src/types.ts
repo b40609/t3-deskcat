@@ -69,7 +69,7 @@ export interface AccountPref {
 export type PanelPosition = "pet" | "remember" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";
 export type PanelLayout = "classic" | "dense";
 
-export type PetTheme = "hud_gauge" | "desk_cat" | "custom";
+export type PetTheme = "hud_gauge" | "custom";
 
 export interface AppSettings {
   modelPrices?: Record<string, Price>;

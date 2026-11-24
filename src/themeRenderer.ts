@@ -1,11 +1,12 @@
-import { drawDeskCat } from "./catSprite";
-import { MUSE_ASSETS } from "./museAssets";
-import { getAnimator } from "./museAnimator";
 import { elapsedShare, toneOf, windowSeconds, type Focus, type Tone } from "./focus";
 import type { AppSettings, CatMood, PetTheme, ProviderKind, QuotaWindow } from "./types";
 
 export const HUD_CARD_BASE_W = 178;
 export const HUD_CARD_BASE_H = 64;
+
+export function normalizePetTheme(theme?: string | null): PetTheme {
+  return theme === "custom" ? "custom" : "hud_gauge";
+}
 
 /** Smooth, compact scale factor for the horizontal HUD card (petSize 48..128 -> 0.88..1.22). */
 export function hudCardScale(petSize: number): number {
@@ -16,8 +17,8 @@ export function hudCardScale(petSize: number): number {
   return 1 + ((clamped - 64) / 64) * 0.22;
 }
 
-export function petLogicalSize(petSize: number, theme: PetTheme): { width: number; height: number } {
-  if (theme === "hud_gauge") {
+export function petLogicalSize(petSize: number, theme?: string | null): { width: number; height: number } {
+  if (normalizePetTheme(theme) === "hud_gauge") {
     const s = hudCardScale(petSize);
     return {
       width: Math.round(HUD_CARD_BASE_W * s),
@@ -28,7 +29,6 @@ export function petLogicalSize(petSize: number, theme: PetTheme): { width: numbe
 }
 
 const imageCache: Record<string, HTMLImageElement> = {};
-const museImages: Partial<Record<CatMood, HTMLImageElement>> = {};
 
 function getCachedImage(src: string | null | undefined): HTMLImageElement | null {
   if (!src) return null;
@@ -41,33 +41,8 @@ function getCachedImage(src: string | null | undefined): HTMLImageElement | null
   return cached.complete && cached.naturalWidth > 0 ? cached : null;
 }
 
-export function getMuseImage(mood: CatMood): HTMLImageElement | null {
-  if (!museImages[mood]) {
-    const img = new Image();
-    img.src = MUSE_ASSETS[mood] || MUSE_ASSETS.working;
-    museImages[mood] = img;
-  }
-  const img = museImages[mood]!;
-  return img.complete && img.naturalWidth > 0 ? img : null;
-}
-
 export function animSpeedFactor(_s: AppSettings): number {
   return 1;
-}
-
-/** Muse cat: layered procedural animation (see museAnimator.ts). */
-export function drawMuseCat(
-  ctx: CanvasRenderingContext2D,
-  size: number,
-  mood: CatMood,
-  _tick: number,
-  effects = true,
-  speed = 1,
-) {
-  const anim = getAnimator(ctx);
-  anim.effects = effects;
-  anim.speed = speed;
-  anim.render(ctx, size, mood);
 }
 
 interface GaugePalette {
@@ -598,13 +573,13 @@ export function drawCustomAvatar(
 
 /**
  * Universal Avatar Renderer
- * Dispatches to HUD gauge, DeskCat, or Custom avatar based on user settings.
+ * Dispatches to HUD gauge or Custom avatar based on user settings.
  */
 export function renderAvatar(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  theme: PetTheme,
+  theme: PetTheme | string | null | undefined,
   focus: Focus | null,
   mood: CatMood,
   tick: number,
@@ -613,9 +588,7 @@ export function renderAvatar(
   activeWorking = false,
 ) {
   const size = Math.min(width, height);
-  if (theme === "desk_cat") {
-    drawMuseCat(ctx, size, mood, tick, settings.petEffects !== false, animSpeedFactor(settings));
-  } else if (theme === "custom") {
+  if (normalizePetTheme(theme) === "custom") {
     drawCustomAvatar(ctx, size, mood, tick, settings);
   } else {
     drawRingGauge(ctx, width, height, focus, settings, dpr, activeWorking);
