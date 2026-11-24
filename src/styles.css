@@ -1,7 +1,7 @@
 /* ==========================================================================
    T3 DeskCat panel
    Windows 11 flyout language: graphite neutrals, hairlines, one accent.
-   Bars stay ink-neutral; only a limit below the mood thresholds takes color.
+   Bars and gauges use semantic status colors: green / amber / red.
    The pace tick on each bar marks how much of the window's time has passed.
    ========================================================================== */
 
@@ -373,7 +373,7 @@ svg {
 }
 
 .dot.green {
-  background: var(--ink);
+  background: var(--good-ink);
 }
 
 .dot.gray {
@@ -1520,7 +1520,7 @@ html.remote .grip {
 
 .th-ok {
   flex: 1;
-  background: var(--ink);
+  background: var(--good-ink);
 }
 
 .th-scale {

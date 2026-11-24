@@ -17,8 +17,8 @@ mod usage_stats;
 
 use crate::discovery::{discover_accounts, DiscoveredAccount};
 use crate::models::{
-    AccountQuota, AppSettings, CatMood, DashboardSnapshot, ProviderKind, QuotaWindow, ScoreMode,
-    SmartPick,
+    AccountQuota, AppSettings, CatMood, DashboardSnapshot, PetTheme, ProviderKind, QuotaWindow,
+    ScoreMode, SmartPick,
 };
 use crate::providers::{
     antigravity::fetch_antigravity_quota,
@@ -430,6 +430,7 @@ fn update_settings(
     let new_hotkey;
     let lang_changed;
     let new_pet_size;
+    let new_pet_theme;
     let new_show_pet;
     let updated_snapshot;
     {
@@ -475,6 +476,7 @@ fn update_settings(
         usage_stats::set_price_overrides(&clean.model_prices);
         lang_changed = i18n::set_lang(&clean.language);
         new_pet_size = clean.pet_size;
+        new_pet_theme = clean.pet_theme.clone();
         new_show_pet = clean.show_pet;
         new_startup = clean.launch_at_startup;
         new_hotkey = clean.hotkey.clone();
@@ -496,10 +498,9 @@ fn update_settings(
     }
 
     if let Some(pet) = app.get_webview_window("pet") {
-        let _ = pet.set_size(Size::Logical(LogicalSize::new(
-            new_pet_size as f64,
-            new_pet_size as f64,
-        )));
+        let (pet_w, pet_h) = pet_window_dimensions(&new_pet_theme, new_pet_size);
+        let _ = pet.set_size(Size::Logical(LogicalSize::new(pet_w, pet_h)));
+        clamp_pet_inside_monitor(&pet);
         if new_show_pet {
             let _ = pet.unminimize();
             let _ = pet.show();
@@ -566,8 +567,8 @@ fn toggle_panel_window(app: &AppHandle) -> Option<bool> {
         let _ = panel.unminimize();
         let _ = panel.show();
         let _ = panel.set_focus();
-        Some(true)
         spawn_on_demand_refresh(app);
+        Some(true)
     }
 }
 
@@ -1163,8 +1164,8 @@ async fn run_refresh(
             }
         })
         .collect();
-    activity::set_sources(
 
+    activity::set_sources(
         usage_sources
             .iter()
             .map(|s| match s {
@@ -1219,7 +1220,6 @@ async fn run_refresh(
     let mut non_claude_due: Vec<DiscoveredAccount> = Vec::new();
 
     for acc in discovered {
-        match acc {
         let id = acc.id().to_string();
         let provider = discovered_provider(&acc);
         let name = discovered_name(&acc).to_string();
@@ -1374,6 +1374,7 @@ async fn run_refresh(
             continue;
         }
 
+        match acc {
             DiscoveredAccount::Claude { .. } => claude_due.push(acc),
             _ => non_claude_due.push(acc),
         }
@@ -1387,8 +1388,8 @@ async fn run_refresh(
     let mut handles = Vec::with_capacity(non_claude_due.len());
     for (idx, acc) in non_claude_due.into_iter().enumerate() {
         let client = client.clone();
-        handles.push(tokio::spawn(async move {
         let sem = sem.clone();
+        handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await;
             if idx > 0 {
                 tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1411,11 +1412,11 @@ async fn run_refresh(
                     auth_path,
                 } => fetch_codex_quota(&client, id, name, &auth_path).await,
                 _ => unreachable!(),
-            }
             };
             AccountResult {
                 outcome,
                 freshly_observed: true,
+            }
         }));
     }
 
@@ -1509,8 +1510,8 @@ async fn run_refresh(
     let mut accounts: Vec<AccountQuota> = Vec::with_capacity(all_results.len());
     let mut forecasts = HashMap::new();
     let mut burn_rates = HashMap::new();
-    if let Ok(mut guard) = state.0.lock() {
     let mut log_events: Vec<String> = Vec::new();
+    if let Ok(mut guard) = state.0.lock() {
         let now = Utc::now().timestamp();
         for res in all_results {
             if !res.freshly_observed {
@@ -1556,10 +1557,10 @@ async fn run_refresh(
                     );
                 }
             }
-        }
             accounts.push(reconciled);
-        guard.history.prune(now);
+        }
         guard.cache.save();
+        guard.history.prune(now);
         guard.history.save();
 
         for acc in &accounts {
@@ -1574,10 +1575,10 @@ async fn run_refresh(
             }
         }
     }
-
     for line in log_events {
         logging::log(&line);
     }
+
     let now = Utc::now().timestamp();
     let mut notifications: Vec<(String, String)> = Vec::new();
 
@@ -1586,7 +1587,6 @@ async fn run_refresh(
         let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = guard.settings.clone();
 
-        let mut snap = DashboardSnapshot {
         // Honest header timestamp: latest actual successful fetch time among visible usable accounts.
         let freshest_ts = accounts
             .iter()
@@ -1595,6 +1595,7 @@ async fn run_refresh(
             .max()
             .unwrap_or(now);
 
+        let mut snap = DashboardSnapshot {
             accounts,
             picks: Vec::new(),
             overall_score: 0,
@@ -2017,17 +2018,62 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&toggle_item, &analytics_item, &refresh_item, &reset_pos_item, &quit_item])
 }
 
+fn hud_card_scale(pet_size: u32) -> f64 {
+    let clamped = pet_size.clamp(48, 128) as f64;
+    if clamped <= 64.0 {
+        0.88 + ((clamped - 48.0) / 16.0) * 0.12
+    } else {
+        1.0 + ((clamped - 64.0) / 64.0) * 0.22
+    }
+}
+
+fn pet_window_dimensions(theme: &PetTheme, pet_size: u32) -> (f64, f64) {
+    match theme {
+        PetTheme::HudGauge => {
+            let s = hud_card_scale(pet_size);
+            ((178.0 * s).round(), (64.0 * s).round())
+        }
+        _ => {
+            let h = pet_size as f64;
+            (h, h)
+        }
+    }
+}
+
+fn clamp_pet_inside_monitor(pet: &tauri::WebviewWindow) {
+    let (Ok(pos), Ok(size)) = (pet.outer_position(), pet.outer_size()) else {
+        return;
+    };
+    let monitor = pet
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| pet.primary_monitor().ok().flatten());
+    let Some(mon) = monitor else {
+        return;
+    };
+    let wa = mon.work_area();
+    let l = wa.position.x;
+    let t = wa.position.y;
+    let max_x = (l + wa.size.width as i32 - size.width as i32).max(l);
+    let max_y = (t + wa.size.height as i32 - size.height as i32).max(t);
+    let nx = pos.x.clamp(l, max_x);
+    let ny = pos.y.clamp(t, max_y);
+    if (nx, ny) != (pos.x, pos.y) {
+        let _ = pet.set_position(Position::Physical(PhysicalPosition::new(nx, ny)));
+    }
+}
+
 fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
     let Some(pet) = app.get_webview_window("pet") else {
         return;
     };
-    let _ = pet.set_size(Size::Logical(LogicalSize::new(
-        cfg.pet_size as f64,
-        cfg.pet_size as f64,
-    )));
+    let (pet_w, pet_h) = pet_window_dimensions(&cfg.pet_theme, cfg.pet_size);
+    let _ = pet.set_size(Size::Logical(LogicalSize::new(pet_w, pet_h)));
 
     if let (Some(x), Some(y)) = (cfg.pet_x, cfg.pet_y) {
         let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+        clamp_pet_inside_monitor(&pet);
         return;
     }
 
@@ -2294,6 +2340,7 @@ pub fn run() {
             get_snapshot,
             get_settings,
             refresh_now,
+            rescan_accounts,
             update_settings,
             toggle_panel,
             hide_panel,
@@ -2340,7 +2387,6 @@ pub fn run() {
                         api.prevent_close();
                         if let Some(w) = bubble_handle.get_webview_window("bubble") {
                             let _ = w.hide();
-            rescan_accounts,
                         }
                     }
                 });
@@ -2524,8 +2570,15 @@ pub fn run() {
             let poll_app = handle.clone();
             let poll_state = shared.clone();
             tauri::async_runtime::spawn(async move {
+                let mut first = true;
                 loop {
                     let (app_c, state_c) = (poll_app.clone(), poll_state.clone());
+                    let reason = if first {
+                        first = false;
+                        RefreshReason::Startup
+                    } else {
+                        RefreshReason::Scheduled
+                    };
                     let run = tauri::async_runtime::spawn(async move {
                         let _ = run_refresh(&app_c, &state_c, reason).await;
                     });
@@ -2568,17 +2621,10 @@ mod tests {
     use super::*;
     use crate::models::QuotaWindow;
 
-                let mut first = true;
     fn mock_acc(id: &str, provider: ProviderKind, name: &str, pct: i32) -> AccountQuota {
         AccountQuota {
             id: id.to_string(),
             provider,
-                    let reason = if first {
-                        first = false;
-                        RefreshReason::Startup
-                    } else {
-                        RefreshReason::Scheduled
-                    };
             name: name.to_string(),
             plan: Some("Pro".to_string()),
             effective_remaining: pct,
@@ -2599,6 +2645,15 @@ mod tests {
             error: None,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn pet_window_dimensions_are_compact_for_hud_and_square_for_others() {
+        assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 48), (157.0, 56.0));
+        assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 64), (178.0, 64.0));
+        assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 128), (217.0, 78.0));
+        assert_eq!(pet_window_dimensions(&PetTheme::DeskCat, 96), (96.0, 96.0));
+        assert_eq!(pet_window_dimensions(&PetTheme::Custom, 64), (64.0, 64.0));
     }
 
     #[test]
@@ -2822,61 +2877,6 @@ mod tests {
         assert!(res.is_err());
         assert!(!TEST_FLAG.load(Ordering::Acquire));
     }
-}
-
-#[cfg(test)]
-mod live_probe_tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
-
-    #[tokio::test]
-    #[ignore]
-    async fn probe_real_local_environment() {
-        // 1. Read-only account discovery
-        let discovered = discover_accounts(&[]);
-        assert!(!discovered.is_empty(), "expected at least one local account");
-        eprintln!("[1/6] discovered {} accounts:", discovered.len());
-        support::set_sources(discovered.iter().map(|a| (a.id().to_string(), a.source())).collect());
-        let sources = support::sources();
-        for a in &discovered {
-            let src = sources.get(a.id()).map(String::as_str).unwrap_or("?");
-            eprintln!("  - {} source={}", a.id(), src);
-        }
-
-        // 2. One read-only quota fetch per discovered account (in-memory only)
-        let client = Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
-        let mut results = Vec::new();
-        for acc in discovered {
-            let outcome = match acc {
-                DiscoveredAccount::Claude { id, name, credentials_path } => {
-                    fetch_claude_quota(&client, id, name, &credentials_path).await
-                }
-                DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
-                    fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
-                }
-                DiscoveredAccount::AntigravityCli { id, name, exe } => {
-                    providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
-                }
-                DiscoveredAccount::Codex { id, name, auth_path } => {
-                    fetch_codex_quota(&client, id, name, &auth_path).await
-                }
-            };
-            eprintln!(
-                "[2/6] {} ({}) plan={:?} status={} eff={}% primary={:?} extra={:?} err={:?}",
-                q.id,
-                q.name,
-                q.plan,
-                q.status,
-                q.effective_remaining,
-                q.primary_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
-                q.extra_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
-                q.error
-            );
-            results.push(q);
-        }
 
     #[test]
     fn adaptive_intervals_balance_freshness_and_rate_limits() {
@@ -2941,6 +2941,62 @@ mod live_probe_tests {
             0
         );
     }
+}
+
+#[cfg(test)]
+mod live_probe_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    #[ignore]
+    async fn probe_real_local_environment() {
+        // 1. Read-only account discovery
+        let discovered = discover_accounts(&[]);
+        assert!(!discovered.is_empty(), "expected at least one local account");
+        eprintln!("[1/6] discovered {} accounts:", discovered.len());
+        support::set_sources(discovered.iter().map(|a| (a.id().to_string(), a.source())).collect());
+        let sources = support::sources();
+        for a in &discovered {
+            let src = sources.get(a.id()).map(String::as_str).unwrap_or("?");
+            eprintln!("  - {} source={}", a.id(), src);
+        }
+
+        // 2. One read-only quota fetch per discovered account (in-memory only)
+        let client = Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
+        let mut results = Vec::new();
+        for acc in discovered {
+            let outcome = match acc {
+                DiscoveredAccount::Claude { id, name, credentials_path } => {
+                    fetch_claude_quota(&client, id, name, &credentials_path).await
+                }
+                DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
+                    fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                }
+                DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                    providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
+                }
+                DiscoveredAccount::Codex { id, name, auth_path } => {
+                    fetch_codex_quota(&client, id, name, &auth_path).await
+                }
+            };
+            let q = outcome.quota;
+            eprintln!(
+                "[2/6] {} ({}) plan={:?} status={} eff={}% primary={:?} extra={:?} err={:?}",
+                q.id,
+                q.name,
+                q.plan,
+                q.status,
+                q.effective_remaining,
+                q.primary_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
+                q.extra_windows.iter().map(|w| (&w.label, w.remaining_percent)).collect::<Vec<_>>(),
+                q.error
+            );
+            results.push(q);
+        }
 
         // 3. Snapshot metrics computation (read-only loaded settings)
         let loaded_settings = settings::load_settings();
@@ -2983,7 +3039,6 @@ mod live_probe_tests {
             qr.len(),
             diag.lines().count()
         );
-            let q = outcome.quota;
 
         // 5. Real mobile HTTP server check with compiled ../dist assets over loopback TCP
         let dist_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("dist");

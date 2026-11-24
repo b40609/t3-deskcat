@@ -1,0 +1,280 @@
+@import "./tokens.css";
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden !important;
+  background: transparent !important;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft JhengHei UI",
+    "PingFang TC", sans-serif;
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#pet-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  transition: opacity 0.45s ease;
+}
+
+#pet-root:active {
+  cursor: grabbing;
+}
+
+#pet-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition: filter 0.45s ease;
+}
+
+/* ---- Version B: Panel Mini Card (native DOM + CSS + crisp SVG) ---- */
+.hud-card {
+  --s: 1;
+  --hud-bg: rgba(30, 30, 32, 0.94);
+  --hud-border: rgba(255, 255, 255, 0.11);
+  --hud-inset: rgba(255, 255, 255, 0.05);
+  --hud-shadow: 0 2px 6px rgba(0, 0, 0, 0.36);
+  position: absolute;
+  inset: 3px;
+  border-radius: calc(10px * var(--s));
+  padding: calc(7px * var(--s)) calc(10px * var(--s)) calc(8px * var(--s));
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  box-shadow: var(--hud-shadow), inset 0 1px 0 var(--hud-inset);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  transition: border-color 0.16s var(--ease), background-color 0.16s var(--ease);
+}
+
+.hud-card:hover {
+  --hud-border: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-theme="light"] .hud-card {
+  --hud-bg: rgba(250, 250, 251, 0.96);
+  --hud-border: rgba(0, 0, 0, 0.11);
+  --hud-inset: rgba(255, 255, 255, 0.9);
+  --hud-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+}
+
+:root[data-theme="light"] .hud-card:hover {
+  --hud-border: rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hud-card {
+    --hud-bg: rgba(250, 250, 251, 0.96);
+    --hud-border: rgba(0, 0, 0, 0.11);
+    --hud-inset: rgba(255, 255, 255, 0.9);
+    --hud-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+  }
+  :root:not([data-theme="dark"]) .hud-card:hover {
+    --hud-border: rgba(0, 0, 0, 0.2);
+  }
+}
+
+.hud-head {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--s));
+  min-width: 0;
+}
+
+.hud-tile {
+  flex: 0 0 auto;
+  width: calc(16px * var(--s));
+  height: calc(16px * var(--s));
+  border-radius: calc(4px * var(--s));
+  display: grid;
+  place-items: center;
+  background: var(--fill);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  overflow: hidden;
+}
+
+.hud-tile.claude {
+  color: var(--claude);
+  background: color-mix(in srgb, var(--claude) 15%, transparent);
+}
+
+.hud-tile.antigravity {
+  color: var(--ag);
+  background: color-mix(in srgb, var(--ag) 15%, transparent);
+}
+
+.hud-tile.codex {
+  color: var(--codex);
+  background: color-mix(in srgb, var(--codex) 15%, transparent);
+}
+
+.hud-tile svg {
+  width: calc(10px * var(--s));
+  height: calc(10px * var(--s));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hud-tile.claude svg {
+  stroke-width: 2.3;
+}
+
+.hud-tile.antigravity svg {
+  fill: currentColor;
+  stroke: none;
+}
+
+.hud-tile.has-img {
+  background: var(--card);
+}
+
+.hud-tile.has-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hud-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(11.5px * var(--s));
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-card.stale .hud-name,
+.hud-card.stale .hud-val {
+  opacity: 0.78;
+}
+
+.hud-status-dot {
+  flex: 0 0 auto;
+  width: calc(5.5px * var(--s));
+  height: calc(5.5px * var(--s));
+  border-radius: 50%;
+}
+
+.hud-status-dot.live {
+  background: var(--good-ink);
+  box-shadow: 0 0 0 calc(2px * var(--s)) color-mix(in srgb, var(--good-ink) 26%, transparent);
+}
+
+.hud-status-dot.stale {
+  background: transparent;
+  border: 1.5px solid var(--warn-ink);
+}
+
+.hud-rows {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4px * var(--s));
+}
+
+.hud-row {
+  display: grid;
+  grid-template-columns: calc(19px * var(--s)) 1fr calc(29px * var(--s));
+  align-items: center;
+  gap: calc(6px * var(--s));
+}
+
+.hud-tag {
+  font-size: calc(10px * var(--s));
+  font-weight: 500;
+  line-height: 1;
+  color: var(--label-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-bar {
+  position: relative;
+  height: calc(3.5px * var(--s));
+  border-radius: 99px;
+  background: var(--track);
+}
+
+.hud-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--good-ink);
+  transition: width 0.35s var(--ease);
+}
+
+.hud-bar > i.warn {
+  background: var(--warn-ink);
+}
+
+.hud-bar > i.bad {
+  background: var(--bad-ink);
+}
+
+.hud-card.stale .hud-bar > i {
+  opacity: 0.65;
+}
+
+.hud-pace {
+  position: absolute;
+  top: calc(-1.5px * var(--s));
+  width: 1.5px;
+  height: calc(6.5px * var(--s));
+  margin-left: -0.75px;
+  border-radius: 1px;
+  background: var(--label-2);
+  box-shadow: 0 0 0 1px var(--hud-bg);
+}
+
+.hud-val {
+  font-size: calc(10.5px * var(--s));
+  font-weight: 600;
+  line-height: 1;
+  text-align: right;
+  color: var(--label);
+}
+
+.hud-val.warn {
+  color: var(--warn-ink);
+}
+
+.hud-val.bad {
+  color: var(--bad-ink);
+}
+
+.hud-empty {
+  font-size: calc(10.5px * var(--s));
+  color: var(--label-3);
+  line-height: 1.2;
+}
