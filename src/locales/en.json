@@ -371,5 +371,10 @@
   "目前：卡片畫面（點此切換緊湊）": "View: Cards (click for Compact)",
   "已釘選常駐（點此恢復自動收合）": "Pinned on desktop (click to restore auto-hide)",
   "釘選為桌面常駐視窗": "Pin as desktop window",
-  "提醒：{combo} 為全域快捷鍵，可能會覆蓋瀏覽器等軟體的同組合鍵": "Note: {combo} is a global shortcut and may override the same shortcut in browsers and other apps"
+  "提醒：{combo} 為全域快捷鍵，可能會覆蓋瀏覽器等軟體的同組合鍵": "Note: {combo} is a global shortcut and may override the same shortcut in browsers and other apps",
+  "冷卻中": "Cooldown",
+  "快取": "Cached",
+  "429 請求受限冷卻中，約 {m} 分鐘後重試": "Rate limited (429), retrying in ~{m} min",
+  "暫時連線失敗，約 {m} 分鐘後重試": "Temporary connection failure, retrying in ~{m} min",
+  "Google OAuth 請求受限 (HTTP {status})": "Google OAuth rate limited (HTTP {status})"
 }

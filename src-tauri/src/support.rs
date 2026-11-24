@@ -114,13 +114,20 @@ pub fn diagnostics(snapshot: Option<&crate::models::DashboardSnapshot>, mobile: 
     out.push(String::new());
     match snapshot {
         Some(s) => {
+            let now = chrono::Utc::now().timestamp();
             out.push(format!("Accounts ({}):", s.accounts.len()));
             for a in &s.accounts {
+                let age = if a.updated_at > 0 {
+                    format!(" age={}s", (now - a.updated_at).max(0))
+                } else {
+                    String::new()
+                };
                 out.push(format!(
-                    "  {} [{}] status={}{} <- {}",
+                    "  {} [{}] status={}{}{} <- {}",
                     a.id,
                     a.plan.clone().unwrap_or_default(),
                     a.status,
+                    age,
                     a.error.as_ref().map(|e| format!(" ({e})")).unwrap_or_default(),
                     src.get(&a.id).cloned().unwrap_or_else(|| "?".into())
                 ));

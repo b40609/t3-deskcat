@@ -5,6 +5,7 @@
 //! itself, which agy keeps in the OS keyring (Windows target `gemini:antigravity`).
 
 use crate::models::{AccountQuota, ProviderKind};
+use crate::providers::FetchOutcome;
 use chrono::Utc;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -55,7 +56,7 @@ pub fn has_signin() -> bool {
     true
 }
 
-pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -> AccountQuota {
+pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -> FetchOutcome {
     let now = Utc::now().timestamp();
     // Run in a private empty folder so agy picks up no project rules or MCP config.
     let work = dirs::config_dir()
@@ -80,15 +81,23 @@ pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -
     }
 
     let output = match tokio::time::timeout(TIMEOUT, cmd.output()).await {
-        Err(_) => return error(id, name, now, "error", crate::tr!("agy 回應逾時")),
-        Ok(Err(err)) => return error(id, name, now, "error", crate::tr!("無法執行 agy：{err}", err = err)),
+        Err(_) => return FetchOutcome::network(error(id, name, now, "error", crate::tr!("agy 回應逾時"))),
+        Ok(Err(err)) => {
+            return FetchOutcome::network(error(
+                id,
+                name,
+                now,
+                "error",
+                crate::tr!("無法執行 agy：{err}", err = err),
+            ))
+        }
         Ok(Ok(o)) => o,
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     match parse_report(&stdout) {
         Ok((primary, extra)) => {
             let effective = primary.iter().map(|w| w.remaining_percent).min().unwrap_or(0);
-            AccountQuota {
+            FetchOutcome::network(AccountQuota {
                 id,
                 provider: ProviderKind::Antigravity,
                 name,
@@ -99,16 +108,18 @@ pub async fn fetch_antigravity_cli_quota(id: String, name: String, exe: &Path) -
                 status: "ok".to_string(),
                 error: None,
                 updated_at: now,
-            }
+            })
         }
         Err(msg) => {
             let lower = format!("{msg} {}", String::from_utf8_lossy(&output.stderr)).to_lowercase();
             let status = if lower.contains("sign in") || lower.contains("login") || lower.contains("auth") {
                 "expired"
+            } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("resource_exhausted") {
+                "cooldown"
             } else {
                 "error"
             };
-            error(id, name, now, status, msg)
+            FetchOutcome::network(error(id, name, now, status, msg))
         }
     }
 }

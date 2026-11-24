@@ -21,14 +21,17 @@ use crate::models::{
     SmartPick,
 };
 use crate::providers::{
-    antigravity::fetch_antigravity_quota, claude::fetch_claude_quota, codex::fetch_codex_quota,
+    antigravity::fetch_antigravity_quota,
+    claude::{fetch_claude_quota, read_local_claude_quota},
+    codex::{fetch_codex_quota, read_local_codex_quota},
+    FetchOutcome,
 };
 use chrono::{Local, Timelike, Utc};
 use reqwest::Client;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -45,15 +48,89 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 static SETUP_DONE: AtomicBool = AtomicBool::new(false);
 static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
 
-/// Fixed background poll cadence (Antigravity / Codex / local logs).
-const AUTO_REFRESH_SECS: u64 = 60;
-/// Per-account minimum gap between Anthropic usage calls to prevent 429 bursts.
-const CLAUDE_MIN_INTERVAL_SECS: i64 = 180;
+/// Background scheduler heartbeat. Each tick evaluates per-account adaptive TTLs
+/// and only hits the network for accounts that are actually due.
+const SCHEDULER_TICK_SECS: u64 = 30;
+/// An account with local session/transcript writes inside this window is "active".
+const ACTIVE_WINDOW_SECS: i64 = 15 * 60;
+/// Minimum gap between full local usage-log incremental scans.
+const USAGE_SCAN_MIN_SECS: i64 = 20;
+
+// Adaptive per-provider minimum fetch intervals (seconds):
+// - Active:    currently in use (local logs written within 15 min)
+// - Idle:      no recent local activity (quota only moves on window resets)
+// - Triggered: turn just completed, window reset passed, or panel opened on demand
+// - Manual:    user explicitly clicked Refresh (short debounce to prevent double-click bursts)
+const CLAUDE_ACTIVE_SECS: i64 = 300;
+const CLAUDE_IDLE_SECS: i64 = 900;
+const CLAUDE_TRIGGERED_SECS: i64 = 120;
+const CLAUDE_MANUAL_SECS: i64 = 45;
+
+const AG_ACTIVE_SECS: i64 = 60;
+const AG_IDLE_SECS: i64 = 300;
+const AG_TRIGGERED_SECS: i64 = 30;
+const AG_MANUAL_SECS: i64 = 15;
+
+const AG_CLI_ACTIVE_SECS: i64 = 180;
+const AG_CLI_IDLE_SECS: i64 = 600;
+const AG_CLI_TRIGGERED_SECS: i64 = 90;
+const AG_CLI_MANUAL_SECS: i64 = 45;
+
+const CODEX_ACTIVE_SECS: i64 = 120;
+const CODEX_IDLE_SECS: i64 = 600;
+const CODEX_TRIGGERED_SECS: i64 = 45;
+const CODEX_MANUAL_SECS: i64 = 15;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RefreshReason {
+    /// Initial background sync immediately after startup.
+    Startup,
+    /// Periodic 30 s scheduler tick (respects adaptive per-account intervals).
+    Scheduled,
+    /// Panel was opened by the user (checks active / due accounts).
+    OnDemand,
+    /// Explicit Refresh button / tray Refresh click.
+    Manual,
+    /// Local log watcher detected an account finished a turn (`working -> done`).
+    ActivityDone(String),
+    /// Add-account login watcher / folder rescan: fetch newly discovered accounts only.
+    DiscoverOnly,
+}
 
 struct BoolResetGuard(&'static AtomicBool);
 impl Drop for BoolResetGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
+    }
+}
+
+struct ArcBoolGuard(Arc<RefreshRuntime>);
+impl Drop for ArcBoolGuard {
+    fn drop(&mut self) {
+        self.0.busy.store(false, Ordering::Release);
+    }
+}
+
+struct RefreshRuntime {
+    /// Reusable HTTP client for connection pooling & TLS session reuse.
+    client: Client,
+    /// Single-flight lock so concurrent triggers never hit provider APIs simultaneously.
+    lock: tokio::sync::Mutex<()>,
+    /// True while a refresh pass is in flight (allows non-urgent ticks to skip).
+    busy: AtomicBool,
+}
+
+impl RefreshRuntime {
+    fn new() -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self {
+            client,
+            lock: tokio::sync::Mutex::new(()),
+            busy: AtomicBool::new(false),
+        }
     }
 }
 
@@ -74,6 +151,12 @@ struct InnerState {
     tray_icon_key: String,
     /// Phone page: URL while serving, or why it isn't.
     mobile_status: MobileStatus,
+    /// Last observed `(mtime_secs, file_len)` per account credential file, to detect token refreshes.
+    cred_stamps: HashMap<String, (i64, u64)>,
+    /// Timestamp of the last local usage-log incremental scan.
+    last_usage_scan: i64,
+    /// Cached today's usage map reused when skipping rapid usage rescans.
+    last_usage_today: HashMap<String, usage_stats::UsageToday>,
 }
 
 #[derive(Clone, Default, serde::Serialize)]
@@ -135,7 +218,7 @@ fn spawn_mobile_supervisor(app: AppHandle, state: SharedState) {
 }
 
 #[derive(Clone)]
-struct SharedState(Arc<Mutex<InnerState>>);
+struct SharedState(Arc<Mutex<InnerState>>, Arc<RefreshRuntime>);
 
 /// The phone page's view of the app: embedded frontend files and the few
 /// commands a phone may run.
@@ -169,7 +252,8 @@ async fn remote_invoke(
     match cmd.as_str() {
         "get_snapshot" => json(serde_json::to_value(state.0.lock().ok().and_then(|g| g.snapshot.clone()))),
         "get_settings" => json(serde_json::to_value(state.0.lock().map(|g| g.settings.clone()).unwrap_or_default())),
-        "refresh_now" => json(serde_json::to_value(run_refresh(&app, &state).await)),
+        "refresh_now" => json(serde_json::to_value(run_refresh(&app, &state, RefreshReason::Manual).await)),
+        "rescan_accounts" => json(serde_json::to_value(run_refresh(&app, &state, RefreshReason::DiscoverOnly).await)),
         "usage_report" => {
             let period = args.get("period").and_then(|v| v.as_str()).unwrap_or("week").to_string();
             let r = tokio::task::spawn_blocking(move || usage_stats::report(&period)).await.map_err(|e| (500, e.to_string()))?;
@@ -271,6 +355,7 @@ fn show_panel_tab(app: &AppHandle, tab: &str) -> tauri::Result<()> {
             apply_saved_panel_size(app, &panel);
             apply_panel_pin_state(&panel, pinned);
             position_panel(app, &panel);
+            spawn_on_demand_refresh(app);
         }
         let _ = panel.unminimize();
         panel.show()?;
@@ -278,6 +363,18 @@ fn show_panel_tab(app: &AppHandle, tab: &str) -> tauri::Result<()> {
         let _ = panel.emit("open-dash-tab", tab);
     }
     Ok(())
+}
+
+/// Non-blocking freshness check when the panel opens (skipped immediately if a refresh is already running).
+fn spawn_on_demand_refresh(app: &AppHandle) {
+    let Some(state) = app.try_state::<SharedState>() else {
+        return;
+    };
+    let h = app.clone();
+    let s = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = run_refresh(&h, &s, RefreshReason::OnDemand).await;
+    });
 }
 
 #[tauri::command]
@@ -310,7 +407,15 @@ async fn refresh_now(
     app: AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<DashboardSnapshot, String> {
-    Ok(run_refresh(&app, &state).await)
+    Ok(run_refresh(&app, &state, RefreshReason::Manual).await)
+}
+
+#[tauri::command]
+async fn rescan_accounts(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+) -> Result<DashboardSnapshot, String> {
+    Ok(run_refresh(&app, &state, RefreshReason::DiscoverOnly).await)
 }
 
 #[tauri::command]
@@ -462,6 +567,7 @@ fn toggle_panel_window(app: &AppHandle) -> Option<bool> {
         let _ = panel.show();
         let _ = panel.set_focus();
         Some(true)
+        spawn_on_demand_refresh(app);
     }
 }
 
@@ -801,17 +907,229 @@ fn log_discovery_changes(accounts: &[DiscoveredAccount]) {
     }
 }
 
-async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot {
-    let extra_dirs = state
+fn discovered_provider(acc: &DiscoveredAccount) -> ProviderKind {
+    match acc {
+        DiscoveredAccount::Claude { .. } => ProviderKind::Claude,
+        DiscoveredAccount::Antigravity { .. } | DiscoveredAccount::AntigravityCli { .. } => {
+            ProviderKind::Antigravity
+        }
+        DiscoveredAccount::Codex { .. } => ProviderKind::Codex,
+    }
+}
+
+fn discovered_name(acc: &DiscoveredAccount) -> &str {
+    match acc {
+        DiscoveredAccount::Claude { name, .. }
+        | DiscoveredAccount::Antigravity { name, .. }
+        | DiscoveredAccount::AntigravityCli { name, .. }
+        | DiscoveredAccount::Codex { name, .. } => name,
+    }
+}
+
+fn is_ag_cli(acc: &DiscoveredAccount) -> bool {
+    matches!(acc, DiscoveredAccount::AntigravityCli { .. })
+}
+
+/// File `(mtime_secs, byte_len)` for an account's local credential file, so we detect
+/// token refreshes immediately without wasting HTTP calls on unchanged expired tokens.
+fn cred_stamp(acc: &DiscoveredAccount) -> Option<(i64, u64)> {
+    let path = match acc {
+        DiscoveredAccount::Claude { credentials_path, .. } => credentials_path,
+        DiscoveredAccount::Antigravity { token_path, .. } => token_path,
+        DiscoveredAccount::Codex { auth_path, .. } => auth_path,
+        DiscoveredAccount::AntigravityCli { .. } => return None,
+    };
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    Some((mtime, meta.len()))
+}
+
+/// Adaptive minimum interval (seconds) before hitting the network again for one account.
+fn account_min_interval(
+    provider: ProviderKind,
+    is_cli_probe: bool,
+    reason: &RefreshReason,
+    active: bool,
+    cred_changed: bool,
+    reset_passed: bool,
+) -> i64 {
+    if cred_changed {
+        return 0;
+    }
+    let (active_s, idle_s, trig_s, manual_s) = match (provider, is_cli_probe) {
+        (ProviderKind::Claude, _) => (
+            CLAUDE_ACTIVE_SECS,
+            CLAUDE_IDLE_SECS,
+            CLAUDE_TRIGGERED_SECS,
+            CLAUDE_MANUAL_SECS,
+        ),
+        (ProviderKind::Antigravity, true) => (
+            AG_CLI_ACTIVE_SECS,
+            AG_CLI_IDLE_SECS,
+            AG_CLI_TRIGGERED_SECS,
+            AG_CLI_MANUAL_SECS,
+        ),
+        (ProviderKind::Antigravity, false) => (
+            AG_ACTIVE_SECS,
+            AG_IDLE_SECS,
+            AG_TRIGGERED_SECS,
+            AG_MANUAL_SECS,
+        ),
+        (ProviderKind::Codex, _) => (
+            CODEX_ACTIVE_SECS,
+            CODEX_IDLE_SECS,
+            CODEX_TRIGGERED_SECS,
+            CODEX_MANUAL_SECS,
+        ),
+    };
+    match reason {
+        RefreshReason::Manual => manual_s,
+        RefreshReason::ActivityDone(_) => trig_s,
+        RefreshReason::OnDemand => {
+            if active || reset_passed {
+                trig_s
+            } else {
+                idle_s
+            }
+        }
+        RefreshReason::Startup | RefreshReason::Scheduled | RefreshReason::DiscoverOnly => {
+            if reset_passed {
+                trig_s
+            } else if active {
+                active_s
+            } else {
+                idle_s
+            }
+        }
+    }
+}
+
+fn placeholder_account(acc: &DiscoveredAccount, now: i64) -> AccountQuota {
+    AccountQuota {
+        id: acc.id().to_string(),
+        provider: discovered_provider(acc),
+        name: discovered_name(acc).to_string(),
+        plan: None,
+        effective_remaining: 0,
+        primary_windows: Vec::new(),
+        extra_windows: Vec::new(),
+        status: "stale".to_string(),
+        error: None,
+        updated_at: now,
+    }
+}
+
+/// Seeds an immediate startup snapshot from the persisted `QuotaCache` so the UI
+/// renders last-known numbers on millisecond 0 instead of blocking on network I/O.
+fn seed_initial_snapshot(state: &SharedState) {
+    let Ok(mut guard) = state.0.lock() else { return };
+    if guard.snapshot.is_some() {
+        return;
+    }
+    let now = Utc::now().timestamp();
+    let discovered = discover_accounts(&guard.settings.extra_account_dirs);
+    if discovered.is_empty() {
+        return;
+    }
+    let mut accounts = Vec::with_capacity(discovered.len());
+    let mut has_any_cached = false;
+    for acc in &discovered {
+        let id = acc.id().to_string();
+        if let Some(st) = cred_stamp(acc) {
+            guard.cred_stamps.insert(id.clone(), st);
+        }
+        if guard.cache.last_good.contains_key(&id) || guard.cache.is_known_expired(&id) {
+            has_any_cached = true;
+            accounts.push(guard.cache.skipped(&id, placeholder_account(acc, now), now));
+        }
+    }
+    if !has_any_cached {
+        return;
+    }
+    let cfg = guard.settings.clone();
+    let mut forecasts = HashMap::new();
+    let mut burn_rates = HashMap::new();
+    for acc in &accounts {
+        let samples = &guard.history.samples;
+        let series = |label: &str| samples.get(&forecast::window_key(&acc.id, label)).map(Vec::as_slice);
+        if let Some(f) = forecast::forecast(acc, series, now) {
+            forecasts.insert(acc.id.clone(), f);
+        }
+        if let Some(r) = forecast::burn_rate(acc, series, now) {
+            burn_rates.insert(acc.id.clone(), r);
+        }
+    }
+    let freshest = accounts
+        .iter()
+        .filter(|a| !cfg.is_hidden(&a.id) && a.updated_at > 0 && is_usable(a))
+        .map(|a| a.updated_at)
+        .max()
+        .unwrap_or(now);
+    let mut snap = DashboardSnapshot {
+        accounts,
+        picks: Vec::new(),
+        overall_score: 0,
+        mood: CatMood::Working,
+        tooltip_text: String::new(),
+        last_refreshed_at: freshest,
+        settings: cfg.clone(),
+        offline: false,
+        forecasts,
+        usage_today: HashMap::new(),
+        burn_rates,
+    };
+    recompute_snapshot_metrics(&mut snap, &cfg);
+    guard.snapshot = Some(snap);
+}
+
+struct AccountResult {
+    outcome: FetchOutcome,
+    /// True when this round produced a fresh observation (network fetch or newer local Codex log)
+    /// that must be reconciled into cache & history.
+    freshly_observed: bool,
+}
+
+async fn run_refresh(
+    app: &AppHandle,
+    state: &SharedState,
+    reason: RefreshReason,
+) -> DashboardSnapshot {
+    // Non-urgent triggers skip immediately if another refresh is already in flight.
+    if matches!(reason, RefreshReason::Scheduled | RefreshReason::OnDemand)
+        && state.1.busy.load(Ordering::Acquire)
+    {
+        if let Some(existing) = state.0.lock().ok().and_then(|g| g.snapshot.clone()) {
+            return existing;
+        }
+    }
+
+    // Single-flight lock guarantees no two refresh passes hit provider APIs concurrently.
+    let _flight_lock = state.1.lock.lock().await;
+    state.1.busy.store(true, Ordering::Release);
+    let _busy_guard = ArcBoolGuard(state.1.clone());
+
+    let (extra_dirs, settings_copy, prev_usage_scan, prev_usage_today) = state
         .0
         .lock()
-        .map(|g| g.settings.extra_account_dirs.clone())
-        .unwrap_or_default();
+        .map(|g| {
+            (
+                g.settings.extra_account_dirs.clone(),
+                g.settings.clone(),
+                g.last_usage_scan,
+                g.last_usage_today.clone(),
+            )
+        })
+        .unwrap_or_else(|_| (Vec::new(), AppSettings::default(), 0, HashMap::new()));
+
     let discovered = discover_accounts(&extra_dirs);
     log_discovery_changes(&discovered);
 
-    // Today's tokens from the local CLI logs, scanned on a blocking thread while
-    // the network fetches run.
+    // Local CLI / transcript log sources for activity tracking + incremental usage ledger.
     let usage_sources: Vec<usage_stats::Source> = discovered
         .iter()
         .filter_map(|a| match a {
@@ -846,47 +1164,236 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         })
         .collect();
     activity::set_sources(
+
         usage_sources
             .iter()
-            .filter_map(|s| match s {
-                usage_stats::Source::Claude { account_id, config_dir } => Some(activity::Src {
+            .map(|s| match s {
+                usage_stats::Source::Claude { account_id, config_dir } => activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Claude,
                     dir: config_dir.clone(),
-                }),
-                usage_stats::Source::Codex { account_id, codex_home } => Some(activity::Src {
+                },
+                usage_stats::Source::Codex { account_id, codex_home } => activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Codex,
                     dir: codex_home.clone(),
-                }),
-                usage_stats::Source::Antigravity { .. } => None,
+                },
+                usage_stats::Source::Antigravity { account_id, brain_dir } => activity::Src {
+                    account_id: account_id.clone(),
+                    kind: activity::Kind::Antigravity,
+                    dir: brain_dir.clone(),
+                },
             })
             .collect(),
     );
-    // Always keep the incremental usage ledger up to date for the embedded Usage tab,
-    // even when per-card "today's usage" lines are turned off.
-    let usage_task = Some(tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources)));
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .unwrap_or_else(|_| Client::new());
+    let now_start = Utc::now().timestamp();
+    let should_scan_usage = matches!(
+        reason,
+        RefreshReason::Startup | RefreshReason::Scheduled | RefreshReason::Manual
+    ) || (now_start - prev_usage_scan >= USAGE_SCAN_MIN_SECS);
+    let usage_task = should_scan_usage.then(|| {
+        tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources))
+    });
 
-    let mut non_claude = Vec::new();
-    let mut claude_accounts = Vec::new();
-
-    for acc in discovered {
-        match acc {
-            DiscoveredAccount::Claude { .. } => claude_accounts.push(acc),
-            _ => non_claude.push(acc),
+    // Detect credential file mtime/size changes across all discovered accounts.
+    let mut cred_changed_ids: HashSet<String> = HashSet::new();
+    if let Ok(mut guard) = state.0.lock() {
+        for acc in &discovered {
+            let id = acc.id().to_string();
+            if let Some(stamp) = cred_stamp(acc) {
+                let prev = guard.cred_stamps.insert(id.clone(), stamp);
+                if prev.is_some_and(|p| p != stamp) {
+                    cred_changed_ids.insert(id.clone());
+                    guard.cache.clear_expired(&id);
+                }
+            }
         }
     }
 
-    let mut handles = Vec::with_capacity(non_claude.len());
-    for acc in non_claude {
+    // Partition accounts into: skipped (reused from cache), locally updated (Codex logs),
+    // Claude sequential queue, and non-Claude concurrency-capped queue.
+    let mut skipped_results: Vec<AccountResult> = Vec::new();
+    let mut local_fresh_results: Vec<AccountResult> = Vec::new();
+    let mut claude_due: Vec<DiscoveredAccount> = Vec::new();
+    let mut non_claude_due: Vec<DiscoveredAccount> = Vec::new();
+
+    for acc in discovered {
+        match acc {
+        let id = acc.id().to_string();
+        let provider = discovered_provider(&acc);
+        let name = discovered_name(&acc).to_string();
+        let placeholder = placeholder_account(&acc, now_start);
+
+        // Hidden accounts never burn network quota.
+        if settings_copy.is_hidden(&id) {
+            let shown = state
+                .0
+                .lock()
+                .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
+                .unwrap_or(placeholder);
+            skipped_results.push(AccountResult {
+                outcome: FetchOutcome::local(shown),
+                freshly_observed: false,
+            });
+            continue;
+        }
+
+        // Targeted turn-done refresh only touches the account that just finished a turn.
+        if let RefreshReason::ActivityDone(ref target_id) = reason {
+            if &id != target_id {
+                let shown = state
+                    .0
+                    .lock()
+                    .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
+                    .unwrap_or(placeholder);
+                skipped_results.push(AccountResult {
+                    outcome: FetchOutcome::local(shown),
+                    freshly_observed: false,
+                });
+                continue;
+            }
+        }
+
+        // Claude: check local `.claude.json` (`cachedUsageUtilization`) first (0 HTTP calls).
+        if let DiscoveredAccount::Claude { ref credentials_path, .. } = acc {
+            let min_ts = state
+                .0
+                .lock()
+                .ok()
+                .and_then(|g| g.cache.last_good_updated_at(&id))
+                .unwrap_or(0);
+            if let Some(local_q) = read_local_claude_quota(&id, &name, credentials_path, min_ts, now_start) {
+                local_fresh_results.push(AccountResult {
+                    outcome: FetchOutcome::local(local_q),
+                    freshly_observed: true,
+                });
+                continue;
+            }
+        }
+
+        // Codex: try reading live `rate_limits` from local session `.jsonl` first (0 HTTP calls).
+        if let DiscoveredAccount::Codex { ref auth_path, .. } = acc {
+            if let Some(codex_home) = auth_path.parent() {
+                let min_ts = state
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.cache.last_good_updated_at(&id))
+                    .unwrap_or(0);
+                if let Some(local_q) = read_local_codex_quota(&id, &name, codex_home, min_ts, now_start) {
+                    local_fresh_results.push(AccountResult {
+                        outcome: FetchOutcome::local(local_q),
+                        freshly_observed: true,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        let cred_changed = cred_changed_ids.contains(&id);
+
+        // `DiscoverOnly` (add-account watcher / rescan): only fetch accounts never seen before.
+        if reason == RefreshReason::DiscoverOnly && !cred_changed {
+            let already_known = state
+                .0
+                .lock()
+                .map(|g| {
+                    g.cache.last_good.contains_key(&id)
+                        || g.cache.last_attempt.contains_key(&id)
+                        || g.cache.is_known_expired(&id)
+                })
+                .unwrap_or(false);
+            if already_known {
+                let shown = state
+                    .0
+                    .lock()
+                    .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
+                    .unwrap_or(placeholder);
+                skipped_results.push(AccountResult {
+                    outcome: FetchOutcome::local(shown),
+                    freshly_observed: false,
+                });
+                continue;
+            }
+        }
+
+        // Unchanged expired credentials don't need repeated polling until refreshed or manually forced.
+        let skip_unchanged_expired = !cred_changed
+            && !matches!(reason, RefreshReason::Manual | RefreshReason::Startup)
+            && state
+                .0
+                .lock()
+                .map(|g| g.cache.is_known_expired(&id))
+                .unwrap_or(false);
+        if skip_unchanged_expired {
+            let shown = state
+                .0
+                .lock()
+                .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
+                .unwrap_or(placeholder);
+            skipped_results.push(AccountResult {
+                outcome: FetchOutcome::local(shown),
+                freshly_observed: false,
+            });
+            continue;
+        }
+
+        let active = activity::is_account_active(&id, now_start, ACTIVE_WINDOW_SECS);
+        let reset_passed = state
+            .0
+            .lock()
+            .map(|g| g.cache.has_passed_reset(&id, now_start))
+            .unwrap_or(false);
+        let min_interval = account_min_interval(
+            provider,
+            is_ag_cli(&acc),
+            &reason,
+            active,
+            cred_changed,
+            reset_passed,
+        );
+        let allow_retry_errors =
+            matches!(reason, RefreshReason::Manual | RefreshReason::Startup) || cred_changed;
+        let allowed = state
+            .0
+            .lock()
+            .map(|g| g.cache.may_fetch(&id, now_start, min_interval, allow_retry_errors))
+            .unwrap_or(true);
+
+        if !allowed {
+            let shown = state
+                .0
+                .lock()
+                .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
+                .unwrap_or(placeholder);
+            skipped_results.push(AccountResult {
+                outcome: FetchOutcome::local(shown),
+                freshly_observed: false,
+            });
+            continue;
+        }
+
+            DiscoveredAccount::Claude { .. } => claude_due.push(acc),
+            _ => non_claude_due.push(acc),
+        }
+    }
+
+    let client = state.1.client.clone();
+
+    // Non-Claude (Antigravity / Codex): capped at max 2 concurrent requests + mild stagger
+    // to prevent simultaneous burst hits across multiple Google accounts.
+    let sem = Arc::new(tokio::sync::Semaphore::new(2));
+    let mut handles = Vec::with_capacity(non_claude_due.len());
+    for (idx, acc) in non_claude_due.into_iter().enumerate() {
         let client = client.clone();
         handles.push(tokio::spawn(async move {
-            match acc {
+        let sem = sem.clone();
+            let _permit = sem.acquire_owned().await;
+            if idx > 0 {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            let outcome = match acc {
                 DiscoveredAccount::Antigravity {
                     id,
                     name,
@@ -905,14 +1412,21 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                 } => fetch_codex_quota(&client, id, name, &auth_path).await,
                 _ => unreachable!(),
             }
+            };
+            AccountResult {
+                outcome,
+                freshly_observed: true,
         }));
     }
 
-    // Claude: sequential, spaced out, and gated by per-account backoff so a
-    // 429 is never retried while the server-side limit is still active.
-    let mut claude_results = Vec::with_capacity(claude_accounts.len());
-    let mut fetched_any = false;
-    for acc in claude_accounts {
+    // Claude: sequential, spaced out ONLY after actual network hits, never burning
+    // `last_attempt` on local token-expiry short-circuits, and circuit-breaking the rest
+    // of the pass if 2 consecutive accounts hit 429 (protects shared IP/token buckets).
+    let mut claude_results = Vec::with_capacity(claude_due.len());
+    let mut prev_network_hit = false;
+    let mut consecutive_429 = 0u32;
+    for acc in claude_due {
+        let placeholder = placeholder_account(&acc, now_start);
         let DiscoveredAccount::Claude {
             id,
             name,
@@ -921,91 +1435,131 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         else {
             continue;
         };
-        let now = Utc::now().timestamp();
-        let allowed = state
-            .0
-            .lock()
-            .map(|g| g.cache.may_fetch(&id, now, CLAUDE_MIN_INTERVAL_SECS))
-            .unwrap_or(true);
-        if !allowed {
-            let placeholder = AccountQuota {
-                id: id.clone(),
-                provider: ProviderKind::Claude,
-                name,
-                plan: None,
-                effective_remaining: 0,
-                primary_windows: Vec::new(),
-                extra_windows: Vec::new(),
-                status: "cooldown".to_string(),
-                error: Some(tr!("Anthropic 暫時限制查詢，稍後自動重試")),
-                updated_at: now,
-            };
+        if consecutive_429 >= 2 {
             let shown = state
                 .0
                 .lock()
-                .map(|g| g.cache.skipped(&id, placeholder.clone(), now))
+                .map(|g| g.cache.skipped(&id, placeholder.clone(), now_start))
                 .unwrap_or(placeholder);
-            claude_results.push(shown);
+            claude_results.push(AccountResult {
+                outcome: FetchOutcome::local(shown),
+                freshly_observed: false,
+            });
             continue;
         }
-        if fetched_any {
-            tokio::time::sleep(Duration::from_millis(1200)).await;
+        if prev_network_hit {
+            tokio::time::sleep(Duration::from_millis(2000)).await;
         }
-        fetched_any = true;
-        if let Ok(mut g) = state.0.lock() {
-            g.cache.note_attempt(&id, now);
+        let outcome = fetch_claude_quota(&client, id, name, &credentials_path).await;
+        prev_network_hit = outcome.network_hit;
+        if outcome.quota.status == "cooldown" {
+            consecutive_429 += 1;
+        } else if outcome.network_hit {
+            consecutive_429 = 0;
         }
-        let fresh = fetch_claude_quota(&client, id, name, &credentials_path).await;
-        claude_results.push(fresh);
+        claude_results.push(AccountResult {
+            outcome,
+            freshly_observed: true,
+        });
     }
 
-    let mut accounts = Vec::with_capacity(handles.len() + claude_results.len());
+    let mut all_results = Vec::with_capacity(
+        skipped_results.len() + local_fresh_results.len() + handles.len() + claude_results.len(),
+    );
+    all_results.extend(skipped_results);
+    all_results.extend(local_fresh_results);
     for handle in handles {
         if let Ok(res) = handle.await {
-            accounts.push(res);
+            all_results.push(res);
         }
     }
-    accounts.extend(claude_results);
+    all_results.extend(claude_results);
+
+    // Keep deterministic provider + name order matching discovery.
+    all_results.sort_by_key(|r| {
+        let p = match r.outcome.quota.provider {
+            ProviderKind::Claude => 0u8,
+            ProviderKind::Antigravity => 1u8,
+            ProviderKind::Codex => 2u8,
+        };
+        (p, r.outcome.quota.name.to_lowercase(), r.outcome.quota.id.clone())
+    });
 
     let usage_today: HashMap<String, usage_stats::UsageToday> = match usage_task {
-        Some(task) => task
-            .await
-            .map(|list| {
-                list.into_iter()
-                    .filter(|u| u.requests > 0)
-                    .map(|u| (u.account_id.clone(), u))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        None => HashMap::new(),
+        Some(task) => {
+            let computed = task
+                .await
+                .map(|list| {
+                    list.into_iter()
+                        .filter(|u| u.requests > 0)
+                        .map(|u| (u.account_id.clone(), u))
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or(prev_usage_today);
+            if let Ok(mut g) = state.0.lock() {
+                g.last_usage_scan = Utc::now().timestamp();
+                g.last_usage_today = computed.clone();
+            }
+            computed
+        }
+        None => prev_usage_today,
     };
 
-    // Never let a transient failure (429 / network / 5xx) wipe an account to 0%:
-    // fall back to the last good data (persisted across restarts).
+    // Reconcile only freshly observed results; skipped accounts already come straight from cache.
+    let mut accounts: Vec<AccountQuota> = Vec::with_capacity(all_results.len());
     let mut forecasts = HashMap::new();
     let mut burn_rates = HashMap::new();
     if let Ok(mut guard) = state.0.lock() {
+    let mut log_events: Vec<String> = Vec::new();
         let now = Utc::now().timestamp();
-        accounts = accounts
-            .into_iter()
-            .map(|acc| {
-                if acc.status == "stale" {
-                    acc // already resolved from cache (skipped fetch)
-                } else {
-                    guard.cache.reconcile(acc, now)
+        for res in all_results {
+            if !res.freshly_observed {
+                accounts.push(res.outcome.quota);
+                continue;
+            }
+            let id = res.outcome.quota.id.clone();
+            let raw_status = res.outcome.quota.status.clone();
+            if res.outcome.network_hit {
+                guard.cache.note_attempt(&id, now);
+            }
+            let reconciled =
+                guard
+                    .cache
+                    .reconcile_outcome(res.outcome.quota, res.outcome.retry_after_secs, now);
+            if raw_status == "cooldown" {
+                let rem = guard
+                    .cache
+                    .backoff_remaining(&id, now)
+                    .map(|(s, _)| s)
+                    .unwrap_or(0);
+                log_events.push(format!(
+                    "quota rate-limited id={id} retry_after={:?} next_in={rem}s",
+                    res.outcome.retry_after_secs
+                ));
+            } else if raw_status == "error" && res.outcome.network_hit {
+                log_events.push(format!(
+                    "quota fetch error id={id} err={:?}",
+                    reconciled.error.as_deref().unwrap_or("")
+                ));
+            }
+            if raw_status == "ok" && reconciled.status == "ok" {
+                guard.history.record(&reconciled.id, now, reconciled.effective_remaining);
+                for w in reconciled
+                    .primary_windows
+                    .iter()
+                    .filter(|w| !w.label.contains(' '))
+                {
+                    guard.history.record(
+                        &forecast::window_key(&reconciled.id, &w.label),
+                        now,
+                        w.remaining_percent,
+                    );
                 }
-            })
-            .collect();
-        guard.cache.save();
-
-        for acc in accounts.iter().filter(|a| a.status == "ok") {
-            guard.history.record(&acc.id, now, acc.effective_remaining);
-            // Per-window series for the depletion forecast.
-            for w in acc.primary_windows.iter().filter(|w| !w.label.contains(' ')) {
-                guard.history.record(&forecast::window_key(&acc.id, &w.label), now, w.remaining_percent);
             }
         }
+            accounts.push(reconciled);
         guard.history.prune(now);
+        guard.cache.save();
         guard.history.save();
 
         for acc in &accounts {
@@ -1021,6 +1575,9 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         }
     }
 
+    for line in log_events {
+        logging::log(&line);
+    }
     let now = Utc::now().timestamp();
     let mut notifications: Vec<(String, String)> = Vec::new();
 
@@ -1030,12 +1587,20 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
         let cfg = guard.settings.clone();
 
         let mut snap = DashboardSnapshot {
+        // Honest header timestamp: latest actual successful fetch time among visible usable accounts.
+        let freshest_ts = accounts
+            .iter()
+            .filter(|a| !cfg.is_hidden(&a.id) && a.updated_at > 0 && is_usable(a))
+            .map(|a| a.updated_at)
+            .max()
+            .unwrap_or(now);
+
             accounts,
             picks: Vec::new(),
             overall_score: 0,
             mood: CatMood::Working,
             tooltip_text: String::new(),
-            last_refreshed_at: now,
+            last_refreshed_at: freshest_ts,
             settings: cfg.clone(),
             offline: false,
             forecasts,
@@ -1469,10 +2034,11 @@ fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
     if let Ok(Some(monitor)) = pet.primary_monitor() {
         let scale = monitor.scale_factor();
         let wa = monitor.work_area();
-        let size_px = (cfg.pet_size as f64 * scale).round() as i32;
+        let w_px = (pet_w * scale).round() as i32;
+        let h_px = (pet_h * scale).round() as i32;
         let margin = (24.0 * scale).round() as i32;
-        let x = wa.position.x + wa.size.width as i32 - size_px - margin;
-        let y = wa.position.y + wa.size.height as i32 - size_px - margin;
+        let x = wa.position.x + wa.size.width as i32 - w_px - margin;
+        let y = wa.position.y + wa.size.height as i32 - h_px - margin;
         let _ = pet.set_position(Position::Physical(PhysicalPosition::new(x, y)));
     }
 }
@@ -1646,21 +2212,28 @@ pub fn run() {
     let loaded_settings = settings::load_settings();
     i18n::set_lang(&loaded_settings.language);
     usage_stats::set_price_overrides(&loaded_settings.model_prices);
-    let shared = SharedState(Arc::new(Mutex::new(InnerState {
-        settings: loaded_settings.clone(),
-        snapshot: None,
-        notify: NotifyState::load(),
-        panel_pinned: loaded_settings.panel_pinned,
-        last_toggle: Instant::now() - Duration::from_secs(5),
-        last_auto_position: Instant::now() - Duration::from_secs(5),
-        bounds_save_seq: 0,
-        tray_id: "main-tray".to_string(),
-        cache: QuotaCache::load(),
-        history: History::load(),
-        hotkey_error: None,
-        tray_icon_key: String::new(),
-        mobile_status: MobileStatus::default(),
-    })));
+    let shared = SharedState(
+        Arc::new(Mutex::new(InnerState {
+            settings: loaded_settings.clone(),
+            snapshot: None,
+            notify: NotifyState::load(),
+            panel_pinned: loaded_settings.panel_pinned,
+            last_toggle: Instant::now() - Duration::from_secs(5),
+            last_auto_position: Instant::now() - Duration::from_secs(5),
+            bounds_save_seq: 0,
+            tray_id: "main-tray".to_string(),
+            cache: QuotaCache::load(),
+            history: History::load(),
+            hotkey_error: None,
+            tray_icon_key: String::new(),
+            mobile_status: MobileStatus::default(),
+            cred_stamps: HashMap::new(),
+            last_usage_scan: 0,
+            last_usage_today: HashMap::new(),
+        })),
+        Arc::new(RefreshRuntime::new()),
+    );
+    seed_initial_snapshot(&shared);
 
     tauri::Builder::default()
         // Must be registered first: a second launch (autostart + double-click)
@@ -1767,11 +2340,35 @@ pub fn run() {
                         api.prevent_close();
                         if let Some(w) = bubble_handle.get_webview_window("bubble") {
                             let _ = w.hide();
+            rescan_accounts,
                         }
                     }
                 });
             }
-            activity::spawn(handle.clone());
+            {
+                let act_app = handle.clone();
+                let act_state = shared.clone();
+                let last_triggers: Arc<Mutex<HashMap<String, Instant>>> =
+                    Arc::new(Mutex::new(HashMap::new()));
+                activity::spawn(handle.clone(), move |acc_id| {
+                    if let Ok(mut map) = last_triggers.lock() {
+                        if map
+                            .get(&acc_id)
+                            .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
+                        {
+                            return;
+                        }
+                        map.insert(acc_id.clone(), Instant::now());
+                    }
+                    let h = act_app.clone();
+                    let s = act_state.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Brief settle delay so upstream usage accounting commits before we query.
+                        tokio::time::sleep(Duration::from_secs(4)).await;
+                        let _ = run_refresh(&h, &s, RefreshReason::ActivityDone(acc_id)).await;
+                    });
+                });
+            }
             let hk_err = apply_hotkey(&handle, &loaded_settings.hotkey);
             if let Ok(mut g) = shared.0.lock() {
                 g.hotkey_error = hk_err;
@@ -1890,7 +2487,7 @@ pub fn run() {
                             let h = app.clone();
                             let s = state_c.clone();
                             tauri::async_runtime::spawn(async move {
-                                let _ = run_refresh(&h, &s).await;
+                                let _ = run_refresh(&h, &s, RefreshReason::Manual).await;
                             });
                         }
                         "reset_pos" => {
@@ -1923,22 +2520,20 @@ pub fn run() {
 
             spawn_mobile_supervisor(handle.clone(), shared.clone());
 
-            // Background polling loop
+            // Background adaptive scheduler loop (ticks every 30s; only due accounts hit the network)
             let poll_app = handle.clone();
             let poll_state = shared.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    // Each refresh runs as its own task: a panic inside one is
-                    // logged and the loop keeps going instead of dying silently.
                     let (app_c, state_c) = (poll_app.clone(), poll_state.clone());
                     let run = tauri::async_runtime::spawn(async move {
-                        let _ = run_refresh(&app_c, &state_c).await;
+                        let _ = run_refresh(&app_c, &state_c, reason).await;
                     });
                     if let Err(err) = run.await {
                         logging::log(&format!("refresh task failed: {err}"));
                     }
                     poll_state.0.clear_poison();
-                    tokio::time::sleep(Duration::from_secs(AUTO_REFRESH_SECS)).await;
+                    tokio::time::sleep(Duration::from_secs(SCHEDULER_TICK_SECS)).await;
                 }
             });
 
@@ -1973,10 +2568,17 @@ mod tests {
     use super::*;
     use crate::models::QuotaWindow;
 
+                let mut first = true;
     fn mock_acc(id: &str, provider: ProviderKind, name: &str, pct: i32) -> AccountQuota {
         AccountQuota {
             id: id.to_string(),
             provider,
+                    let reason = if first {
+                        first = false;
+                        RefreshReason::Startup
+                    } else {
+                        RefreshReason::Scheduled
+                    };
             name: name.to_string(),
             plan: Some("Pro".to_string()),
             effective_remaining: pct,
@@ -2248,7 +2850,7 @@ mod live_probe_tests {
         let client = Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
         let mut results = Vec::new();
         for acc in discovered {
-            let q = match acc {
+            let outcome = match acc {
                 DiscoveredAccount::Claude { id, name, credentials_path } => {
                     fetch_claude_quota(&client, id, name, &credentials_path).await
                 }
@@ -2275,6 +2877,70 @@ mod live_probe_tests {
             );
             results.push(q);
         }
+
+    #[test]
+    fn adaptive_intervals_balance_freshness_and_rate_limits() {
+        // Active vs idle automatic polling
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::Scheduled, true, false, false),
+            CLAUDE_ACTIVE_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::Scheduled, false, false, false),
+            CLAUDE_IDLE_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Scheduled, true, false, false),
+            AG_ACTIVE_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Scheduled, false, false, false),
+            AG_IDLE_SECS
+        );
+
+        // Manual refresh uses short debounce (never trapped behind 180s auto interval)
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::Manual, false, false, false),
+            CLAUDE_MANUAL_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Manual, false, false, false),
+            AG_MANUAL_SECS
+        );
+
+        // Turn finished / reset passed accelerate refreshes
+        assert_eq!(
+            account_min_interval(
+                ProviderKind::Claude,
+                false,
+                &RefreshReason::ActivityDone("claude:a".into()),
+                true,
+                false,
+                false
+            ),
+            CLAUDE_TRIGGERED_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::Scheduled, false, false, true),
+            CLAUDE_TRIGGERED_SECS
+        );
+
+        // Opening the panel accelerates active accounts without waking idle ones
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::OnDemand, true, false, false),
+            CLAUDE_TRIGGERED_SECS
+        );
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::OnDemand, false, false, false),
+            CLAUDE_IDLE_SECS
+        );
+
+        // Credential file change always triggers immediate refresh
+        assert_eq!(
+            account_min_interval(ProviderKind::Claude, false, &RefreshReason::Scheduled, false, true, false),
+            0
+        );
+    }
 
         // 3. Snapshot metrics computation (read-only loaded settings)
         let loaded_settings = settings::load_settings();
@@ -2317,6 +2983,7 @@ mod live_probe_tests {
             qr.len(),
             diag.lines().count()
         );
+            let q = outcome.quota;
 
         // 5. Real mobile HTTP server check with compiled ../dist assets over loopback TCP
         let dist_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("dist");

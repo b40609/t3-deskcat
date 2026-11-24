@@ -15,6 +15,8 @@ const KEEP_SECS: i64 = 24 * 3600;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct History {
     pub samples: HashMap<String, Vec<(i64, i32)>>,
+    #[serde(skip)]
+    dirty: bool,
 }
 
 fn history_path() -> Option<PathBuf> {
@@ -29,34 +31,59 @@ impl History {
             .unwrap_or_default()
     }
 
-    pub fn save(&self) {
+    pub fn save(&mut self) {
+        if !self.dirty {
+            return;
+        }
         let Some(path) = history_path() else { return };
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if let Ok(body) = serde_json::to_string(self) {
             let tmp = path.with_extension("json.tmp");
-            if fs::write(&tmp, body).is_ok() {
-                let _ = fs::rename(&tmp, &path);
+            if fs::write(&tmp, body).is_ok() && fs::rename(&tmp, &path).is_ok() {
+                self.dirty = false;
             }
         }
     }
 
     pub fn record(&mut self, id: &str, ts: i64, value: i32) {
         let series = self.samples.entry(id.to_string()).or_default();
+        let before_len = series.len();
+        let mut changed = false;
         match series.last_mut() {
             // Same 5-minute bucket: keep the timestamp, update the value.
-            Some(last) if ts - last.0 < BUCKET_SECS => last.1 = value,
-            _ => series.push((ts, value)),
+            Some(last) if ts - last.0 < BUCKET_SECS => {
+                if last.1 != value {
+                    last.1 = value;
+                    changed = true;
+                }
+            }
+            _ => {
+                series.push((ts, value));
+                changed = true;
+            }
         }
         series.retain(|(t, _)| ts - *t <= KEEP_SECS);
+        if changed || series.len() != before_len {
+            self.dirty = true;
+        }
     }
 
     pub fn prune(&mut self, now: i64) {
+        let mut removed = false;
         for series in self.samples.values_mut() {
+            let before = series.len();
             series.retain(|(t, _)| now - *t <= KEEP_SECS);
+            if series.len() != before {
+                removed = true;
+            }
         }
+        let before = self.samples.len();
         self.samples.retain(|_, s| !s.is_empty());
+        if removed || self.samples.len() != before {
+            self.dirty = true;
+        }
     }
 }
 

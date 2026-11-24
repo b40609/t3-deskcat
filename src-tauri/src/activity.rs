@@ -3,32 +3,37 @@
 //!
 //! * Claude Code: `<config dir>/projects/**/*.jsonl`
 //! * Codex: `<codex home>/sessions/YYYY/MM/DD/*.jsonl`
+//! * Antigravity: `<acp dir>/brain/*/.system_generated/logs/transcript.jsonl`
 //!
-//! Every 2 s the newest log file is checked: written in the last few seconds,
-//! or waiting on a tool / the model → `working`; last turn finished → `done`;
-//! last line is an API error → `error`; nothing recent → `idle`.
-//! Only the last 16 KB of one file are read per check.
+//! Every 2 s the newest log file per account is checked:
+//! * drives the pet window's live `agent-activity` event;
+//! * tracks `last_write_for(account_id)` so the quota scheduler polls active
+//!   accounts promptly and throttles idle accounts;
+//! * fires an optional `on_turn_done(account_id)` callback when an account
+//!   transitions from `working` to `done`, triggering a targeted quota refresh.
 
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Claude,
     Codex,
+    Antigravity,
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Src {
     pub account_id: String,
     pub kind: Kind,
-    /// Claude: the config dir; Codex: the codex home.
+    /// Claude: config dir; Codex: codex home; Antigravity: brain dir.
     pub dir: PathBuf,
 }
 
@@ -70,6 +75,11 @@ fn current() -> &'static Mutex<Activity> {
     A.get_or_init(|| Mutex::new(Activity::default()))
 }
 
+fn last_writes() -> &'static Mutex<HashMap<String, i64>> {
+    static W: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub fn set_sources(list: Vec<Src>) {
     if let Ok(mut s) = sources().lock() {
         *s = list;
@@ -78,6 +88,16 @@ pub fn set_sources(list: Vec<Src>) {
 
 pub fn get() -> Activity {
     current().lock().map(|a| a.clone()).unwrap_or_default()
+}
+
+/// Most recent local session/transcript write timestamp (Unix seconds) observed for `account_id`.
+pub fn last_write_for(account_id: &str) -> Option<i64> {
+    last_writes().lock().ok()?.get(account_id).copied()
+}
+
+/// True when `account_id` has had local log writes within `window_secs` of `now`.
+pub fn is_account_active(account_id: &str, now: i64, window_secs: i64) -> bool {
+    last_write_for(account_id).is_some_and(|ts| now - ts <= window_secs)
 }
 
 /// What the last meaningful line of a session log says.
@@ -126,7 +146,9 @@ pub fn classify_codex(tail: &str) -> LastEvent {
         }
         match o.pointer("/payload/type").and_then(Value::as_str).unwrap_or("") {
             "task_complete" | "turn_aborted" => return LastEvent::Done,
-            "task_started" | "user_message" | "agent_message" | "exec_command_begin" => return LastEvent::Pending,
+            "task_started" | "user_message" | "agent_message" | "exec_command_begin" => {
+                return LastEvent::Pending
+            }
             "error" | "stream_error" => return LastEvent::Error,
             _ => {}
         }
@@ -168,6 +190,24 @@ fn collect(dir: &Path, depth: u32, cutoff: SystemTime, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn collect_antigravity(brain_dir: &Path, cutoff: SystemTime, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(brain_dir) else { return };
+    for ent in rd.flatten() {
+        let Ok(ft) = ent.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        let p = ent
+            .path()
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        if fs::metadata(&p).and_then(|m| m.modified()).is_ok_and(|t| t >= cutoff) {
+            out.push(p);
+        }
+    }
+}
+
 /// Recently modified log files of every source.
 fn scan(list: &[Src]) -> Vec<(PathBuf, usize)> {
     let cutoff = SystemTime::now() - Duration::from_secs(WATCH_SECS);
@@ -188,6 +228,7 @@ fn scan(list: &[Src]) -> Vec<(PathBuf, usize)> {
                     collect(&dir, 1, cutoff, &mut files);
                 }
             }
+            Kind::Antigravity => collect_antigravity(&s.dir, cutoff, &mut files),
         }
         out.extend(files.into_iter().map(|f| (f, i)));
     }
@@ -212,38 +253,133 @@ fn tail(path: &Path) -> String {
     }
 }
 
-fn check(list: &[Src], files: &[(PathBuf, usize)]) -> Activity {
-    if list.is_empty() {
-        return Activity::default();
-    }
-    let newest = files
-        .iter()
-        .filter_map(|(p, i)| fs::metadata(p).and_then(|m| m.modified()).ok().map(|t| (t, p, *i)))
-        .max_by_key(|(t, _, _)| *t);
-    let Some((mtime, path, i)) = newest else {
-        return Activity { state: "idle", account_id: None, last_write: 0 };
-    };
-    let quiet = SystemTime::now().duration_since(mtime).map(|d| d.as_secs()).unwrap_or(0);
-    let src = &list[i];
-    let ev = if quiet <= FRESH_SECS {
-        LastEvent::Pending
-    } else {
-        let t = tail(path);
-        match src.kind {
-            Kind::Claude => classify_claude(&t),
-            Kind::Codex => classify_codex(&t),
-        }
-    };
-    let last_write = mtime.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    Activity { state: decide(quiet, ev), account_id: Some(src.account_id.clone()), last_write }
+struct CheckResult {
+    activity: Activity,
+    per_account_states: HashMap<String, &'static str>,
 }
 
-/// Polls every 2 s and emits `agent-activity` to the pet window on changes.
-pub fn spawn(app: AppHandle) {
+fn check(list: &[Src], files: &[(PathBuf, usize)]) -> CheckResult {
+    if list.is_empty() {
+        return CheckResult {
+            activity: Activity::default(),
+            per_account_states: HashMap::new(),
+        };
+    }
+
+    // Track newest file per source index so we know every active account's write time.
+    let mut newest_per_src: HashMap<usize, (SystemTime, &Path)> = HashMap::new();
+    for (p, i) in files {
+        let Ok(mtime) = fs::metadata(p).and_then(|m| m.modified()) else {
+            continue;
+        };
+        newest_per_src
+            .entry(*i)
+            .and_modify(|cur| {
+                if mtime > cur.0 {
+                    *cur = (mtime, p.as_path());
+                }
+            })
+            .or_insert((mtime, p.as_path()));
+    }
+
+    let now_sys = SystemTime::now();
+    let mut per_account_states: HashMap<String, &'static str> = HashMap::new();
+    let mut write_updates: Vec<(String, i64)> = Vec::new();
+    let mut overall_best: Option<(SystemTime, &Path, usize)> = None;
+
+    for (i, (mtime, path)) in &newest_per_src {
+        let Some(src) = list.get(*i) else { continue };
+        let ts = mtime
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if ts > 0 {
+            write_updates.push((src.account_id.clone(), ts));
+        }
+
+        let quiet = now_sys.duration_since(*mtime).map(|d| d.as_secs()).unwrap_or(0);
+        let state = match src.kind {
+            Kind::Antigravity => {
+                if quiet <= 8 {
+                    "working"
+                } else if quiet <= 90 {
+                    "done"
+                } else {
+                    "idle"
+                }
+            }
+            Kind::Claude | Kind::Codex => {
+                let ev = if quiet <= FRESH_SECS {
+                    LastEvent::Pending
+                } else {
+                    let t = tail(path);
+                    match src.kind {
+                        Kind::Claude => classify_claude(&t),
+                        Kind::Codex => classify_codex(&t),
+                        Kind::Antigravity => LastEvent::Unknown,
+                    }
+                };
+                decide(quiet, ev)
+            }
+        };
+        per_account_states.insert(src.account_id.clone(), state);
+
+        if overall_best.is_none_or(|(best_t, _, _)| *mtime > best_t) {
+            overall_best = Some((*mtime, *path, *i));
+        }
+    }
+
+    if !write_updates.is_empty() {
+        if let Ok(mut map) = last_writes().lock() {
+            for (id, ts) in write_updates {
+                map.entry(id)
+                    .and_modify(|prev| {
+                        if ts > *prev {
+                            *prev = ts;
+                        }
+                    })
+                    .or_insert(ts);
+            }
+        }
+    }
+
+    let Some((mtime, _, i)) = overall_best else {
+        return CheckResult {
+            activity: Activity { state: "idle", account_id: None, last_write: 0 },
+            per_account_states,
+        };
+    };
+    let src = &list[i];
+    let state = per_account_states
+        .get(&src.account_id)
+        .copied()
+        .unwrap_or("idle");
+    let last_write = mtime
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    CheckResult {
+        activity: Activity {
+            state,
+            account_id: Some(src.account_id.clone()),
+            last_write,
+        },
+        per_account_states,
+    }
+}
+
+/// Polls every 2 s, emits `agent-activity` to the pet window on changes, and invokes
+/// `on_turn_done(account_id)` whenever any tracked account finishes a turn (`working -> done`).
+pub fn spawn<F>(app: AppHandle, on_turn_done: F)
+where
+    F: Fn(String) + Send + 'static,
+{
     std::thread::spawn(move || {
         let mut files: Vec<(PathBuf, usize)> = Vec::new();
         let mut last_scan = Instant::now() - Duration::from_secs(3600);
         let mut scanned_for: Vec<Src> = Vec::new();
+        let mut prev_states: HashMap<String, &'static str> = HashMap::new();
         loop {
             let list = sources().lock().map(|s| s.clone()).unwrap_or_default();
             if list != scanned_for || last_scan.elapsed() >= Duration::from_secs(20) {
@@ -251,7 +387,18 @@ pub fn spawn(app: AppHandle) {
                 last_scan = Instant::now();
                 scanned_for = list.clone();
             }
-            let next = check(&list, &files);
+            let res = check(&list, &files);
+
+            // Detect per-account `working -> done` transitions to trigger timely quota refresh.
+            for (acc_id, st) in &res.per_account_states {
+                let prev = prev_states.get(acc_id).copied();
+                if prev == Some("working") && *st == "done" {
+                    on_turn_done(acc_id.clone());
+                }
+            }
+            prev_states = res.per_account_states;
+
+            let next = res.activity;
             let changed = current()
                 .lock()
                 .map(|mut cur| {

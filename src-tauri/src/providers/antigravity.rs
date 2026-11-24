@@ -1,35 +1,117 @@
 use crate::models::{AccountQuota, ProviderKind, QuotaWindow};
+use crate::providers::{parse_retry_after, FetchOutcome};
 use chrono::Utc;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const CODE_ASSIST_BASE: &str = "https://daily-cloudcode-pa.googleapis.com";
+/// Cache `loadCodeAssist` project_id + tier in memory to avoid repeating it on every poll.
+const META_CACHE_TTL_SECS: i64 = 6 * 3600;
 
-/// Fetches Antigravity quota using T3's `acp_token.json` (or legacy `~/.gemini/oauth_creds.json`).
-/// Refreshes the short-lived access token in memory only and never modifies local credential files.
+#[derive(Clone)]
+struct CachedToken {
+    access_token: String,
+    expires_at: i64,
+    refresh_hash: u64,
+}
+
+#[derive(Clone)]
+struct CachedMeta {
+    project_id: String,
+    plan: Option<String>,
+    fetched_at: i64,
+}
+
+fn token_cache() -> &'static Mutex<HashMap<String, CachedToken>> {
+    static C: OnceLock<Mutex<HashMap<String, CachedToken>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn meta_cache() -> &'static Mutex<HashMap<String, CachedMeta>> {
+    static C: OnceLock<Mutex<HashMap<String, CachedMeta>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn hash_str(s: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+fn evict_caches(id: &str) {
+    if let Ok(mut tc) = token_cache().lock() {
+        tc.remove(id);
+    }
+    if let Ok(mut mc) = meta_cache().lock() {
+        mc.remove(id);
+    }
+}
+
+enum ApiErr {
+    Auth(String),
+    RateLimit { retry_after: Option<i64>, msg: String },
+    Other(String),
+}
+
+impl ApiErr {
+    fn into_outcome(self, id: String, name: String, now: i64) -> FetchOutcome {
+        match self {
+            ApiErr::Auth(msg) => {
+                evict_caches(&id);
+                FetchOutcome::network(error_account(id, name, now, "expired", msg))
+            }
+            ApiErr::RateLimit { retry_after, msg } => FetchOutcome::rate_limited(
+                error_account(id, name, now, "cooldown", msg),
+                retry_after,
+            ),
+            ApiErr::Other(msg) => FetchOutcome::network(error_account(id, name, now, "error", msg)),
+        }
+    }
+}
+
+/// Fetches Antigravity quota using T3's `antigravity-oauth-token` / `acp_token.json`
+/// (or legacy `~/.gemini/oauth_creds.json`).
+/// Refreshes the short-lived access token in memory only (cached until expiry) and
+/// caches `loadCodeAssist` project/tier metadata so each poll sends 2 calls instead of 4.
 pub async fn fetch_antigravity_quota(
     client: &Client,
     id: String,
     name: String,
     token_path: &Path,
     is_legacy_gemini: bool,
-) -> AccountQuota {
+) -> FetchOutcome {
     let now = Utc::now().timestamp();
 
     let raw = match fs::read_to_string(token_path) {
         Ok(s) => s,
         Err(err) => {
-            return error_account(id, name, now, "error", crate::tr!("無法讀取憑證: {err}", err = err));
+            return FetchOutcome::local(error_account(
+                id,
+                name,
+                now,
+                "error",
+                crate::tr!("無法讀取憑證: {err}", err = err),
+            ));
         }
     };
 
     let parsed: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(err) => {
-            return error_account(id, name, now, "error", crate::tr!("憑證 JSON 錯誤: {err}", err = err));
+            return FetchOutcome::local(error_account(
+                id,
+                name,
+                now,
+                "error",
+                crate::tr!("憑證 JSON 錯誤: {err}", err = err),
+            ));
         }
     };
 
@@ -69,7 +151,7 @@ pub async fn fetch_antigravity_quota(
         .and_then(Value::as_str)
         .unwrap_or(GOOGLE_TOKEN_ENDPOINT);
 
-    // For legacy oauth_creds.json, try existing access_token if not expired, else refresh
+    // 1. Prefer unexpired token straight from disk (T3 keeps it refreshed while active).
     let mut access_token = if let Some(tok) = t3_token {
         let exp = tok
             .get("expiry")
@@ -95,12 +177,31 @@ pub async fn fetch_antigravity_quota(
         None
     };
 
+    // 2. Otherwise check our in-memory refreshed-token cache before hitting Google OAuth.
+    let rt_hash = hash_str(refresh_token);
+    if access_token.is_none() && !refresh_token.is_empty() {
+        if let Ok(tc) = token_cache().lock() {
+            if let Some(cached) = tc.get(&id) {
+                if cached.refresh_hash == rt_hash && cached.expires_at > now + 90 {
+                    access_token = Some(cached.access_token.clone());
+                }
+            }
+        }
+    }
+
+    // 3. Only call Google OAuth refresh when both disk & memory tokens are expired.
     if access_token.is_none() {
         if refresh_token.is_empty() {
-            return error_account(id, name, now, "expired", crate::tr!("缺少 Refresh Token"));
+            return FetchOutcome::local(error_account(
+                id,
+                name,
+                now,
+                "expired",
+                crate::tr!("缺少 Refresh Token"),
+            ));
         }
         if client_id.is_empty() || client_secret.is_empty() {
-            return error_account(
+            return FetchOutcome::local(error_account(
                 id,
                 name,
                 now,
@@ -110,68 +211,101 @@ pub async fn fetch_antigravity_quota(
                 } else {
                     crate::tr!("憑證缺少 client_id / client_secret")
                 },
-            );
+            ));
         }
-        match refresh_google_token(client, token_uri, client_id, client_secret, refresh_token).await
+        match refresh_google_token(client, token_uri, client_id, client_secret, refresh_token, now)
+            .await
         {
-            Ok(tok) => access_token = Some(tok),
-            Err(msg) => {
-                let st = if msg.contains("expired") || msg.contains("400") || msg.contains("401") {
-                    "expired"
-                } else {
-                    "error"
-                };
-                return error_account(id, name, now, st, msg);
+            Ok((tok, expires_in)) => {
+                if let Ok(mut tc) = token_cache().lock() {
+                    tc.insert(
+                        id.clone(),
+                        CachedToken {
+                            access_token: tok.clone(),
+                            expires_at: now + expires_in.clamp(300, 7200),
+                            refresh_hash: rt_hash,
+                        },
+                    );
+                }
+                access_token = Some(tok);
             }
+            Err(err) => return err.into_outcome(id, name, now),
         }
     }
 
     let access_token = access_token.unwrap_or_default();
 
-    let load_res = post_code_assist(
-        client,
-        &access_token,
-        "v1internal:loadCodeAssist",
-        &json!({
-            "mode": "FULL_ELIGIBILITY_CHECK",
-            "metadata": {
-                "ideName": "antigravity",
-                "ideType": "ANTIGRAVITY",
-                "ideVersion": "1.20.5",
-                "pluginVersion": "t3-deskcat",
-                "platform": "WINDOWS_AMD64",
-                "updateChannel": "stable",
-                "pluginType": "GEMINI"
-            }
-        }),
-        "antigravity/1.20.5 windows/amd64 google-api-nodejs-client/10.3.0",
-    )
-    .await;
+    // Reuse cached project_id + plan for META_CACHE_TTL_SECS to avoid calling loadCodeAssist every poll.
+    let cached_meta = meta_cache()
+        .lock()
+        .ok()
+        .and_then(|mc| mc.get(&id).cloned())
+        .filter(|m| now - m.fetched_at < META_CACHE_TTL_SECS);
 
-    let (plan, resolved_project) = match &load_res {
-        Ok(load) => (extract_tier(load), extract_project(load)),
-        Err(_) => (None, None),
-    };
-
-    let project_id = resolved_project.or_else(|| {
-        parsed
-            .get("project_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    });
-
-    let Some(project) = project_id else {
-        return error_account(
-            id,
-            name,
+    let (plan, project) = if let Some(m) = cached_meta {
+        (m.plan, m.project_id)
+    } else {
+        let load_res = post_code_assist(
+            client,
+            &access_token,
+            "v1internal:loadCodeAssist",
+            &json!({
+                "mode": "FULL_ELIGIBILITY_CHECK",
+                "metadata": {
+                    "ideName": "antigravity",
+                    "ideType": "ANTIGRAVITY",
+                    "ideVersion": "1.20.5",
+                    "pluginVersion": "t3-deskcat",
+                    "platform": "WINDOWS_AMD64",
+                    "updateChannel": "stable",
+                    "pluginType": "GEMINI"
+                }
+            }),
+            "antigravity/1.20.5 windows/amd64 google-api-nodejs-client/10.3.0",
             now,
-            "error",
-            load_res
-                .err()
-                .unwrap_or_else(|| crate::tr!("無法取得 Antigravity Project ID")),
-        );
+        )
+        .await;
+
+        let (plan, resolved_project, load_err) = match load_res {
+            Ok(load) => (extract_tier(&load), extract_project(&load), None),
+            Err(err) => match err {
+                ApiErr::Auth(_) | ApiErr::RateLimit { .. } => {
+                    return err.into_outcome(id, name, now);
+                }
+                ApiErr::Other(msg) => (None, None, Some(msg)),
+            },
+        };
+
+        let project_id = resolved_project.or_else(|| {
+            parsed
+                .get("project_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        });
+
+        let Some(project) = project_id else {
+            return FetchOutcome::network(error_account(
+                id,
+                name,
+                now,
+                "error",
+                load_err.unwrap_or_else(|| crate::tr!("無法取得 Antigravity Project ID")),
+            ));
+        };
+
+        if let Ok(mut mc) = meta_cache().lock() {
+            mc.insert(
+                id.clone(),
+                CachedMeta {
+                    project_id: project.clone(),
+                    plan: plan.clone(),
+                    fetched_at: now,
+                },
+            );
+        }
+        (plan, project)
     };
 
     let project_payload = json!({ "project": project });
@@ -183,10 +317,16 @@ pub async fn fetch_antigravity_quota(
         "v1internal:fetchAvailableModels",
         &project_payload,
         "antigravity/1.20.5 windows/amd64",
+        now,
     )
     .await
     {
-        return error_account(id, name, now, "error", err);
+        if matches!(err, ApiErr::Other(_)) {
+            if let Ok(mut mc) = meta_cache().lock() {
+                mc.remove(&id);
+            }
+        }
+        return err.into_outcome(id, name, now);
     }
 
     let quota = match post_code_assist(
@@ -195,11 +335,19 @@ pub async fn fetch_antigravity_quota(
         "v1internal:retrieveUserQuotaSummary",
         &project_payload,
         "antigravity/cli/1.4.10 windows/amd64",
+        now,
     )
     .await
     {
         Ok(q) => q,
-        Err(err) => return error_account(id, name, now, "error", err),
+        Err(err) => {
+            if matches!(err, ApiErr::Other(_)) {
+                if let Ok(mut mc) = meta_cache().lock() {
+                    mc.remove(&id);
+                }
+            }
+            return err.into_outcome(id, name, now);
+        }
     };
 
     let (primary_windows, extra_windows) = parse_quota_groups(&quota);
@@ -209,7 +357,7 @@ pub async fn fetch_antigravity_quota(
         .min()
         .unwrap_or(0);
 
-    AccountQuota {
+    FetchOutcome::network(AccountQuota {
         id,
         provider: ProviderKind::Antigravity,
         name,
@@ -220,7 +368,7 @@ pub async fn fetch_antigravity_quota(
         status: "ok".to_string(),
         error: None,
         updated_at: now,
-    }
+    })
 }
 
 /// Find an OAuth client (id, secret) in any `<instance>/antigravity-acp/acp_token.json`
@@ -247,7 +395,8 @@ async fn refresh_google_token(
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
-) -> Result<String, String> {
+    now: i64,
+) -> Result<(String, i64), ApiErr> {
     let resp = client
         .post(token_uri)
         .form(&[
@@ -258,27 +407,46 @@ async fn refresh_google_token(
         ])
         .send()
         .await
-        .map_err(|err| crate::tr!("OAuth 連線失敗: {err}", err = err))?;
+        .map_err(|err| ApiErr::Other(crate::tr!("OAuth 連線失敗: {err}", err = err)))?;
 
     let status = resp.status().as_u16();
+    let retry_after = parse_retry_after(resp.headers(), now);
     if status == 400 || status == 401 {
-        return Err(crate::tr!("Google 授權已失效 (HTTP {status})", status = status));
+        return Err(ApiErr::Auth(crate::tr!(
+            "Google 授權已失效 (HTTP {status})",
+            status = status
+        )));
+    }
+    if status == 429 || status == 503 {
+        return Err(ApiErr::RateLimit {
+            retry_after,
+            msg: crate::tr!("Google OAuth 請求受限 (HTTP {status})", status = status),
+        });
     }
     if !resp.status().is_success() {
-        return Err(crate::tr!("Token 刷新失敗 (HTTP {status})", status = status));
+        return Err(ApiErr::Other(crate::tr!(
+            "Token 刷新失敗 (HTTP {status})",
+            status = status
+        )));
     }
 
     let body: Value = resp
         .json()
         .await
-        .map_err(|err| crate::tr!("Token 回應解析失敗: {err}", err = err))?;
+        .map_err(|err| ApiErr::Other(crate::tr!("Token 回應解析失敗: {err}", err = err)))?;
 
-    body.get("access_token")
+    let access_token = body
+        .get("access_token")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| crate::tr!("OAuth 回應缺少 access_token"))
+        .ok_or_else(|| ApiErr::Other(crate::tr!("OAuth 回應缺少 access_token")))?;
+    let expires_in = body
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .unwrap_or(3600);
+    Ok((access_token, expires_in))
 }
 
 async fn post_code_assist(
@@ -287,7 +455,8 @@ async fn post_code_assist(
     endpoint: &str,
     payload: &Value,
     user_agent: &str,
-) -> Result<Value, String> {
+    now: i64,
+) -> Result<Value, ApiErr> {
     let url = format!("{CODE_ASSIST_BASE}/{endpoint}");
     let resp = client
         .post(&url)
@@ -299,24 +468,49 @@ async fn post_code_assist(
         .json(payload)
         .send()
         .await
-        .map_err(|err| crate::tr!("請求 {endpoint} 失敗: {err}", endpoint = endpoint, err = err))?;
+        .map_err(|err| {
+            ApiErr::Other(crate::tr!(
+                "請求 {endpoint} 失敗: {err}",
+                endpoint = endpoint,
+                err = err
+            ))
+        })?;
 
     let status = resp.status().as_u16();
+    let retry_after = parse_retry_after(resp.headers(), now);
     if status == 401 || status == 403 {
-        return Err(crate::tr!("授權被拒絕 (HTTP {status})", status = status));
+        return Err(ApiErr::Auth(crate::tr!(
+            "授權被拒絕 (HTTP {status})",
+            status = status
+        )));
+    }
+    if status == 429 || status == 503 {
+        return Err(ApiErr::RateLimit {
+            retry_after,
+            msg: format!("{endpoint} HTTP {status}"),
+        });
     }
     if !resp.status().is_success() {
-        return Err(format!("{endpoint} HTTP {status}"));
+        return Err(ApiErr::Other(format!("{endpoint} HTTP {status}")));
     }
 
-    let text = resp
-        .text()
-        .await
-        .map_err(|err| crate::tr!("讀取 {endpoint} 回應失敗: {err}", endpoint = endpoint, err = err))?;
+    let text = resp.text().await.map_err(|err| {
+        ApiErr::Other(crate::tr!(
+            "讀取 {endpoint} 回應失敗: {err}",
+            endpoint = endpoint,
+            err = err
+        ))
+    })?;
     if text.trim().is_empty() {
         return Ok(json!({}));
     }
-    serde_json::from_str(&text).map_err(|err| crate::tr!("解析 {endpoint} JSON 失敗: {err}", endpoint = endpoint, err = err))
+    serde_json::from_str(&text).map_err(|err| {
+        ApiErr::Other(crate::tr!(
+            "解析 {endpoint} JSON 失敗: {err}",
+            endpoint = endpoint,
+            err = err
+        ))
+    })
 }
 
 fn extract_project(load: &Value) -> Option<String> {
@@ -565,25 +759,29 @@ mod tests {
         let client = Client::new();
 
         let missing = fetch_antigravity_quota(&client, "ag:m".into(), "M".into(), &dir.join("missing.json"), false).await;
-        assert_eq!(missing.status, "error");
-        assert!(missing.error.is_some());
+        assert_eq!(missing.quota.status, "error");
+        assert!(!missing.network_hit);
+        assert!(missing.quota.error.is_some());
 
         let bad_json_path = dir.join("bad.json");
         fs::write(&bad_json_path, "{not-json").unwrap();
         let bad = fetch_antigravity_quota(&client, "ag:b".into(), "B".into(), &bad_json_path, false).await;
-        assert_eq!(bad.status, "error");
+        assert_eq!(bad.quota.status, "error");
+        assert!(!bad.network_hit);
 
         let no_rt_path = dir.join("no_rt.json");
         fs::write(&no_rt_path, r#"{"token":{"access_token":"","expiry":"2000-01-01T00:00:00Z"}}"#).unwrap();
         let no_rt = fetch_antigravity_quota(&client, "ag:n".into(), "N".into(), &no_rt_path, false).await;
-        assert_eq!(no_rt.status, "expired");
+        assert_eq!(no_rt.quota.status, "expired");
+        assert!(!no_rt.network_hit);
 
         let t3_expired_no_client = dir.join("providers").join("antigravity").join("h").join("antigravity-acp").join("antigravity-oauth-token");
         fs::create_dir_all(t3_expired_no_client.parent().unwrap()).unwrap();
         fs::write(&t3_expired_no_client, r#"{"token":{"access_token":"old","refresh_token":"rt","expiry":"2020-01-01T00:00:00Z"}}"#).unwrap();
         let no_cli = fetch_antigravity_quota(&client, "ag:c".into(), "C".into(), &t3_expired_no_client, false).await;
-        assert_eq!(no_cli.status, "expired");
-        assert!(no_cli.error.as_deref().unwrap_or("").contains("Antigravity"));
+        assert_eq!(no_cli.quota.status, "expired");
+        assert!(!no_cli.network_hit);
+        assert!(no_cli.quota.error.as_deref().unwrap_or("").contains("Antigravity"));
 
         let _ = fs::remove_dir_all(&dir);
     }

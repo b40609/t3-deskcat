@@ -516,6 +516,9 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
       : `<span class="status stale">${t("沒有用量資料")}</span>`;
     if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")} · ${ageLabel(acc.updatedAt)}</span>`;
+    } else if (isStale && acc.error) {
+      const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
+      note = `<span class="acc-note warn" title="${escapeHtml(acc.error)}">${tag} · ${ageLabel(acc.updatedAt)}</span>`;
     } else if (isStale && Date.now() / 1000 - acc.updatedAt >= 600) {
       note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${ageLabel(acc.updatedAt)}</span>`;
     }
@@ -526,7 +529,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
       ${avatarHtml(acc.id, acc.provider)}
       <div class="row-main">
         <div class="row-title">
-          <span class="name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>
+          <span class="name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
           ${provChip}${plan}${note}
           <button type="button" class="row-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
         </div>
@@ -616,6 +619,9 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   let badge = "";
   if (isLastKnown) {
     badge = `<span class="d-badge warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")}</span>`;
+  } else if (isStale && acc.error) {
+    const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
+    badge = `<span class="d-badge warn" title="${escapeHtml(acc.error)}">${tag} · ${ageLabel(acc.updatedAt)}</span>`;
   } else if (!isErr && !isCooldown) {
     badge = denseForecastBadge(snap.forecasts?.[acc.id], acc.provider);
   }
@@ -639,7 +645,7 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
     <div class="dense-acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="d-head">
         ${avatarHtml(acc.id, acc.provider)}
-        <span class="d-name" title="${escapeHtml(acc.name)}">${escapeHtml(displayName(acc))}</span>
+        <span class="d-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
         ${provChip}
         ${badge}
         <span class="d-spacer"></span>
@@ -1326,8 +1332,6 @@ inpPetIdleFade.addEventListener("change", () => commitSettings({ petIdleFade: in
 inpShowForecast.addEventListener("change", () => commitSettings({ showForecast: inpShowForecast.checked }, true));
 inpShowUsage.addEventListener("change", () => {
   commitSettings({ showUsageStats: inpShowUsage.checked }, true);
-  // Stats are only scanned while enabled: fetch them now instead of at the next poll.
-  if (inpShowUsage.checked) window.setTimeout(() => invoke("refresh_now").catch(() => {}), 300);
 });
 selPanelPos.addEventListener("change", () =>
   commitSettings({ panelPosition: selPanelPos.value as PanelPosition }, true),
@@ -1403,7 +1407,7 @@ async function rescan() {
   const b = $("btn-rescan");
   b.textContent = t("掃描中");
   try {
-    renderDashboard(await invoke<DashboardSnapshot>("refresh_now"));
+    renderDashboard(await invoke<DashboardSnapshot>("rescan_accounts"));
     await loadSources();
     const n = currentSnapshot?.accounts.length ?? 0;
     b.textContent = t("找到 {n} 個帳號", { n });
@@ -1596,7 +1600,7 @@ $("btn-acc-login").addEventListener("click", async () => {
     let n = 0;
     loginWatch = window.setInterval(async () => {
       if (++n > 100 || showingSub !== "add-account") return stopLoginWatch();
-      const snap = await invoke<DashboardSnapshot>("refresh_now").catch(() => null);
+      const snap = await invoke<DashboardSnapshot>("rescan_accounts").catch(() => null);
       if (!snap) return;
       renderDashboard(snap);
       const added = snap.accounts.find((a) => !before.has(a.id) && a.provider === addProvider);

@@ -85,7 +85,15 @@ export function focusOf(snap: DashboardSnapshot | null, activeId: string | null)
   const { short, long } = mainWindows(acc);
   const tight =
     short && long ? (long.remainingPercent < short.remainingPercent ? long : short) : (short ?? long);
-  return { acc, name: displayName(acc, s), short, long, tight, stale: acc.status !== "ok" };
+  // Only flag stale on real fetch errors/cooldown/expired or genuinely old cache (>= 15 min),
+  // never on healthy throttled snapshots that have no error.
+  const ageSec = acc.updatedAt > 0 ? Math.floor(Date.now() / 1000) - acc.updatedAt : 0;
+  const stale =
+    acc.status === "expired" ||
+    acc.status === "error" ||
+    acc.status === "cooldown" ||
+    (acc.status === "stale" && (!!acc.error || ageSec >= 15 * 60));
+  return { acc, name: displayName(acc, s), short, long, tight, stale };
 }
 
 /** "19:40", "Tomorrow 09:10", "Thu 10:00", "Nov 28 09:10". */
