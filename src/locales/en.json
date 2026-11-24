@@ -150,7 +150,7 @@
   "依模型": "By model",
   "模型價格": "Model prices",
   "每百萬 Token 的美元價格，費用照這裡估算": "USD per million tokens; costs are estimated from these",
-  "費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code 與 Codex 紀錄，保留 90 天": "Cost is the equivalent at API list prices; subscriptions are not billed this way. Data comes only from Claude Code and Codex logs on this computer and is kept for 90 days.",
+  "費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code、Antigravity 與 Codex 紀錄，保留 90 天": "Cost is the equivalent at API list prices; subscriptions are not billed this way. Data comes only from Claude Code, Antigravity, and Codex logs on this computer and is kept for 90 days.",
   "點快捷鍵後按下新的組合鍵，Esc 取消、Backspace 清除": "Click shortcut then press a new key combination, Esc to cancel, Backspace to clear",
   "無法讀取圖片": "Unable to load image",
   "即將重設": "Resets soon",

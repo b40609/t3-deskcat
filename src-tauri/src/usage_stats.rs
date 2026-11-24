@@ -3,6 +3,8 @@
 //! * Claude Code: `<config dir>/projects/**/*.jsonl`, assistant messages with
 //!   `message.usage`; deduplicated by `message.id + requestId` (streamed messages
 //!   are written more than once, resumed sessions copy earlier turns).
+//! * Antigravity: `<acp dir>/brain/*/.system_generated/logs/transcript.jsonl`,
+//!   model response lines carrying `input_tokens` / `output_tokens` / `cache_read_tokens`.
 //! * Codex: `<codex home>/sessions/YYYY/MM/DD/*.jsonl`, `token_count` events
 //!   (`last_token_usage`); the model comes from the preceding `turn_context`.
 //!
@@ -49,12 +51,15 @@ pub struct UsageToday {
 pub enum Source {
     Claude { account_id: String, config_dir: PathBuf },
     Codex { account_id: String, codex_home: PathBuf },
+    Antigravity { account_id: String, brain_dir: PathBuf },
 }
 
 impl Source {
     fn account(&self) -> &str {
         match self {
-            Source::Claude { account_id, .. } | Source::Codex { account_id, .. } => account_id,
+            Source::Claude { account_id, .. }
+            | Source::Codex { account_id, .. }
+            | Source::Antigravity { account_id, .. } => account_id,
         }
     }
 }
@@ -108,6 +113,9 @@ impl Price {
     const fn openai(i: f64, o: f64, r: f64) -> Self {
         Price { input: i, output: o, cache_read: r, cache_write: i }
     }
+    const fn gemini(i: f64, o: f64, r: f64) -> Self {
+        Price { input: i, output: o, cache_read: r, cache_write: i }
+    }
 }
 
 /// Built-in list prices, matched by substring (first match wins).
@@ -129,6 +137,19 @@ const PRICES: &[(&str, Price)] = &[
     ("haiku-5-5", Price::claude(0.10, 0.50, 0.01)),
     ("haiku-4-5", Price::claude(1.0, 5.0, 0.10)),
     ("haiku", Price::claude(0.80, 4.0, 0.08)),
+    // Gemini / Antigravity list prices (USD per million tokens)
+    ("gemini-4-neon", Price::gemini(3.0, 15.0, 0.15)),
+    ("orchestrator-neon", Price::gemini(3.0, 15.0, 0.15)),
+    ("gemini-4-argon", Price::gemini(2.0, 10.0, 0.10)),
+    ("orchestrator-argon", Price::gemini(2.0, 10.0, 0.10)),
+    ("gemini-4-carbon", Price::gemini(2.0, 10.0, 0.10)),
+    ("gemini-4-hydrogen", Price::gemini(1.5, 7.5, 0.075)),
+    ("gemini-3.8-flash", Price::gemini(0.75, 3.75, 0.075)),
+    ("gemini-3-pro", Price::gemini(2.0, 12.0, 0.20)),
+    ("gemini-3-flash", Price::gemini(0.50, 3.0, 0.05)),
+    ("gemini-2.5-pro", Price::gemini(1.25, 10.0, 0.125)),
+    ("gemini-2.5-flash-lite", Price::gemini(0.10, 0.40, 0.01)),
+    ("gemini-2.5-flash", Price::gemini(0.30, 2.50, 0.03)),
     // developers.openai.com/api/docs/models/gpt-5.6-terra (2026-11-20)
     ("gpt-5.6-terra", Price::openai(2.0, 12.0, 0.20)),
 ];
@@ -381,6 +402,61 @@ fn parse_codex_line(line: &str, st: &mut FileState) -> Option<Rec> {
     })
 }
 
+fn parse_antigravity_line(line: &str, st: &mut FileState) -> Option<Rec> {
+    if !line.contains("\"input_tokens\"") && !line.contains("\"output_tokens\"") {
+        return None;
+    }
+    let o: Value = serde_json::from_str(line).ok()?;
+    if let Some(m) = o.get("model").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        st.model = m.to_string();
+    }
+    let input = u(&o, "input_tokens");
+    let output = u(&o, "output_tokens");
+    let cache_read = u(&o, "cache_read_tokens");
+    let cache_write = u(&o, "cache_write_tokens");
+    if input + output + cache_read + cache_write == 0 {
+        return None;
+    }
+    let hour = hour_of(o.get("created_at")?.as_str()?)?;
+    let model = o
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| st.model.clone());
+    Some(Rec {
+        hour,
+        model,
+        dedup: None,
+        agg: Agg {
+            input,
+            output,
+            cache_read,
+            cache_write_5m: cache_write,
+            cache_write_1h: 0,
+            requests: 1,
+        },
+    })
+}
+
+fn collect_antigravity_transcripts(brain_dir: &Path, since: SystemTime, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(brain_dir) else { return };
+    for ent in rd.flatten() {
+        let Ok(ft) = ent.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        let p = ent.path().join(".system_generated").join("logs").join("transcript.jsonl");
+        let fresh = fs::metadata(&p)
+            .and_then(|m| m.modified())
+            .map(|t| t >= since)
+            .unwrap_or(false);
+        if fresh {
+            out.push(p);
+        }
+    }
+}
+
 fn collect_jsonl(dir: &Path, since: SystemTime, depth: u32, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
@@ -405,6 +481,7 @@ fn files_of(src: &Source, since: SystemTime) -> Vec<PathBuf> {
     match src {
         Source::Claude { config_dir, .. } => collect_jsonl(&config_dir.join("projects"), since, 6, &mut files),
         Source::Codex { codex_home, .. } => collect_jsonl(&codex_home.join("sessions"), since, 4, &mut files),
+        Source::Antigravity { brain_dir, .. } => collect_antigravity_transcripts(brain_dir, since, &mut files),
     }
     files
 }
@@ -431,7 +508,6 @@ fn scan_file(src: &Source, path: &Path) {
     let mut st = start.clone();
     let mut recs = Vec::new();
     let mut buf = Vec::new();
-    let codex = matches!(src, Source::Codex { .. });
     loop {
         buf.clear();
         match reader.read_until(b'\n', &mut buf) {
@@ -442,7 +518,11 @@ fn scan_file(src: &Source, path: &Path) {
                 }
                 st.offset += n as u64;
                 if let Ok(line) = std::str::from_utf8(&buf) {
-                    let rec = if codex { parse_codex_line(line, &mut st) } else { parse_claude_line(line) };
+                    let rec = match src {
+                        Source::Claude { .. } => parse_claude_line(line),
+                        Source::Codex { .. } => parse_codex_line(line, &mut st),
+                        Source::Antigravity { .. } => parse_antigravity_line(line, &mut st),
+                    };
                     if let Some(r) = rec {
                         recs.push(r);
                     }
@@ -700,6 +780,33 @@ mod tests {
         assert_eq!(r.model, "gpt-5.6-terra");
         assert!(cost_of(&r.model, &r.agg).is_some());
         assert!(parse_codex_line(&line, &mut st).is_none());
+    }
+
+    #[test]
+    fn antigravity_transcript_parses_and_prices() {
+        let ts = Local::now().to_rfc3339();
+        let mut st = FileState::default();
+        let planner = format!(
+            r#"{{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{ts}","model":"gemini-4-neon-xhigh","input_tokens":3000,"cache_read_tokens":50000,"output_tokens":400}}"#
+        );
+        let r1 = parse_antigravity_line(&planner, &mut st).unwrap();
+        assert_eq!((r1.agg.input, r1.agg.cache_read, r1.agg.output, r1.agg.requests), (3000, 50000, 400, 1));
+        assert_eq!(r1.model, "gemini-4-neon-xhigh");
+        assert!(cost_of(&r1.model, &r1.agg).is_some());
+
+        // CHECKPOINT omits model and should inherit the preceding planner model.
+        let checkpoint = format!(
+            r#"{{"step_index":2,"source":"SYSTEM","type":"CHECKPOINT","status":"DONE","created_at":"{ts}","model":null,"input_tokens":1000,"cache_read_tokens":20000,"output_tokens":500}}"#
+        );
+        let r2 = parse_antigravity_line(&checkpoint, &mut st).unwrap();
+        assert_eq!(r2.model, "gemini-4-neon-xhigh");
+        assert_eq!((r2.agg.input, r2.agg.cache_read, r2.agg.output), (1000, 20000, 500));
+
+        // GENERIC tool output mentioning "input_tokens" in content without numeric fields is skipped.
+        let generic = format!(
+            r#"{{"step_index":3,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"{ts}","content":"\"input_tokens\": 123"}}"#
+        );
+        assert!(parse_antigravity_line(&generic, &mut st).is_none());
     }
 
     static OVERRIDE_LOCK: Mutex<()> = Mutex::new(());

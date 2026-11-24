@@ -746,29 +746,45 @@ async fn run_refresh(app: &AppHandle, state: &SharedState) -> DashboardSnapshot 
                     codex_home: d.to_path_buf(),
                 })
             }
-            _ => None,
+            DiscoveredAccount::Antigravity { id, token_path, is_legacy_gemini, .. } => {
+                token_path.parent().map(|d| usage_stats::Source::Antigravity {
+                    account_id: id.clone(),
+                    brain_dir: if *is_legacy_gemini {
+                        d.join("antigravity").join("brain")
+                    } else {
+                        d.join("brain")
+                    },
+                })
+            }
+            DiscoveredAccount::AntigravityCli { id, .. } => {
+                dirs::home_dir().map(|h| usage_stats::Source::Antigravity {
+                    account_id: id.clone(),
+                    brain_dir: h.join(".gemini").join("antigravity").join("brain"),
+                })
+            }
         })
         .collect();
     activity::set_sources(
         usage_sources
             .iter()
-            .map(|s| match s {
-                usage_stats::Source::Claude { account_id, config_dir } => activity::Src {
+            .filter_map(|s| match s {
+                usage_stats::Source::Claude { account_id, config_dir } => Some(activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Claude,
                     dir: config_dir.clone(),
-                },
-                usage_stats::Source::Codex { account_id, codex_home } => activity::Src {
+                }),
+                usage_stats::Source::Codex { account_id, codex_home } => Some(activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Codex,
                     dir: codex_home.clone(),
-                },
+                }),
+                usage_stats::Source::Antigravity { .. } => None,
             })
             .collect(),
     );
-    let want_usage = state.0.lock().map(|g| g.settings.show_usage_stats).unwrap_or(true);
-    let usage_task = want_usage
-        .then(|| tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources)));
+    // Always keep the incremental usage ledger up to date for the embedded Usage tab,
+    // even when per-card "today's usage" lines are turned off.
+    let usage_task = Some(tokio::task::spawn_blocking(move || usage_stats::compute(&usage_sources)));
 
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
@@ -1312,27 +1328,25 @@ fn sync_tray(app: &AppHandle, state: &SharedState, snap: &DashboardSnapshot) {
         tip = tip.chars().take(120).collect::<String>() + "…";
     }
 
-    let has_data = snap.accounts.iter().any(|a| !cfg.is_hidden(&a.id) && is_usable(a));
-    let level = tray_icon::level_for(
-        snap.overall_score,
-        snap.offline || !has_data,
-        cfg.working_threshold,
-        cfg.sleeping_threshold,
-    );
-    let key = format!("{}|{}|{:?}", cfg.tray_style, snap.overall_score, level);
-
-    let (tray_id, redraw) = match state.0.lock() {
-        Ok(mut g) => {
-            let redraw = g.tray_icon_key != key;
-            g.tray_icon_key = key;
-            (g.tray_id.clone(), redraw)
-        }
-        Err(_) => ("main-tray".to_string(), true),
-    };
+    let tray_id = state
+        .0
+        .lock()
+        .map(|g| g.tray_id.clone())
+        .unwrap_or_else(|_| "main-tray".to_string());
     let Some(tray) = app.tray_by_id(&tray_id) else { return };
     let _ = tray.set_tooltip(Some(&tip));
+    // Keep the system tray icon fixed to the app's original icon.
+    let redraw = state
+        .0
+        .lock()
+        .map(|mut g| {
+            let changed = g.tray_icon_key != "icon";
+            g.tray_icon_key = "icon".to_string();
+            changed
+        })
+        .unwrap_or(false);
     if redraw {
-        let icon = match tray_icon::render(&cfg.tray_style, Some(snap.overall_score), level) {
+        let icon = match tray_icon::render("icon", Some(snap.overall_score), tray_icon::level_for(snap.overall_score, snap.offline, cfg.working_threshold, cfg.sleeping_threshold)) {
             Some(rgba) => Some(tauri::image::Image::new_owned(rgba, tray_icon::SIZE, tray_icon::SIZE)),
             None => app.default_window_icon().cloned(),
         };

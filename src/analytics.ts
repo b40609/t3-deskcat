@@ -105,7 +105,7 @@ function colours(keys: string[]): Record<string, string> {
   }
   const seen: Record<string, number> = {};
   for (const k of keys) {
-    const p = names[k]?.provider ?? (k.startsWith("codex") ? "codex" : k.startsWith("antigravity") ? "antigravity" : "claude");
+    const p = names[k]?.provider ?? (k.startsWith("codex") ? "codex" : k.startsWith("ag:") || k.startsWith("antigravity") ? "antigravity" : "claude");
     const i = (seen[p] = (seen[p] ?? -1) + 1);
     const [h, s] = FAMILY[p];
     const l = dark ? 68 - i * 16 : 40 + i * 16;
