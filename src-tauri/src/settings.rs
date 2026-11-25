@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(s.hotkey, "Ctrl+Alt+Q");
         assert_eq!(s.panel_layout, "classic");
         assert_eq!(s.panel_theme, "glass");
-        assert_eq!(s.panel_opacity, 84);
+        assert_eq!(s.panel_opacity, 100);
         assert!(!s.panel_pinned);
         assert!(s.panel_x.is_none() && s.panel_width.is_none());
         assert_eq!(s.claude_min_interval_secs, 90);

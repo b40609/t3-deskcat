@@ -45,7 +45,7 @@
   --ios-amber: #ff9500;
   --ios-red: #ff3b30;
   --ios-blue: #007aff;
-  --panel-alpha: 0.84;
+  --panel-alpha: 1;
 
   /* Brand & semantic (restrained, non-neon) */
   --accent: #2563eb;

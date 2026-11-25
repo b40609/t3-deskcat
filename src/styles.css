@@ -3208,17 +3208,11 @@ html.remote .scroll {
    text, rings, and progress meters 100% crisp.
    ========================================================================== */
 
-.ios-nav-title,
-.float-tab-fade,
-.float-tab-bar {
-  display: none;
-}
-
 /* ---- Shared Apple / iPhone chrome for glass & ios themes ---- */
 .shell[data-ui-theme="glass"],
 .shell[data-ui-theme="ios"] {
   font-family: var(--font-apple);
-  border-radius: 24px;
+  border-radius: 10px;
   --accent: var(--ios-blue);
   --on-accent: #ffffff;
   --good-ink: var(--ios-green);
@@ -3230,26 +3224,35 @@ html.remote .scroll {
   --bad-bar: linear-gradient(90deg, #ff3b30 0%, #ff6961 100%);
 }
 
-.shell[data-ui-theme="glass"] #dash-tabs,
-.shell[data-ui-theme="ios"] #dash-tabs {
-  display: none;
-}
-
-.shell[data-ui-theme="glass"] .ios-nav-title,
-.shell[data-ui-theme="ios"] .ios-nav-title {
-  display: block;
-  font-size: 23px;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: var(--label);
-  line-height: 1.1;
-}
-
 .shell[data-ui-theme="glass"] .nav-top,
 .shell[data-ui-theme="ios"] .nav-top {
-  height: 52px;
-  padding: 6px 14px 4px 18px;
+  height: 48px;
+  padding: 6px 14px 4px 14px;
   border-bottom: 0;
+}
+
+.shell[data-ui-theme="glass"] .segmented.nav-seg,
+.shell[data-ui-theme="ios"] .segmented.nav-seg {
+  min-width: 118px;
+  padding: 2.5px;
+  border-radius: 6px;
+  border: 0;
+}
+
+.shell[data-ui-theme="glass"] .segmented.nav-seg::before,
+.shell[data-ui-theme="ios"] .segmented.nav-seg::before {
+  top: 2.5px;
+  bottom: 2.5px;
+  left: 2.5px;
+  width: calc((100% - 5px) / var(--n));
+  border-radius: 4px;
+}
+
+.shell[data-ui-theme="glass"] .segmented.nav-seg .seg-btn,
+.shell[data-ui-theme="ios"] .segmented.nav-seg .seg-btn {
+  padding: 4.5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .shell[data-ui-theme="glass"] .nav-actions,
@@ -3259,9 +3262,9 @@ html.remote .scroll {
 
 .shell[data-ui-theme="glass"] .circle-btn,
 .shell[data-ui-theme="ios"] .circle-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+  width: 29px;
+  height: 29px;
+  border-radius: 6px;
   color: var(--label-2);
 }
 
@@ -3276,7 +3279,7 @@ html.remote .scroll {
 .shell[data-ui-theme="ios"] #dash-quota,
 .shell[data-ui-theme="glass"] #dash-analytics,
 .shell[data-ui-theme="ios"] #dash-analytics {
-  padding: 4px 14px calc(74px + env(safe-area-inset-bottom));
+  padding: 2px 14px calc(16px + env(safe-area-inset-bottom));
 }
 
 /* Solid glossy Apple squircle app icons in glass & ios themes */
@@ -3318,52 +3321,6 @@ html.remote .scroll {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.38),
     0 3px 8px rgba(255, 59, 48, 0.34);
-}
-
-/* Floating Liquid Glass bottom pill tab bar */
-.shell[data-ui-theme="glass"] .float-tab-fade,
-.shell[data-ui-theme="ios"] .float-tab-fade {
-  display: block;
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 66px;
-  pointer-events: none;
-  z-index: 8;
-}
-
-.shell[data-ui-theme="glass"] .float-tab-bar,
-.shell[data-ui-theme="ios"] .float-tab-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  position: absolute;
-  left: 50%;
-  bottom: calc(12px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  z-index: 12;
-  padding: 4px;
-  border-radius: 999px;
-  backdrop-filter: blur(26px) saturate(190%);
-  -webkit-backdrop-filter: blur(26px) saturate(190%);
-}
-
-.float-tab {
-  padding: 6.5px 22px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--label-2);
-  transition:
-    background-color 0.18s var(--ease),
-    color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease);
-}
-
-.float-tab:hover {
-  color: var(--label);
 }
 
 /* iOS green switches & rounded settings polish in glass/ios themes */
@@ -3430,7 +3387,7 @@ html.remote .scroll {
 .shell[data-ui-theme="glass"] .an-kpi,
 .shell[data-ui-theme="ios"] .an-card,
 .shell[data-ui-theme="ios"] .an-kpi {
-  border-radius: 16px;
+  border-radius: 8px;
 }
 
 /* ==========================================================================
@@ -3539,8 +3496,8 @@ html.remote .scroll {
 .shell[data-ui-theme="glass"] .prov-pills {
   background: var(--glass-ctrl-bg);
   border: 0;
-  border-radius: 999px;
-  padding: 3px;
+  border-radius: 6px;
+  padding: 2.5px;
   backdrop-filter: blur(22px) saturate(180%);
   -webkit-backdrop-filter: blur(22px) saturate(180%);
   box-shadow:
@@ -3549,7 +3506,7 @@ html.remote .scroll {
 }
 
 .shell[data-ui-theme="glass"] .prov-pill {
-  border-radius: 999px;
+  border-radius: 4px;
   padding: 4.5px 10px;
 }
 
@@ -3562,7 +3519,7 @@ html.remote .scroll {
 }
 
 .shell[data-ui-theme="glass"] .quick-mode-btn {
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--glass-ctrl-bg);
   border: 0;
   backdrop-filter: blur(20px) saturate(180%);
@@ -3573,7 +3530,7 @@ html.remote .scroll {
 }
 
 .shell[data-ui-theme="glass"] .pick-card {
-  border-radius: 18px;
+  border-radius: 8px;
   background: var(--glass-tile-bg);
   border: 0;
   backdrop-filter: blur(22px) saturate(175%);
@@ -3584,36 +3541,20 @@ html.remote .scroll {
     0 6px 18px rgba(0, 0, 0, 0.12);
 }
 
-.shell[data-ui-theme="glass"] .float-tab-fade {
-  background: linear-gradient(to top, var(--glass-fade-end) 32%, transparent 100%);
-}
-
-.shell[data-ui-theme="glass"] .float-tab-bar {
-  background: var(--glass-bar-bg);
+.shell[data-ui-theme="glass"] .segmented.nav-seg {
+  background: var(--glass-ctrl-bg);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
   box-shadow:
-    0 12px 30px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px var(--glass-tile-border),
     inset 0 1px 0 var(--glass-tile-spec);
 }
 
-.shell[data-ui-theme="glass"] .float-tab.active {
-  background: var(--ios-blue);
-  color: #ffffff;
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--ios-blue) 42%, transparent);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .shell[data-ui-theme="glass"] .float-tab.active {
-    background: rgba(255, 255, 255, 0.2);
-    color: #ffffff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
-  }
-}
-
-:root[data-theme="dark"] .shell[data-ui-theme="glass"] .float-tab.active {
-  background: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+.shell[data-ui-theme="glass"] .segmented.nav-seg::before {
+  background: var(--glass-ctrl-active);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 var(--glass-tile-spec);
 }
 
 /* Bento 2-column Glass Tile Grid */
@@ -3640,7 +3581,7 @@ html.remote .scroll {
   gap: 7px;
   min-width: 0;
   padding: 12px 13px 11px;
-  border-radius: 20px;
+  border-radius: 8px;
   background: var(--glass-tile-bg);
   backdrop-filter: blur(22px) saturate(175%);
   -webkit-backdrop-filter: blur(22px) saturate(175%);
@@ -3692,7 +3633,7 @@ html.remote .scroll {
 .g-head .p-icon {
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: 5px;
 }
 
 .g-head .p-icon svg {
@@ -3986,14 +3927,14 @@ html.remote .scroll {
   grid-auto-columns: 1fr;
   background: var(--ios-seg-bg);
   border: 0;
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 2.5px;
   gap: 2px;
 }
 
 .shell[data-ui-theme="ios"] .prov-pill {
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 5px 6px;
   font-size: 12px;
 }
@@ -4018,36 +3959,14 @@ html.remote .scroll {
   color: var(--ios-blue);
 }
 
-.shell[data-ui-theme="ios"] .float-tab-fade {
-  background: linear-gradient(to top, var(--ios-fade-end) 32%, transparent 100%);
+.shell[data-ui-theme="ios"] .segmented.nav-seg {
+  background: var(--ios-seg-bg);
+  box-shadow: none;
 }
 
-.shell[data-ui-theme="ios"] .float-tab-bar {
-  background: var(--ios-bar-bg);
-  box-shadow:
-    0 12px 30px rgba(0, 0, 0, 0.24),
-    inset 0 0 0 1px var(--ios-bar-border),
-    inset 0 1px 0 rgba(255, 255, 255, 0.24);
-}
-
-.shell[data-ui-theme="ios"] .float-tab.active {
-  background: var(--ios-blue);
-  color: #ffffff;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--ios-blue) 36%, transparent);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .shell[data-ui-theme="ios"] .float-tab.active {
-    background: rgba(255, 255, 255, 0.18);
-    color: #ffffff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
-  }
-}
-
-:root[data-theme="dark"] .shell[data-ui-theme="ios"] .float-tab.active {
-  background: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+.shell[data-ui-theme="ios"] .segmented.nav-seg::before {
+  background: var(--ios-seg-active);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
 }
 
 /* iOS Pick Widgets (2-col rounded cards with 42px battery ring) */
@@ -4063,7 +3982,7 @@ html.remote .scroll {
 
 .ios-pick-widget {
   background: var(--ios-card-rgba);
-  border-radius: 20px;
+  border-radius: 8px;
   padding: 12px 13px;
   display: flex;
   align-items: center;
@@ -4127,7 +4046,7 @@ html.remote .scroll {
 .list.ios-list {
   background: var(--ios-card-rgba);
   border: 0;
-  border-radius: 20px;
+  border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
 }
 
@@ -4172,7 +4091,7 @@ html.remote .scroll {
 .ios-acc-main .p-icon {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: 6px;
 }
 
 .ios-acc-main .p-icon svg {
@@ -4427,7 +4346,7 @@ html.remote .scroll {
   .shell[data-ui-theme="glass"],
   .shell[data-ui-theme="ios"],
   .glass-tile,
-  .float-tab-bar,
+  .shell[data-ui-theme="glass"] .segmented.nav-seg,
   .shell[data-ui-theme="glass"] .prov-pills,
   .shell[data-ui-theme="glass"] .circle-btn,
   .shell[data-ui-theme="glass"] .quick-mode-btn {

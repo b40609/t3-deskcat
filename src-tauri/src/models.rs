@@ -366,7 +366,7 @@ fn default_panel_theme() -> String {
     "glass".to_string()
 }
 fn default_panel_opacity() -> u32 {
-    84
+    100
 }
 fn default_hotkey() -> String {
     "Ctrl+Alt+Q".to_string()

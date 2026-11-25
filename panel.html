@@ -46,7 +46,6 @@
               <button class="seg-btn active" role="tab" aria-selected="true" data-dash="quota" data-i18n>額度</button>
               <button class="seg-btn" role="tab" aria-selected="false" data-dash="analytics" data-i18n>用量</button>
             </div>
-            <span class="ios-nav-title" id="ios-nav-title" data-tauri-drag-region data-i18n>額度</span>
             <span class="nav-drag-spacer" data-tauri-drag-region></span>
             <div class="nav-actions">
               <button id="btn-layout" class="circle-btn" title="切換主題或畫面樣式" data-i18n-attr="title"><svg><use href="#i-layout-dense" /></svg></button>
@@ -139,12 +138,6 @@
             </details>
 
             <p class="an-foot" data-i18n>費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code、Antigravity 與 Codex 紀錄，保留 90 天</p>
-          </div>
-
-          <div class="float-tab-fade" aria-hidden="true"></div>
-          <div class="float-tab-bar" id="float-dash-tabs" role="tablist">
-            <button type="button" class="float-tab active" role="tab" aria-selected="true" data-dash="quota" data-i18n>額度</button>
-            <button type="button" class="float-tab" role="tab" aria-selected="false" data-dash="analytics" data-i18n>用量</button>
           </div>
         </section>
 
@@ -252,8 +245,8 @@
                     </div>
                   </div>
                   <div class="row row-slider">
-                    <div class="row-line"><span data-i18n>背景不透明度</span><span class="value" id="val-panel-opacity">84%</span></div>
-                    <input id="inp-panel-opacity" class="slider" type="range" min="45" max="100" step="5" value="84" />
+                    <div class="row-line"><span data-i18n>背景不透明度</span><span class="value" id="val-panel-opacity">100%</span></div>
+                    <input id="inp-panel-opacity" class="slider" type="range" min="45" max="100" step="5" value="100" />
                   </div>
                   <div class="row" id="row-panel-layout">
                     <span data-i18n>畫面樣式</span>

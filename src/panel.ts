@@ -26,8 +26,6 @@ const picksSection = $("picks-section");
 const accountsSection = $("accounts-section");
 const accountsAlert = $("accounts-alert");
 const dashTabs = $("dash-tabs");
-const iosNavTitle = $("ios-nav-title");
-const floatDashTabs = $("float-dash-tabs");
 const dashQuota = $("dash-quota");
 const dashAnalytics = $("dash-analytics");
 const denseToolbar = $("dense-toolbar");
@@ -165,7 +163,7 @@ const fallbackSettings: AppSettings = {
   panelPosition: "pet",
   panelLayout: "classic",
   panelTheme: "glass",
-  panelOpacity: 84,
+  panelOpacity: 100,
   panelPinned: false,
   panelX: null,
   panelY: null,
@@ -1291,7 +1289,7 @@ function syncSettingsForm(s: AppSettings) {
 
   setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
   valPetOpacity.textContent = `${s.petOpacity ?? 100}%`;
-  const pOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 84));
+  const pOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 100));
   setRangeIfIdle(inpPanelOpacity, pOpacity);
   valPanelOpacity.textContent = `${pOpacity}%`;
   rowPanelLayout.classList.toggle("hidden", (s.panelTheme ?? "glass") !== "default");
@@ -1453,7 +1451,7 @@ function applyDisplay(s: AppSettings) {
   root.style.setProperty("--ui-zoom", String((s.uiScale ?? 90) / 100));
 
   const uiTheme: PanelTheme = s.panelTheme === "ios" || s.panelTheme === "default" ? s.panelTheme : "glass";
-  const panelOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 84));
+  const panelOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 100));
   root.dataset.uiTheme = uiTheme;
   shell.dataset.uiTheme = uiTheme;
   root.style.setProperty("--panel-alpha", String(panelOpacity / 100));
@@ -1698,12 +1696,6 @@ function setDashTab(tab: "quota" | "analytics") {
   });
   dashTabs.style.setProperty("--n", String(btns.length));
   dashTabs.style.setProperty("--i", String(idx));
-  Array.from(floatDashTabs.querySelectorAll<HTMLButtonElement>(".float-tab")).forEach((b) => {
-    const on = b.dataset.dash === tab;
-    b.classList.toggle("active", on);
-    b.setAttribute("aria-selected", String(on));
-  });
-  iosNavTitle.textContent = tab === "analytics" ? t("用量") : t("額度");
   dashQuota.classList.toggle("hidden", tab !== "quota");
   dashAnalytics.classList.toggle("hidden", tab !== "analytics");
   if (tab === "analytics") {
@@ -1715,9 +1707,6 @@ function setDashTab(tab: "quota" | "analytics") {
 }
 
 dashTabs.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) =>
-  btn.addEventListener("click", () => setDashTab((btn.dataset.dash as "quota" | "analytics") ?? "quota")),
-);
-floatDashTabs.querySelectorAll<HTMLButtonElement>(".float-tab").forEach((btn) =>
   btn.addEventListener("click", () => setDashTab((btn.dataset.dash as "quota" | "analytics") ?? "quota")),
 );
 
