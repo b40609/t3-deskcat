@@ -14,6 +14,7 @@ import type {
   Forecast,
   PanelLayout,
   PanelPosition,
+  PanelTheme,
   ProviderKind,
   UsageToday,
 } from "./types";
@@ -25,6 +26,8 @@ const picksSection = $("picks-section");
 const accountsSection = $("accounts-section");
 const accountsAlert = $("accounts-alert");
 const dashTabs = $("dash-tabs");
+const iosNavTitle = $("ios-nav-title");
+const floatDashTabs = $("float-dash-tabs");
 const dashQuota = $("dash-quota");
 const dashAnalytics = $("dash-analytics");
 const denseToolbar = $("dense-toolbar");
@@ -92,6 +95,9 @@ const segAccDetail = $("seg-acc-detail");
 const accDetailHint = $("acc-detail-hint");
 const inpPetOpacity = $<HTMLInputElement>("inp-pet-opacity");
 const valPetOpacity = $("val-pet-opacity");
+const inpPanelOpacity = $<HTMLInputElement>("inp-panel-opacity");
+const valPanelOpacity = $("val-panel-opacity");
+const rowPanelLayout = $("row-panel-layout");
 const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
 const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
 const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
@@ -158,6 +164,8 @@ const fallbackSettings: AppSettings = {
   petSnapEdge: true,
   panelPosition: "pet",
   panelLayout: "classic",
+  panelTheme: "glass",
+  panelOpacity: 84,
   panelPinned: false,
   panelX: null,
   panelY: null,
@@ -332,6 +340,11 @@ function windowName(label: string, provider: ProviderKind, dense = false): strin
 
 function panelLayout(): PanelLayout {
   return cfg().panelLayout === "dense" ? "dense" : "classic";
+}
+
+function panelTheme(): PanelTheme {
+  const th = cfg().panelTheme;
+  return th === "ios" || th === "default" ? th : "glass";
 }
 
 function duplicateNameSet(accounts: AccountQuota[]): Set<string> {
@@ -602,10 +615,17 @@ function compactZhSpacing(s: string): string {
     .replace(/([\u4e00-\u9fff])\s+([\u4e00-\u9fff])/g, "$1$2");
 }
 
-function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): string {
-  if (!f || cfg().showForecast === false) return "";
+interface ForecastParts {
+  shortText: string;
+  tip: string;
+  level: "bad" | "warn";
+  urgent: boolean;
+}
+
+function denseForecastParts(f: Forecast | undefined, provider: ProviderKind): ForecastParts | null {
+  if (!f || cfg().showForecast === false) return null;
   const mins = Math.round((f.exhaustAt - Date.now() / 1000) / 60);
-  if (mins < 0) return "";
+  if (mins < 0) return null;
   const label = windowName(f.label, provider, true).split(" · ")[0];
   const gap = forecastGap(f);
   const when = mins < 60 ? t("{m} 分鐘後", { m: Math.max(1, mins) }) : shortWhen(f.exhaustAt);
@@ -623,7 +643,13 @@ function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): st
     t("。消耗速率 {rate}%/h", { rate: f.ratePerHour });
   const level = forecastLevel(f);
   const urgent = mins < 120;
-  return `<span class="d-badge ${level}${urgent ? " urgent" : ""}" title="${escapeHtml(tip)}"><i class="d-bdot"></i><span>${escapeHtml(shortText)}</span></span>`;
+  return { shortText, tip, level, urgent };
+}
+
+function denseForecastBadge(f: Forecast | undefined, provider: ProviderKind): string {
+  const p = denseForecastParts(f, provider);
+  if (!p) return "";
+  return `<span class="d-badge ${p.level}${p.urgent ? " urgent" : ""}" title="${escapeHtml(p.tip)}"><i class="d-bdot"></i><span>${escapeHtml(p.shortText)}</span></span>`;
 }
 
 function denseUsageChip(u: UsageToday | undefined): string {
@@ -695,10 +721,236 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
     </div>`;
 }
 
+/** Short tag inside a circular iOS ring ("5h", "週", "月"). */
+function ringShortLabel(label: string): string {
+  const [base] = label.split(" ");
+  if (base === "5h") return "5h";
+  if (base === "Wk" || base === "週") return t("週");
+  if (base === "Mo") return t("月");
+  return base.slice(0, 3);
+}
+
+function renderIosRing(
+  w: { label: string; remainingPercent: number; resetAt: number | null },
+  provider: ProviderKind,
+  accId: string,
+  large = false,
+): string {
+  const showUsed = (cfg().usageDisplay ?? "used") === "used";
+  const remaining = Math.max(0, Math.min(100, w.remainingPercent));
+  const value = showUsed ? 100 - remaining : remaining;
+  const tone = getTone(remaining, accId);
+  const r = large ? 17.5 : 15.5;
+  const vb = large ? 42 : 38;
+  const cx = vb / 2;
+  const circ = +(2 * Math.PI * r).toFixed(2);
+  const offset = +(circ * (1 - value / 100)).toFixed(2);
+  const reset = formatResetShort(w.resetAt);
+  const valTitle = `${windowName(w.label, provider, true)} · ${showUsed ? t("用 {p}%", { p: value }) : t("剩 {p}%", { p: value })}${reset ? ` · ${reset}` : ""}`;
+  return `
+    <div class="ios-ring${large ? " lg" : ""}" title="${escapeHtml(valTitle)}">
+      <svg viewBox="0 0 ${vb} ${vb}">
+        <circle class="rk" cx="${cx}" cy="${cx}" r="${r}" />
+        <circle class="rv ${tone}" cx="${cx}" cy="${cx}" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}" />
+      </svg>
+      <span class="ios-rtxt">
+        <span class="ios-rnum ${tone === "good" ? "" : tone}">${value}</span>
+        <span class="ios-rlbl">${escapeHtml(ringShortLabel(w.label))}</span>
+      </span>
+    </div>`;
+}
+
+function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
+  const showExtra = snap.settings.showAntigravityExtra;
+  const isStale = acc.status === "stale";
+  const isCooldown = acc.status === "cooldown";
+  const isExpired = acc.status === "expired";
+  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  const nameKey = displayName(acc).trim().toLowerCase();
+  const provChip =
+    dupNames.has(nameKey) && providerFilter === "all"
+      ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
+      : "";
+  const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
+  const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
+  const wins = isErr || isCooldown || (isExpired && !isLastKnown) ? [] : pickWindows(acc, showExtra);
+  const primaryTone = getTone(acc.effectiveRemaining, acc.id);
+  const iconTone = isErr || isCooldown || primaryTone === "bad" || fc?.urgent ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
+
+  let subHtml = "";
+  if (isExpired && !isLastKnown) {
+    subHtml = `<span class="ios-sub bad">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
+  } else if (isErr) {
+    subHtml = `<span class="ios-sub bad">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
+  } else if (isCooldown) {
+    subHtml = `<span class="ios-sub warn">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</span>`;
+  } else {
+    const resetShort = wins[0]?.resetAt ? formatResetShort(wins[0].resetAt) : "";
+    const statusParts: string[] = [];
+    if (isLastKnown) {
+      statusParts.push(`<span class="ios-fc warn urgent"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`);
+    } else if (isStale && acc.error) {
+      const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
+      statusParts.push(`<span class="ios-fc warn urgent" title="${escapeHtml(acc.error)}"><i class="d-bdot"></i><span>${tag} · ${ageLabel(acc.updatedAt)}</span></span>`);
+    }
+    if (fc) {
+      statusParts.push(
+        `<span class="ios-fc ${fc.level}${fc.urgent ? " urgent" : ""}" title="${escapeHtml(fc.tip)}"><i class="d-bdot"></i><span>${escapeHtml(fc.shortText)}</span></span>`,
+      );
+    }
+    const resetSpan = resetShort
+      ? `<span class="ios-reset${primaryTone === "bad" ? " bad" : ""}">${escapeHtml(resetShort)}</span>`
+      : "";
+    if (resetSpan && statusParts.length) {
+      subHtml = `<div class="ios-sub-row">${resetSpan}<span class="ios-sep-dot">·</span>${statusParts[0]}</div>`;
+    } else if (statusParts.length) {
+      subHtml = `<div class="ios-sub-row">${statusParts[0]}</div>`;
+    } else if (resetSpan) {
+      subHtml = `<div class="ios-sub-row">${resetSpan}</div>`;
+    } else {
+      subHtml = `<span class="ios-sub">${t("沒有用量資料")}</span>`;
+    }
+  }
+
+  const ringWins = wins.slice(0, 2);
+  const extraWins = wins.slice(2);
+  const ringsHtml = ringWins.length
+    ? `<div class="ios-rings">${ringWins.map((w) => renderIosRing(w, acc.provider, acc.id, ringWins.length === 1)).join("")}</div>`
+    : "";
+  const extraBarsHtml = extraWins.length
+    ? `<div class="ios-extra-wins">${extraWins.map((w) => renderDenseWindow(w, acc.provider, acc.id)).join("")}</div>`
+    : "";
+
+  return `
+    <div class="ios-acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
+      <div class="ios-acc-main">
+        ${avatarHtml(acc.id, acc.provider)}
+        <div class="ios-info">
+          <div class="ios-title-line">
+            <span class="ios-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+            ${provChip}
+            ${costChip}
+          </div>
+          ${subHtml}
+        </div>
+        ${ringsHtml}
+        <button type="button" class="row-more-btn ios-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
+      </div>
+      ${extraBarsHtml}
+    </div>`;
+}
+
+function renderGlassAccountCard(
+  acc: AccountQuota,
+  snap: DashboardSnapshot,
+  dupNames: Set<string>,
+  wide: boolean,
+): string {
+  const showExtra = snap.settings.showAntigravityExtra;
+  const showUsed = (cfg().usageDisplay ?? "used") === "used";
+  const isStale = acc.status === "stale";
+  const isCooldown = acc.status === "cooldown";
+  const isExpired = acc.status === "expired";
+  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  const nameKey = displayName(acc).trim().toLowerCase();
+  const provChip =
+    dupNames.has(nameKey) && providerFilter === "all"
+      ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
+      : "";
+  const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
+  const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
+  const wins = isErr || isCooldown || (isExpired && !isLastKnown) ? [] : pickWindows(acc, showExtra);
+  const primaryTone = getTone(acc.effectiveRemaining, acc.id);
+  const isAlert = isErr || primaryTone === "bad" || fc?.urgent === true;
+  const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
+
+  let statusHtml = "";
+  if (isLastKnown) {
+    statusHtml = `<div class="g-fc warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></div>`;
+  } else if (isStale && acc.error) {
+    const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
+    statusHtml = `<div class="g-fc warn urgent" title="${escapeHtml(acc.error)}"><i class="d-bdot"></i><span>${tag} · ${ageLabel(acc.updatedAt)}</span></div>`;
+  } else if (fc) {
+    statusHtml = `<div class="g-fc ${fc.level}${fc.urgent ? " urgent" : ""}" title="${escapeHtml(fc.tip)}"><i class="d-bdot"></i><span>${escapeHtml(fc.shortText)}</span></div>`;
+  }
+
+  let bodyHtml = "";
+  if (isExpired && !isLastKnown) {
+    bodyHtml = `<div class="status expired g-status">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</div>`;
+  } else if (isErr) {
+    bodyHtml = `<div class="status error g-status">${escapeHtml(acc.error ?? t("讀取失敗"))}</div>`;
+  } else if (isCooldown) {
+    bodyHtml = `<div class="status cooldown g-status">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</div>`;
+  } else if (wins.length === 0) {
+    bodyHtml = `<div class="status stale g-status">${t("沒有用量資料")}</div>`;
+  } else {
+    const mainW = wins[0];
+    const mainRem = Math.max(0, Math.min(100, mainW.remainingPercent));
+    const mainVal = showUsed ? 100 - mainRem : mainRem;
+    const mainTone = getTone(mainRem, acc.id);
+    const mainReset = formatResetShort(mainW.resetAt);
+    const mainElapsed = elapsedPercent(mainW.label, mainW.resetAt);
+    const mainAhead = mainElapsed != null && mainRem > 0 && mainRem < 100 && 100 - mainRem > mainElapsed;
+    const mainPacePos = mainElapsed == null ? -1 : showUsed ? mainElapsed : 100 - mainElapsed;
+    const mainPace =
+      !mainAhead || mainPacePos < 4 || mainPacePos > 96
+        ? ""
+        : `<i class="pace" style="left:${mainPacePos}%" title="${t("時間已過 {p}%：{hint}", { p: mainElapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
+    const mainTitle = showUsed ? t("用 {p}%", { p: mainVal }) : t("剩 {p}%", { p: mainVal });
+
+    const subRows = wins
+      .slice(1)
+      .map((w) => {
+        const rem = Math.max(0, Math.min(100, w.remainingPercent));
+        const val = showUsed ? 100 - rem : rem;
+        const tone = getTone(rem, acc.id);
+        const rst = formatResetShort(w.resetAt);
+        const wTitle = showUsed ? t("用 {p}%", { p: val }) : t("剩 {p}%", { p: val });
+        return `
+          <div class="g-sub-win">
+            <div class="g-sub-line">
+              <span class="g-sub-lbl">${escapeHtml(windowName(w.label, acc.provider, true))}${rst ? ` · ${escapeHtml(rst)}` : ""}</span>
+              <span class="g-sub-val ${tone === "good" ? "" : tone}" title="${escapeHtml(wTitle)}">${val}%</span>
+            </div>
+            <div class="bar g-sub-bar"><span class="${tone === "good" ? "" : tone}" style="width:${val}%"></span></div>
+          </div>`;
+      })
+      .join("");
+
+    bodyHtml = `
+      <div class="g-main-metric">
+        <span class="g-big-pct ${mainTone}" title="${escapeHtml(mainTitle)}">${mainVal}<small>%</small></span>
+        <span class="g-main-meta">
+          <span class="g-main-win">${escapeHtml(windowName(mainW.label, acc.provider, true))}</span>
+          ${mainReset ? `<span class="g-main-reset${mainTone === "bad" ? " bad" : ""}">${escapeHtml(mainReset)}</span>` : ""}
+        </span>
+      </div>
+      <div class="bar g-main-bar"><span class="${mainTone === "good" ? "" : mainTone}" style="width:${mainVal}%"></span>${mainPace}</div>
+      ${subRows ? `<div class="g-sub-wins">${subRows}</div>` : ""}`;
+  }
+
+  return `
+    <div class="glass-tile ${wide ? "wide" : ""} ${isAlert ? "is-alert" : ""} ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
+      <div class="g-head">
+        ${avatarHtml(acc.id, acc.provider)}
+        <span class="g-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+        ${provChip}
+        <span class="d-spacer"></span>
+        ${costChip}
+        <button type="button" class="row-more-btn g-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
+      </div>
+      ${bodyHtml}
+      ${statusHtml}
+    </div>`;
+}
+
 function renderDenseToolbar(visible: AccountQuota[]) {
-  const isDense = panelLayout() === "dense";
-  denseToolbar.classList.toggle("hidden", !isDense || visible.length === 0);
-  if (!isDense || visible.length === 0) return;
+  const th = panelTheme();
+  const showToolbar = (th !== "default" || panelLayout() === "dense") && visible.length > 0;
+  denseToolbar.classList.toggle("hidden", !showToolbar);
+  if (!showToolbar) return;
 
   const counts: Partial<Record<ProviderKind, number>> = {};
   for (const a of visible) counts[a.provider] = (counts[a.provider] ?? 0) + 1;
@@ -747,28 +999,60 @@ function renderAccounts(snap: DashboardSnapshot) {
   if (snap.accounts.length === 0) {
     secAccounts.classList.remove("hidden");
     secExpired.classList.add("hidden");
+    accountsSection.className = "list";
     accountsSection.innerHTML = `<div class="empty">${t("尚未找到 Claude / Antigravity / ChatGPT 的登入憑證")}</div>`;
     return;
   }
   if (visible.length === 0) {
     secAccounts.classList.remove("hidden");
     secExpired.classList.add("hidden");
+    accountsSection.className = "list";
     accountsSection.innerHTML = `<div class="empty">${t("所有帳號都已隱藏，可在設定 → 帳號中開啟")}</div>`;
     return;
   }
 
-  if (panelLayout() === "dense") {
+  const th = panelTheme();
+  if (th === "glass") {
     const filtered = providerFilter === "all" ? visible : visible.filter((a) => a.provider === providerFilter);
     const healthy = filtered.filter((a) => a.status !== "expired");
     const expired = filtered.filter((a) => a.status === "expired");
     secAccounts.classList.toggle("hidden", healthy.length === 0 && expired.length > 0);
+    accountsSection.className = "glass-grid";
+    accountsSection.innerHTML = healthy
+      .map((acc, idx) => renderGlassAccountCard(acc, snap, dupNames, healthy.length % 2 === 1 && idx === healthy.length - 1))
+      .join("");
+    secExpired.classList.toggle("hidden", expired.length === 0);
+    expiredCount.textContent = String(expired.length);
+    expiredSection.className = "glass-grid";
+    expiredSection.innerHTML = expired
+      .map((acc, idx) => renderGlassAccountCard(acc, snap, dupNames, expired.length % 2 === 1 && idx === expired.length - 1))
+      .join("");
+  } else if (th === "ios") {
+    const filtered = providerFilter === "all" ? visible : visible.filter((a) => a.provider === providerFilter);
+    const healthy = filtered.filter((a) => a.status !== "expired");
+    const expired = filtered.filter((a) => a.status === "expired");
+    secAccounts.classList.toggle("hidden", healthy.length === 0 && expired.length > 0);
+    accountsSection.className = "list ios-list";
+    accountsSection.innerHTML = healthy.map((acc) => renderIosAccountRow(acc, snap, dupNames)).join("");
+    secExpired.classList.toggle("hidden", expired.length === 0);
+    expiredCount.textContent = String(expired.length);
+    expiredSection.className = "list ios-list";
+    expiredSection.innerHTML = expired.map((acc) => renderIosAccountRow(acc, snap, dupNames)).join("");
+  } else if (panelLayout() === "dense") {
+    const filtered = providerFilter === "all" ? visible : visible.filter((a) => a.provider === providerFilter);
+    const healthy = filtered.filter((a) => a.status !== "expired");
+    const expired = filtered.filter((a) => a.status === "expired");
+    secAccounts.classList.toggle("hidden", healthy.length === 0 && expired.length > 0);
+    accountsSection.className = "list";
     accountsSection.innerHTML = healthy.map((acc) => renderDenseAccountRow(acc, snap, dupNames)).join("");
     secExpired.classList.toggle("hidden", expired.length === 0);
     expiredCount.textContent = String(expired.length);
+    expiredSection.className = "list";
     expiredSection.innerHTML = expired.map((acc) => renderDenseAccountRow(acc, snap, dupNames)).join("");
   } else {
     secAccounts.classList.remove("hidden");
     secExpired.classList.add("hidden");
+    accountsSection.className = "list";
     accountsSection.innerHTML = visible.map((acc) => renderAccountRow(acc, snap, dupNames)).join("");
   }
 }
@@ -833,7 +1117,41 @@ function renderPicks(snap: DashboardSnapshot) {
   const isRisk = strategy === "risk_first";
   btnPicksStrategy.textContent = `${strategyShortLabel(strategy)} ▾`;
   secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
-  if (panelLayout() === "dense") {
+  const th = panelTheme();
+  if (th === "ios") {
+    picksSection.className = `ios-picks-grid${snap.picks.length === 1 ? " single" : ""}`;
+    picksSection.innerHTML = snap.picks
+      .map((pick) => {
+        const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
+        const reason = localizePickReason(pick.reason);
+        const sub = pick.note ? pick.note : reason;
+        const badge = pick.tag ? t(pick.tag) : t("首選");
+        const tone = getTone(pick.effectiveRemaining, pick.accountId);
+        const cardCls = isRisk ? "pick-risk" : pick.useBeforeReset ? "pick-soon" : "";
+        const r = 17;
+        const circ = +(2 * Math.PI * r).toFixed(2);
+        const rem = Math.max(0, Math.min(100, pick.effectiveRemaining));
+        const offset = +(circ * (1 - rem / 100)).toFixed(2);
+        return `
+        <div class="ios-pick-widget ${cardCls}" title="${escapeHtml(reason + reset)}">
+          <div class="ios-pw-meta">
+            <span class="ios-pw-cap ${pick.provider}">${providerBadgeLabel(pick.provider)} · ${escapeHtml(badge)}</span>
+            <span class="ios-pw-name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span>
+            <span class="ios-pw-sub">${escapeHtml(sub)}</span>
+          </div>
+          <div class="ios-ring lg">
+            <svg viewBox="0 0 42 42">
+              <circle class="rk" cx="21" cy="21" r="${r}" />
+              <circle class="rv ${tone}" cx="21" cy="21" r="${r}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}" />
+            </svg>
+            <span class="ios-rtxt"><span class="ios-rnum ${tone === "good" ? "" : tone}">${rem}</span></span>
+          </div>
+        </div>`;
+      })
+      .join("");
+    return;
+  }
+  if (th === "glass" || panelLayout() === "dense") {
     picksSection.className = `picks-grid${snap.picks.length === 1 ? " single" : ""}`;
     picksSection.innerHTML = snap.picks
       .map((pick) => {
@@ -957,6 +1275,10 @@ function syncSettingsForm(s: AppSettings) {
 
   setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
   valPetOpacity.textContent = `${s.petOpacity ?? 100}%`;
+  const pOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 84));
+  setRangeIfIdle(inpPanelOpacity, pOpacity);
+  valPanelOpacity.textContent = `${pOpacity}%`;
+  rowPanelLayout.classList.toggle("hidden", (s.panelTheme ?? "glass") !== "default");
   inpPetIdleFade.checked = !!s.petIdleFade;
   const detailMode = s.compactAccounts ? "compact" : s.showAntigravityExtra ? "all" : "standard";
   const detailBtns = Array.from(segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn"));
@@ -1114,15 +1436,34 @@ function applyDisplay(s: AppSettings) {
   else root.dataset.theme = appearance;
   root.style.setProperty("--ui-zoom", String((s.uiScale ?? 90) / 100));
 
+  const uiTheme: PanelTheme = s.panelTheme === "ios" || s.panelTheme === "default" ? s.panelTheme : "glass";
+  const panelOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 84));
+  root.dataset.uiTheme = uiTheme;
+  shell.dataset.uiTheme = uiTheme;
+  root.style.setProperty("--panel-alpha", String(panelOpacity / 100));
+
   const layout: PanelLayout = s.panelLayout === "dense" ? "dense" : "classic";
   shell.dataset.layout = layout;
   const useEl = btnLayout.querySelector("use");
-  if (useEl) useEl.setAttribute("href", layout === "dense" ? "#i-layout-classic" : "#i-layout-dense");
+  if (useEl) {
+    useEl.setAttribute(
+      "href",
+      uiTheme === "glass"
+        ? "#i-theme-bento"
+        : uiTheme === "ios"
+          ? "#i-theme-rings"
+          : layout === "dense"
+            ? "#i-layout-classic"
+            : "#i-layout-dense",
+    );
+  }
   btnLayout.classList.remove("active");
   btnLayout.title =
-    layout === "dense"
-      ? t("目前：列表畫面（點此切回卡片）")
-      : t("目前：卡片畫面（點此切換列表）");
+    uiTheme === "glass"
+      ? t("目前：玻璃磚主題（點此切換 iOS 雙環）")
+      : uiTheme === "ios"
+        ? t("目前：iOS 雙環主題（點此切換經典）")
+        : t("目前：經典主題（點此切換玻璃磚）");
 
   pinned = s.panelPinned === true;
   btnPin.classList.toggle("active", pinned);
@@ -1181,8 +1522,16 @@ document.querySelectorAll<HTMLInputElement>(".slider").forEach((inp) => {
 
 btnLayout.addEventListener("click", () => {
   closeCtxMenu();
-  const next: PanelLayout = panelLayout() === "dense" ? "classic" : "dense";
-  commitSettings({ panelLayout: next }, true);
+  const cur = panelTheme();
+  const next: PanelTheme = cur === "glass" ? "ios" : cur === "ios" ? "default" : "glass";
+  commitSettings({ panelTheme: next }, true);
+});
+
+inpPanelOpacity.addEventListener("input", () => {
+  const v = Number(inpPanelOpacity.value);
+  valPanelOpacity.textContent = `${v}%`;
+  document.documentElement.style.setProperty("--panel-alpha", String(v / 100));
+  commitSettings({ panelOpacity: v });
 });
 
 btnClose.addEventListener("click", () => {
@@ -1333,6 +1682,12 @@ function setDashTab(tab: "quota" | "analytics") {
   });
   dashTabs.style.setProperty("--n", String(btns.length));
   dashTabs.style.setProperty("--i", String(idx));
+  Array.from(floatDashTabs.querySelectorAll<HTMLButtonElement>(".float-tab")).forEach((b) => {
+    const on = b.dataset.dash === tab;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  iosNavTitle.textContent = tab === "analytics" ? t("用量") : t("額度");
   dashQuota.classList.toggle("hidden", tab !== "quota");
   dashAnalytics.classList.toggle("hidden", tab !== "analytics");
   if (tab === "analytics") {
@@ -1344,6 +1699,9 @@ function setDashTab(tab: "quota" | "analytics") {
 }
 
 dashTabs.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) =>
+  btn.addEventListener("click", () => setDashTab((btn.dataset.dash as "quota" | "analytics") ?? "quota")),
+);
+floatDashTabs.querySelectorAll<HTMLButtonElement>(".float-tab").forEach((btn) =>
   btn.addEventListener("click", () => setDashTab((btn.dataset.dash as "quota" | "analytics") ?? "quota")),
 );
 

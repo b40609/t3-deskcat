@@ -493,5 +493,16 @@
   "週將重設": "Wk reset",
   "5h 將重設": "5h reset",
   "優先挑出每週額度快重設且剩餘較多的帳號，避免訂閱額度浪費": "Surface accounts with unspent weekly quota resetting soon so subscription allowance isn't wasted",
-  "優先挑出 5 小時額度快重設且還有餘裕的帳號，順手用完再重設": "Surface accounts with spare 5h quota resetting soon so you can spend it before reset"
+  "優先挑出 5 小時額度快重設且還有餘裕的帳號，順手用完再重設": "Surface accounts with spare 5h quota resetting soon so you can spend it before reset",
+  "面板主題": "Panel theme",
+  "玻璃磚": "Liquid Glass",
+  "iOS 雙環": "iOS Rings",
+  "經典": "Classic",
+  "背景不透明度": "Background opacity",
+  "切換主題或畫面樣式": "Switch theme or view layout",
+  "目前：玻璃磚主題（點此切換 iOS 雙環）": "Theme: Liquid Glass (click for iOS Rings)",
+  "目前：iOS 雙環主題（點此切換經典）": "Theme: iOS Rings (click for Classic)",
+  "目前：經典主題（點此切換玻璃磚）": "Theme: Classic (click for Liquid Glass)",
+  "週": "Wk",
+  "月": "Mo"
 }

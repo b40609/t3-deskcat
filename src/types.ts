@@ -80,6 +80,7 @@ export interface AccountPref {
 
 export type PanelPosition = "pet" | "remember" | "top_right" | "bottom_right" | "top_left" | "bottom_left" | "center";
 export type PanelLayout = "classic" | "dense";
+export type PanelTheme = "glass" | "ios" | "default";
 
 export type PetTheme = "hud_gauge" | "custom";
 
@@ -138,6 +139,8 @@ export interface AppSettings {
   // panel
   panelPosition?: PanelPosition;
   panelLayout?: PanelLayout;
+  panelTheme?: PanelTheme;
+  panelOpacity?: number;
   panelPinned?: boolean;
   panelX?: number | null;
   panelY?: number | null;

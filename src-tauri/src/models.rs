@@ -277,6 +277,12 @@ pub struct AppSettings {
     /// Dashboard visual layout: "classic" (cards) | "dense" (high-density dual-column)
     #[serde(default = "default_panel_layout")]
     pub panel_layout: String,
+    /// Panel visual theme: "glass" (iOS 26 Liquid Glass Bento) | "ios" (iOS Battery Rings) | "default" (Obsidian/Ceramic)
+    #[serde(default = "default_panel_theme")]
+    pub panel_theme: String,
+    /// Panel background opacity in percent (45-100); text and meters stay 100% crisp.
+    #[serde(default = "default_panel_opacity")]
+    pub panel_opacity: u32,
     /// Remembered desktop pinned state (stays open, non-always-on-top, shown on taskbar).
     #[serde(default)]
     pub panel_pinned: bool,
@@ -355,6 +361,12 @@ fn default_panel_position() -> String {
 }
 fn default_panel_layout() -> String {
     "classic".to_string()
+}
+fn default_panel_theme() -> String {
+    "glass".to_string()
+}
+fn default_panel_opacity() -> u32 {
+    84
 }
 fn default_hotkey() -> String {
     "Ctrl+Alt+Q".to_string()
@@ -454,6 +466,8 @@ impl Default for AppSettings {
             pet_snap_edge: true,
             panel_position: default_panel_position(),
             panel_layout: default_panel_layout(),
+            panel_theme: default_panel_theme(),
+            panel_opacity: default_panel_opacity(),
             panel_pinned: false,
             panel_x: None,
             panel_y: None,

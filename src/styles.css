@@ -74,7 +74,12 @@ svg {
 .shell {
   position: absolute;
   inset: 6px;
-  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 112px, var(--bg) 100%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-top) calc(var(--panel-alpha, 1) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--panel-alpha, 1) * 100%), transparent) 112px,
+    color-mix(in srgb, var(--bg) calc(var(--panel-alpha, 1) * 100%), transparent) 100%
+  );
   border: 1px solid var(--shell-border);
   border-radius: 14px;
   overflow: hidden;
@@ -3192,5 +3197,1242 @@ html.remote .scroll {
   html.remote .time-input,
   html.remote .an-num {
     font-size: 16px;
+  }
+}
+
+/* ==========================================================================
+   Multi-theme Apple / iPhone visual systems:
+   - [data-ui-theme="glass"] : iOS 26 Liquid Glass Control Center Bento Tiles
+   - [data-ui-theme="ios"]   : Classic iOS Battery & Health Dual-Ring Cards
+   Both respect --panel-alpha (45%..100%) on container surfaces while keeping
+   text, rings, and progress meters 100% crisp.
+   ========================================================================== */
+
+.ios-nav-title,
+.float-tab-fade,
+.float-tab-bar {
+  display: none;
+}
+
+/* ---- Shared Apple / iPhone chrome for glass & ios themes ---- */
+.shell[data-ui-theme="glass"],
+.shell[data-ui-theme="ios"] {
+  font-family: var(--font-apple);
+  border-radius: 24px;
+  --accent: var(--ios-blue);
+  --on-accent: #ffffff;
+  --good-ink: var(--ios-green);
+  --good-bar: linear-gradient(90deg, #28cd41 0%, var(--ios-green) 100%);
+  --warn-ink: var(--ios-amber);
+  --warn-bar: linear-gradient(90deg, #ff9500 0%, #ffb340 100%);
+  --bad: var(--ios-red);
+  --bad-ink: var(--ios-red);
+  --bad-bar: linear-gradient(90deg, #ff3b30 0%, #ff6961 100%);
+}
+
+.shell[data-ui-theme="glass"] #dash-tabs,
+.shell[data-ui-theme="ios"] #dash-tabs {
+  display: none;
+}
+
+.shell[data-ui-theme="glass"] .ios-nav-title,
+.shell[data-ui-theme="ios"] .ios-nav-title {
+  display: block;
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--label);
+  line-height: 1.1;
+}
+
+.shell[data-ui-theme="glass"] .nav-top,
+.shell[data-ui-theme="ios"] .nav-top {
+  height: 52px;
+  padding: 6px 14px 4px 18px;
+  border-bottom: 0;
+}
+
+.shell[data-ui-theme="glass"] .nav-actions,
+.shell[data-ui-theme="ios"] .nav-actions {
+  gap: 6px;
+}
+
+.shell[data-ui-theme="glass"] .circle-btn,
+.shell[data-ui-theme="ios"] .circle-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--label-2);
+}
+
+.shell[data-ui-theme="glass"] .circle-btn svg,
+.shell[data-ui-theme="ios"] .circle-btn svg {
+  width: 14.5px;
+  height: 14.5px;
+  stroke-width: 1.85;
+}
+
+.shell[data-ui-theme="glass"] #dash-quota,
+.shell[data-ui-theme="ios"] #dash-quota,
+.shell[data-ui-theme="glass"] #dash-analytics,
+.shell[data-ui-theme="ios"] #dash-analytics {
+  padding: 4px 14px calc(74px + env(safe-area-inset-bottom));
+}
+
+/* Solid glossy Apple squircle app icons in glass & ios themes */
+.shell[data-ui-theme="glass"] .p-icon:not(.has-img),
+.shell[data-ui-theme="ios"] .p-icon:not(.has-img) {
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 3px 9px rgba(0, 0, 0, 0.22);
+}
+
+.shell[data-ui-theme="glass"] .p-icon.antigravity:not(.has-img),
+.shell[data-ui-theme="ios"] .p-icon.antigravity:not(.has-img) {
+  background: linear-gradient(145deg, #5e9eff 0%, #2460f5 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 3px 8px rgba(36, 96, 245, 0.32);
+}
+
+.shell[data-ui-theme="glass"] .p-icon.claude:not(.has-img),
+.shell[data-ui-theme="ios"] .p-icon.claude:not(.has-img) {
+  background: linear-gradient(145deg, #f19168 0%, #d95d39 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 3px 8px rgba(217, 93, 57, 0.32);
+}
+
+.shell[data-ui-theme="glass"] .p-icon.codex:not(.has-img),
+.shell[data-ui-theme="ios"] .p-icon.codex:not(.has-img) {
+  background: linear-gradient(145deg, #43d9a3 0%, #10a37f 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 3px 8px rgba(16, 163, 127, 0.3);
+}
+
+.shell[data-ui-theme="glass"] .tone-bad .p-icon:not(.has-img),
+.shell[data-ui-theme="ios"] .tone-bad .p-icon:not(.has-img) {
+  background: linear-gradient(145deg, #ff6961 0%, #ff3b30 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 3px 8px rgba(255, 59, 48, 0.34);
+}
+
+/* Floating Liquid Glass bottom pill tab bar */
+.shell[data-ui-theme="glass"] .float-tab-fade,
+.shell[data-ui-theme="ios"] .float-tab-fade {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 66px;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.shell[data-ui-theme="glass"] .float-tab-bar,
+.shell[data-ui-theme="ios"] .float-tab-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 4px;
+  border-radius: 999px;
+  backdrop-filter: blur(26px) saturate(190%);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+}
+
+.float-tab {
+  padding: 6.5px 22px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--label-2);
+  transition:
+    background-color 0.18s var(--ease),
+    color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease);
+}
+
+.float-tab:hover {
+  color: var(--label);
+}
+
+/* iOS green switches & rounded settings polish in glass/ios themes */
+.shell[data-ui-theme="glass"] .switch,
+.shell[data-ui-theme="ios"] .switch {
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(120, 120, 128, 0.32);
+}
+
+.shell[data-ui-theme="glass"] .switch::after,
+.shell[data-ui-theme="ios"] .switch::after {
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.24);
+}
+
+.shell[data-ui-theme="glass"] .switch:checked,
+.shell[data-ui-theme="ios"] .switch:checked {
+  background: var(--ios-green);
+}
+
+.shell[data-ui-theme="glass"] .switch:checked::after,
+.shell[data-ui-theme="ios"] .switch:checked::after {
+  transform: translateX(20px);
+  background: #ffffff;
+}
+
+.shell[data-ui-theme="glass"] #view-settings,
+.shell[data-ui-theme="ios"] #view-settings {
+  background: transparent;
+}
+
+.shell[data-ui-theme="glass"] #view-sub,
+.shell[data-ui-theme="ios"] #view-sub {
+  background: var(--bg);
+}
+
+.shell[data-ui-theme="glass"] #view-settings .list,
+.shell[data-ui-theme="glass"] #view-sub .list {
+  background: var(--glass-tile-bg);
+  border: 0;
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="ios"] #view-settings .list,
+.shell[data-ui-theme="ios"] #view-sub .list {
+  background: var(--ios-card-rgba);
+  border: 0;
+}
+
+.shell[data-ui-theme="glass"] #view-settings .list,
+.shell[data-ui-theme="glass"] #view-sub .list,
+.shell[data-ui-theme="ios"] #view-settings .list,
+.shell[data-ui-theme="ios"] #view-sub .list,
+.shell[data-ui-theme="glass"] .an-card,
+.shell[data-ui-theme="glass"] .an-kpi,
+.shell[data-ui-theme="ios"] .an-card,
+.shell[data-ui-theme="ios"] .an-kpi {
+  border-radius: 16px;
+}
+
+/* ==========================================================================
+   Theme 1: [data-ui-theme="glass"] — iOS 26 Liquid Glass Bento Control Center
+   ========================================================================== */
+
+/* Dark (default & explicit) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shell[data-ui-theme="glass"] {
+    --glass-shell-bg:
+      radial-gradient(260px 240px at 14% 8%, rgba(62, 130, 255, calc(var(--panel-alpha, 0.84) * 0.32)), transparent 72%),
+      radial-gradient(240px 220px at 88% 22%, rgba(48, 209, 88, calc(var(--panel-alpha, 0.84) * 0.18)), transparent 72%),
+      radial-gradient(260px 220px at 78% 90%, rgba(255, 69, 58, calc(var(--panel-alpha, 0.84) * 0.16)), transparent 72%),
+      linear-gradient(180deg, rgba(19, 24, 38, var(--panel-alpha, 0.84)) 0%, rgba(10, 13, 22, var(--panel-alpha, 0.84)) 100%);
+    --glass-tile-bg: rgba(34, 40, 56, calc(var(--panel-alpha, 0.84) * 0.68));
+    --glass-tile-hover: rgba(44, 52, 72, calc(var(--panel-alpha, 0.84) * 0.8));
+    --glass-tile-alert: rgba(74, 28, 36, calc(var(--panel-alpha, 0.84) * 0.72));
+    --glass-tile-border: rgba(255, 255, 255, 0.13);
+    --glass-tile-spec: rgba(255, 255, 255, 0.22);
+    --glass-ctrl-bg: rgba(255, 255, 255, 0.09);
+    --glass-ctrl-active: rgba(255, 255, 255, 0.2);
+    --glass-bar-bg: rgba(28, 32, 44, 0.72);
+    --glass-fade-end: rgba(10, 13, 22, calc(var(--panel-alpha, 0.84) * 0.92));
+    --bg: #0c101b;
+    --card: rgba(30, 35, 48, 0.78);
+    --stroke: rgba(255, 255, 255, 0.12);
+    --sep: rgba(255, 255, 255, 0.08);
+    --track: rgba(255, 255, 255, 0.12);
+  }
+}
+
+:root[data-theme="dark"] .shell[data-ui-theme="glass"] {
+  --glass-shell-bg:
+    radial-gradient(260px 240px at 14% 8%, rgba(62, 130, 255, calc(var(--panel-alpha, 0.84) * 0.32)), transparent 72%),
+    radial-gradient(240px 220px at 88% 22%, rgba(48, 209, 88, calc(var(--panel-alpha, 0.84) * 0.18)), transparent 72%),
+    radial-gradient(260px 220px at 78% 90%, rgba(255, 69, 58, calc(var(--panel-alpha, 0.84) * 0.16)), transparent 72%),
+    linear-gradient(180deg, rgba(19, 24, 38, var(--panel-alpha, 0.84)) 0%, rgba(10, 13, 22, var(--panel-alpha, 0.84)) 100%);
+  --glass-tile-bg: rgba(34, 40, 56, calc(var(--panel-alpha, 0.84) * 0.68));
+  --glass-tile-hover: rgba(44, 52, 72, calc(var(--panel-alpha, 0.84) * 0.8));
+  --glass-tile-alert: rgba(74, 28, 36, calc(var(--panel-alpha, 0.84) * 0.72));
+  --glass-tile-border: rgba(255, 255, 255, 0.13);
+  --glass-tile-spec: rgba(255, 255, 255, 0.22);
+  --glass-ctrl-bg: rgba(255, 255, 255, 0.09);
+  --glass-ctrl-active: rgba(255, 255, 255, 0.2);
+  --glass-bar-bg: rgba(28, 32, 44, 0.72);
+  --glass-fade-end: rgba(10, 13, 22, calc(var(--panel-alpha, 0.84) * 0.92));
+  --bg: #0c101b;
+  --card: rgba(30, 35, 48, 0.78);
+  --stroke: rgba(255, 255, 255, 0.12);
+  --sep: rgba(255, 255, 255, 0.08);
+  --track: rgba(255, 255, 255, 0.12);
+}
+
+/* Light (default & explicit) */
+.shell[data-ui-theme="glass"] {
+  --glass-shell-bg:
+    radial-gradient(280px 240px at 14% 8%, rgba(86, 155, 255, calc(var(--panel-alpha, 0.84) * 0.26)), transparent 68%),
+    radial-gradient(260px 240px at 90% 24%, rgba(52, 199, 89, calc(var(--panel-alpha, 0.84) * 0.16)), transparent 70%),
+    radial-gradient(240px 220px at 80% 90%, rgba(255, 149, 0, calc(var(--panel-alpha, 0.84) * 0.14)), transparent 70%),
+    linear-gradient(180deg, rgba(238, 242, 250, var(--panel-alpha, 0.84)) 0%, rgba(230, 236, 246, var(--panel-alpha, 0.84)) 100%);
+  --glass-tile-bg: rgba(255, 255, 255, calc(var(--panel-alpha, 0.84) * 0.82));
+  --glass-tile-hover: rgba(255, 255, 255, calc(var(--panel-alpha, 0.84) * 0.94));
+  --glass-tile-alert: rgba(255, 238, 238, calc(var(--panel-alpha, 0.84) * 0.88));
+  --glass-tile-border: rgba(255, 255, 255, 0.9);
+  --glass-tile-spec: rgba(255, 255, 255, 0.98);
+  --glass-ctrl-bg: rgba(255, 255, 255, 0.56);
+  --glass-ctrl-active: #ffffff;
+  --glass-bar-bg: rgba(255, 255, 255, 0.78);
+  --glass-fade-end: rgba(232, 237, 247, calc(var(--panel-alpha, 0.84) * 0.94));
+  background: var(--glass-shell-bg);
+  border: 0;
+  box-shadow:
+    var(--shadow),
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+  backdrop-filter: blur(28px) saturate(185%);
+  -webkit-backdrop-filter: blur(28px) saturate(185%);
+}
+
+.shell[data-ui-theme="glass"] .circle-btn {
+  background: var(--glass-ctrl-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .circle-btn:hover {
+  background: var(--glass-ctrl-active);
+  color: var(--label);
+}
+
+.shell[data-ui-theme="glass"] .circle-btn.active {
+  color: var(--ios-blue);
+  background: color-mix(in srgb, var(--ios-blue) 18%, var(--glass-ctrl-bg));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ios-blue) 36%, var(--glass-tile-border)),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .dense-toolbar {
+  margin: 4px 0 10px;
+}
+
+.shell[data-ui-theme="glass"] .prov-pills {
+  background: var(--glass-ctrl-bg);
+  border: 0;
+  border-radius: 999px;
+  padding: 3px;
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .prov-pill {
+  border-radius: 999px;
+  padding: 4.5px 10px;
+}
+
+.shell[data-ui-theme="glass"] .prov-pill.active {
+  background: var(--glass-ctrl-active);
+  color: var(--label);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .quick-mode-btn {
+  border-radius: 999px;
+  background: var(--glass-ctrl-bg);
+  border: 0;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .pick-card {
+  border-radius: 18px;
+  background: var(--glass-tile-bg);
+  border: 0;
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec),
+    0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.shell[data-ui-theme="glass"] .float-tab-fade {
+  background: linear-gradient(to top, var(--glass-fade-end) 32%, transparent 100%);
+}
+
+.shell[data-ui-theme="glass"] .float-tab-bar {
+  background: var(--glass-bar-bg);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec);
+}
+
+.shell[data-ui-theme="glass"] .float-tab.active {
+  background: var(--ios-blue);
+  color: #ffffff;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--ios-blue) 42%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shell[data-ui-theme="glass"] .float-tab.active {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  }
+}
+
+:root[data-theme="dark"] .shell[data-ui-theme="glass"] .float-tab.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+/* Bento 2-column Glass Tile Grid */
+.glass-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+@media (min-width: 520px) {
+  .glass-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.glass-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px 13px 11px;
+  border-radius: 20px;
+  background: var(--glass-tile-bg);
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-tile-border),
+    inset 0 1px 0 var(--glass-tile-spec),
+    0 8px 20px rgba(0, 0, 0, 0.14);
+  transition:
+    background-color 0.16s var(--ease),
+    transform 0.16s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+
+.glass-tile:hover {
+  background: var(--glass-tile-hover);
+  transform: translateY(-1px);
+}
+
+.glass-tile.wide {
+  grid-column: 1 / -1;
+}
+
+.glass-tile.is-alert {
+  background: var(--glass-tile-alert);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ios-red) 36%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ios-red) 24%, rgba(255, 255, 255, 0.25)),
+    0 8px 20px rgba(255, 59, 48, 0.12);
+}
+
+.glass-tile.last-known {
+  opacity: 0.74;
+}
+
+.glass-tile.dim .g-name,
+.glass-tile.dim .p-icon {
+  opacity: 0.55;
+}
+
+.g-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 24px;
+}
+
+.g-head .p-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.g-head .p-icon svg {
+  width: 12.5px;
+  height: 12.5px;
+}
+
+.g-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glass-tile:hover .d-cost {
+  transform: translateX(-22px);
+  color: var(--label-2);
+}
+
+.g-more-btn {
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.glass-tile:hover .g-more-btn,
+.g-more-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.g-main-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.g-big-pct {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+}
+
+.g-big-pct small {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.55;
+  margin-left: 1px;
+}
+
+.g-big-pct.warn {
+  color: var(--ios-amber);
+}
+
+.g-big-pct.bad {
+  color: var(--ios-red);
+}
+
+.g-main-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-main-win {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--label-2);
+  white-space: nowrap;
+}
+
+.g-main-reset {
+  font-size: 10.5px;
+  color: var(--label-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.g-main-reset.bad {
+  color: var(--ios-red);
+  font-weight: 600;
+}
+
+.g-main-bar {
+  height: 6.5px;
+  border-radius: 999px;
+}
+
+.g-sub-wins {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.g-sub-win {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.g-sub-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-sub-lbl {
+  color: var(--label-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-sub-val {
+  font-weight: 650;
+  color: var(--label-2);
+  flex: 0 0 auto;
+}
+
+.g-sub-val.warn {
+  color: var(--ios-amber);
+}
+
+.g-sub-val.bad {
+  color: var(--ios-red);
+}
+
+.g-sub-bar {
+  height: 4px;
+  box-shadow: none;
+}
+
+/* Always-visible per-account forecast row on Glass tiles */
+.g-fc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--label-2);
+  margin-top: 1px;
+  min-width: 0;
+}
+
+.g-fc > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-fc.warn .d-bdot {
+  background: var(--ios-amber);
+}
+
+.g-fc.bad .d-bdot {
+  background: var(--ios-red);
+}
+
+.g-fc.urgent {
+  font-weight: 650;
+}
+
+.g-fc.warn.urgent {
+  color: var(--ios-amber);
+}
+
+.g-fc.bad.urgent {
+  color: var(--ios-red);
+}
+
+.g-status {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   Theme 2: [data-ui-theme="ios"] — Classic iPhone Battery & Health Dual Rings
+   ========================================================================== */
+
+/* Dark (default & explicit) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shell[data-ui-theme="ios"] {
+    --ios-bg-rgba: rgba(0, 0, 0, var(--panel-alpha, 0.84));
+    --ios-card-rgba: rgba(28, 28, 30, calc(min(1, var(--panel-alpha, 0.84) + 0.08)));
+    --ios-card-hover: rgba(44, 44, 46, calc(min(1, var(--panel-alpha, 0.84) + 0.1)));
+    --ios-seg-bg: rgba(118, 118, 128, 0.24);
+    --ios-seg-active: #636366;
+    --ios-btn-bg: rgba(118, 118, 128, 0.28);
+    --ios-ring-track: rgba(255, 255, 255, 0.12);
+    --ios-sep: rgba(84, 84, 88, 0.56);
+    --ios-bar-bg: rgba(38, 38, 42, 0.78);
+    --ios-bar-border: rgba(255, 255, 255, 0.18);
+    --ios-fade-end: rgba(0, 0, 0, calc(var(--panel-alpha, 0.84) * 0.94));
+    --bg: #000000;
+    --card: #1c1c1e;
+    --stroke: transparent;
+    --sep: rgba(84, 84, 88, 0.52);
+  }
+}
+
+:root[data-theme="dark"] .shell[data-ui-theme="ios"] {
+  --ios-bg-rgba: rgba(0, 0, 0, var(--panel-alpha, 0.84));
+  --ios-card-rgba: rgba(28, 28, 30, calc(min(1, var(--panel-alpha, 0.84) + 0.08)));
+  --ios-card-hover: rgba(44, 44, 46, calc(min(1, var(--panel-alpha, 0.84) + 0.1)));
+  --ios-seg-bg: rgba(118, 118, 128, 0.24);
+  --ios-seg-active: #636366;
+  --ios-btn-bg: rgba(118, 118, 128, 0.28);
+  --ios-ring-track: rgba(255, 255, 255, 0.12);
+  --ios-sep: rgba(84, 84, 88, 0.56);
+  --ios-bar-bg: rgba(38, 38, 42, 0.78);
+  --ios-bar-border: rgba(255, 255, 255, 0.18);
+  --ios-fade-end: rgba(0, 0, 0, calc(var(--panel-alpha, 0.84) * 0.94));
+  --bg: #000000;
+  --card: #1c1c1e;
+  --stroke: transparent;
+  --sep: rgba(84, 84, 88, 0.52);
+}
+
+/* Light (default & explicit) */
+.shell[data-ui-theme="ios"] {
+  --ios-bg-rgba: rgba(242, 242, 247, var(--panel-alpha, 0.84));
+  --ios-card-rgba: rgba(255, 255, 255, calc(min(1, var(--panel-alpha, 0.84) + 0.12)));
+  --ios-card-hover: rgba(247, 247, 250, calc(min(1, var(--panel-alpha, 0.84) + 0.14)));
+  --ios-seg-bg: rgba(118, 118, 128, 0.13);
+  --ios-seg-active: #ffffff;
+  --ios-btn-bg: rgba(118, 118, 128, 0.12);
+  --ios-ring-track: rgba(120, 120, 128, 0.16);
+  --ios-sep: rgba(60, 60, 67, 0.14);
+  --ios-bar-bg: rgba(255, 255, 255, 0.82);
+  --ios-bar-border: rgba(0, 0, 0, 0.08);
+  --ios-fade-end: rgba(242, 242, 247, calc(var(--panel-alpha, 0.84) * 0.96));
+  --bg: #f2f2f7;
+  --card: #ffffff;
+  --stroke: transparent;
+  --sep: rgba(60, 60, 67, 0.14);
+  background: var(--ios-bg-rgba);
+  border: 1px solid var(--shell-border);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+}
+
+.shell[data-ui-theme="ios"] .circle-btn {
+  background: var(--ios-btn-bg);
+  color: var(--label);
+}
+
+.shell[data-ui-theme="ios"] .circle-btn:hover {
+  background: var(--fill-strong);
+}
+
+.shell[data-ui-theme="ios"] .circle-btn.active {
+  background: color-mix(in srgb, var(--ios-blue) 18%, transparent);
+  color: var(--ios-blue);
+  box-shadow: none;
+}
+
+.shell[data-ui-theme="glass"] #btn-pin.active::after,
+.shell[data-ui-theme="ios"] #btn-pin.active::after {
+  display: none;
+}
+
+.shell[data-ui-theme="ios"] .dense-toolbar {
+  margin: 4px 0 10px;
+}
+
+.shell[data-ui-theme="ios"] .prov-pills {
+  flex: 1;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--ios-seg-bg);
+  border: 0;
+  border-radius: 10px;
+  padding: 2.5px;
+  gap: 2px;
+}
+
+.shell[data-ui-theme="ios"] .prov-pill {
+  justify-content: center;
+  border-radius: 8px;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+.shell[data-ui-theme="ios"] .prov-pill.active {
+  background: var(--ios-seg-active);
+  color: var(--label);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+}
+
+.shell[data-ui-theme="ios"] .quick-mode-btn {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--ios-blue);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.shell[data-ui-theme="ios"] .quick-mode-btn svg {
+  color: var(--ios-blue);
+}
+
+.shell[data-ui-theme="ios"] .float-tab-fade {
+  background: linear-gradient(to top, var(--ios-fade-end) 32%, transparent 100%);
+}
+
+.shell[data-ui-theme="ios"] .float-tab-bar {
+  background: var(--ios-bar-bg);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.24),
+    inset 0 0 0 1px var(--ios-bar-border),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.shell[data-ui-theme="ios"] .float-tab.active {
+  background: var(--ios-blue);
+  color: #ffffff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ios-blue) 36%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shell[data-ui-theme="ios"] .float-tab.active {
+    background: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+}
+
+:root[data-theme="dark"] .shell[data-ui-theme="ios"] .float-tab.active {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* iOS Pick Widgets (2-col rounded cards with 42px battery ring) */
+.ios-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ios-picks-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.ios-pick-widget {
+  background: var(--ios-card-rgba);
+  border-radius: 20px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+  transition: background-color 0.14s var(--ease);
+}
+
+.ios-pick-widget:hover {
+  background: var(--ios-card-hover);
+}
+
+.ios-pw-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ios-pw-cap {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ios-green);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ios-pw-cap.claude {
+  color: var(--claude);
+}
+
+.ios-pw-cap.antigravity {
+  color: var(--ios-blue);
+}
+
+.ios-pw-cap.codex {
+  color: var(--ios-green);
+}
+
+.ios-pw-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ios-pw-sub {
+  font-size: 11.5px;
+  color: var(--label-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* iOS Inset Grouped Dual-Ring Account List */
+.list.ios-list {
+  background: var(--ios-card-rgba);
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+
+.ios-acc {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 10.5px 13px;
+  transition: background-color 0.14s var(--ease);
+}
+
+.ios-acc + .ios-acc::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 56px;
+  right: 13px;
+  border-top: 0.5px solid var(--ios-sep);
+}
+
+.ios-acc:hover {
+  background: var(--ios-card-hover);
+}
+
+.ios-acc.last-known {
+  opacity: 0.72;
+}
+
+.ios-acc.dim .ios-name,
+.ios-acc.dim .p-icon {
+  opacity: 0.55;
+}
+
+.ios-acc-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.ios-acc-main .p-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.ios-acc-main .p-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ios-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5px;
+}
+
+.ios-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ios-name {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ios-title-line .d-cost {
+  font-size: 11px;
+  color: var(--label-3);
+}
+
+.ios-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ios-reset {
+  flex: 0 0 auto;
+  color: var(--label-2);
+}
+
+.ios-reset.bad {
+  color: var(--ios-red);
+  font-weight: 600;
+}
+
+.ios-sep-dot {
+  flex: 0 0 auto;
+  opacity: 0.5;
+}
+
+.ios-fc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--label-3);
+}
+
+.ios-fc > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ios-fc.warn .d-bdot {
+  background: var(--ios-amber);
+}
+
+.ios-fc.bad .d-bdot {
+  background: var(--ios-red);
+}
+
+.ios-fc.urgent {
+  font-weight: 600;
+}
+
+.ios-fc.warn.urgent {
+  color: var(--ios-amber);
+}
+
+.ios-fc.bad.urgent {
+  color: var(--ios-red);
+}
+
+.ios-sub {
+  font-size: 11.5px;
+  color: var(--label-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ios-sub.warn {
+  color: var(--ios-amber);
+}
+
+.ios-sub.bad {
+  color: var(--ios-red);
+}
+
+/* Dual Apple Battery Progress Rings */
+.ios-rings {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.16s var(--ease);
+}
+
+.ios-acc:hover .ios-rings {
+  transform: translateX(-22px);
+}
+
+.ios-ring {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.ios-ring.lg {
+  width: 42px;
+  height: 42px;
+}
+
+.ios-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ios-ring .rk {
+  fill: none;
+  stroke: var(--ios-ring-track);
+  stroke-width: 3.4;
+}
+
+.ios-ring.lg .rk,
+.ios-ring.lg .rv {
+  stroke-width: 3.8;
+}
+
+.ios-ring .rv {
+  fill: none;
+  stroke: var(--ios-green);
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.55s var(--ease);
+}
+
+.ios-ring .rv.warn {
+  stroke: var(--ios-amber);
+}
+
+.ios-ring .rv.bad {
+  stroke: var(--ios-red);
+}
+
+.ios-rtxt {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.ios-rnum {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--label);
+}
+
+.ios-ring.lg .ios-rnum {
+  font-size: 12.5px;
+}
+
+.ios-rnum.warn {
+  color: var(--ios-amber);
+}
+
+.ios-rnum.bad {
+  color: var(--ios-red);
+}
+
+.ios-rlbl {
+  font-size: 7.5px;
+  font-weight: 600;
+  color: var(--label-3);
+  margin-top: 1px;
+}
+
+.ios-more-btn {
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.ios-acc:hover .ios-more-btn,
+.ios-more-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ios-extra-wins {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--ios-sep);
+}
+
+@media (hover: none) {
+  .ios-acc:hover .ios-rings,
+  .glass-tile:hover .d-cost {
+    transform: none;
+  }
+  .ios-more-btn,
+  .g-more-btn {
+    position: static;
+    transform: none;
+    pointer-events: auto;
+    opacity: 0.72;
+  }
+}
+
+/* Accessibility: honor Reduced Transparency per Apple HIG */
+@media (prefers-reduced-transparency: reduce) {
+  .shell[data-ui-theme="glass"],
+  .shell[data-ui-theme="ios"],
+  .glass-tile,
+  .float-tab-bar,
+  .shell[data-ui-theme="glass"] .prov-pills,
+  .shell[data-ui-theme="glass"] .circle-btn,
+  .shell[data-ui-theme="glass"] .quick-mode-btn {
+    --panel-alpha: 1;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }

@@ -27,6 +27,8 @@
       <symbol id="i-gauge" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 1 1-7.6 10.5" stroke-width="2.6" /></symbol>
       <symbol id="i-layout-dense" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="3.8" rx="1.2" /><rect x="3.5" y="10.1" width="17" height="3.8" rx="1.2" /><rect x="3.5" y="15.7" width="17" height="3.8" rx="1.2" /></symbol>
       <symbol id="i-layout-classic" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="6.8" rx="1.6" /><rect x="3.5" y="13.2" width="17" height="6.8" rx="1.6" /></symbol>
+      <symbol id="i-theme-bento" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.2" height="7.2" rx="2" /><rect x="13.3" y="3.5" width="7.2" height="7.2" rx="2" /><rect x="3.5" y="13.3" width="7.2" height="7.2" rx="2" /><rect x="13.3" y="13.3" width="7.2" height="7.2" rx="2" /></symbol>
+      <symbol id="i-theme-rings" viewBox="0 0 24 24"><circle cx="8.5" cy="12" r="5" /><circle cx="16.5" cy="12" r="4" /></symbol>
       <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 16V4M7 4L3.5 7.5M7 4L10.5 7.5" /><path d="M17 8v12M17 20l-3.5-3.5M17 20l3.5-3.5" /></symbol>
       <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none" /></symbol>
       <!-- Provider marks: one tile shape, one glyph each. -->
@@ -44,9 +46,10 @@
               <button class="seg-btn active" role="tab" aria-selected="true" data-dash="quota" data-i18n>額度</button>
               <button class="seg-btn" role="tab" aria-selected="false" data-dash="analytics" data-i18n>用量</button>
             </div>
+            <span class="ios-nav-title" id="ios-nav-title" data-tauri-drag-region data-i18n>額度</span>
             <span class="nav-drag-spacer" data-tauri-drag-region></span>
             <div class="nav-actions">
-              <button id="btn-layout" class="circle-btn" title="切換畫面樣式" data-i18n-attr="title"><svg><use href="#i-layout-dense" /></svg></button>
+              <button id="btn-layout" class="circle-btn" title="切換主題或畫面樣式" data-i18n-attr="title"><svg><use href="#i-layout-dense" /></svg></button>
               <button id="btn-refresh" class="circle-btn" title="立即更新" data-i18n-attr="title"><svg><use href="#i-refresh" /></svg></button>
               <button id="btn-pin" class="circle-btn desktop-only" title="釘選面板" data-i18n-attr="title"><svg><use href="#i-pin" /></svg></button>
               <button id="btn-settings" class="circle-btn" title="設定" data-i18n-attr="title"><svg><use href="#i-gear" /></svg></button>
@@ -136,6 +139,12 @@
             </details>
 
             <p class="an-foot" data-i18n>費用是照 API 牌價換算的等值金額，訂閱方案實際不會這樣收費。資料只來自這台電腦上的 Claude Code、Antigravity 與 Codex 紀錄，保留 90 天</p>
+          </div>
+
+          <div class="float-tab-fade" aria-hidden="true"></div>
+          <div class="float-tab-bar" id="float-dash-tabs" role="tablist">
+            <button type="button" class="float-tab active" role="tab" aria-selected="true" data-dash="quota" data-i18n>額度</button>
+            <button type="button" class="float-tab" role="tab" aria-selected="false" data-dash="analytics" data-i18n>用量</button>
           </div>
         </section>
 
@@ -235,6 +244,18 @@
               <section class="group">
                 <div class="list">
                   <div class="row">
+                    <span data-i18n>面板主題</span>
+                    <div class="segmented" data-key="panelTheme">
+                      <button data-value="glass" class="seg-btn" data-i18n>玻璃磚</button>
+                      <button data-value="ios" class="seg-btn" data-i18n>iOS 雙環</button>
+                      <button data-value="default" class="seg-btn" data-i18n>經典</button>
+                    </div>
+                  </div>
+                  <div class="row row-slider">
+                    <div class="row-line"><span data-i18n>背景不透明度</span><span class="value" id="val-panel-opacity">84%</span></div>
+                    <input id="inp-panel-opacity" class="slider" type="range" min="45" max="100" step="5" value="84" />
+                  </div>
+                  <div class="row" id="row-panel-layout">
                     <span data-i18n>畫面樣式</span>
                     <div class="segmented" data-key="panelLayout">
                       <button data-value="classic" class="seg-btn" data-i18n>卡片</button>
