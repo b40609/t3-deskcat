@@ -4,14 +4,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { animSpeedFactor, hudCardScale, normalizePetTheme, petLogicalSize, renderAvatar } from "./themeRenderer";
 import {
   elapsedShare,
-  focusOf,
   providerShort,
+  selectHudItems,
   toneOf,
   whenText,
   windowSeconds,
   windowWord,
   type Focus,
+  type HudItem,
 } from "./focus";
+import { setLang, t } from "./i18n";
 import type { AgentActivity, AppSettings, CatMood, DashboardSnapshot, QuotaWindow } from "./types";
 
 const rootEl = document.getElementById("pet-root") as HTMLDivElement;
@@ -27,7 +29,9 @@ let previewTimeout: number | undefined;
 let petSize = 64;
 let tick = 0;
 let activity: AgentActivity = { state: "unknown", accountId: null, lastWrite: 0 };
+let hudItems: HudItem[] = [];
 let focus: Focus | null = null;
+let hoveredIdx = 0;
 
 const defaultSettings: AppSettings = {
   petSize: 64,
@@ -83,71 +87,43 @@ function syncCanvasSize(logicalSize: number, theme?: AppSettings["petTheme"]) {
   }
 }
 
-function renderHudCard() {
-  const settings = currentSnapshot?.settings ?? defaultSettings;
-  const offline = !!currentSnapshot?.offline;
-  const stale = offline || !!focus?.stale;
-  const activeWorking = activity.state === "working" && activity.accountId === focus?.acc.id;
+function renderSingleHudBody(
+  item: HudItem,
+  settings: AppSettings,
+  offline: boolean,
+  compactMulti: boolean,
+): string {
+  const f = item.focus;
+  const stale = offline || f.stale;
+  const activeWorking = activity.state === "working" && activity.accountId === f.acc.id;
   const showUsed = settings.usageDisplay === "used";
   const paceMode = settings.paceTick ?? "ahead";
-
-  const winKey = (w: QuotaWindow | null) =>
-    w ? `${Math.round(w.remainingPercent)}:${Math.round((elapsedShare(w) ?? -1) * 100)}` : "-";
-  const avatar = focus ? settings.accountPrefs?.[focus.acc.id]?.avatar ?? "" : "";
-  const key = [
-    petSize,
-    focus?.acc.id ?? "",
-    focus?.name ?? "",
-    focus?.acc.provider ?? "",
-    avatar.length,
-    stale,
-    activeWorking,
-    winKey(focus?.short ?? null),
-    winKey(focus?.long ?? null),
-    settings.workingThreshold,
-    settings.sleepingThreshold,
-    settings.usageDisplay,
-    settings.paceTick,
-  ].join("|");
-  if (key === lastHudKey) return;
-  lastHudKey = key;
-
-  hudCard.classList.toggle("stale", stale);
-
-  if (!focus) {
-    hudCard.innerHTML = `
-      <div class="hud-head">
-        <span class="hud-tile claude"><svg><use href="#m-claude" /></svg></span>
-        <span class="hud-name">T3 DeskCat</span>
-      </div>
-      <div class="hud-empty">No accounts</div>
-    `;
-    return;
-  }
-
-  const prov = focus.acc.provider;
+  const avatar = settings.accountPrefs?.[f.acc.id]?.avatar ?? "";
+  const prov = f.acc.provider;
   const symbolId = prov === "claude" ? "m-claude" : prov === "antigravity" ? "m-antigravity" : "m-codex";
   const tileHtml = avatar
     ? `<span class="hud-tile has-img"><img src="${escapeHtml(avatar)}" alt="" /></span>`
     : `<span class="hud-tile ${prov}"><svg><use href="#${symbolId}" /></svg></span>`;
 
-  const statusHtml = stale
+  const pillText = t(item.tagKey);
+  const badgeHtml = stale
     ? `<span class="hud-status-dot stale" aria-hidden="true"></span>`
     : activeWorking
-      ? `<span class="hud-status-dot live" aria-hidden="true"></span>`
-      : "";
+      ? `<span class="hud-pill live"><i class="hud-pdot"></i>${escapeHtml(pillText)}</span>`
+      : `<span class="hud-pill ${item.tagKind}">${escapeHtml(pillText)}</span>`;
 
   const windows: QuotaWindow[] = [];
-  if (focus.short) windows.push(focus.short);
-  if (focus.long) windows.push(focus.long);
+  if (f.short) windows.push(f.short);
+  if (f.long) windows.push(f.long);
+  const shownWins = compactMulti && windows.length > 1 && f.tight ? [f.tight] : windows;
 
   const rowsHtml =
-    windows.length > 0
-      ? windows
+    shownWins.length > 0
+      ? shownWins
           .map((w) => {
             const rem = Math.max(0, Math.min(100, w.remainingPercent));
             const disp = Math.round(showUsed ? 100 - rem : rem);
-            const tone = toneOf(rem, settings, focus!.acc.id);
+            const tone = toneOf(rem, settings, f.acc.id);
             const cls = tone === "good" ? "" : tone;
             let paceHtml = "";
             if (paceMode !== "off") {
@@ -170,14 +146,76 @@ function renderHudCard() {
           .join("")
       : `<div class="hud-empty">–</div>`;
 
-  hudCard.innerHTML = `
+  return `
     <div class="hud-head">
       ${tileHtml}
-      <span class="hud-name">${escapeHtml(focus.name)}</span>
-      ${statusHtml}
+      <span class="hud-name">${escapeHtml(f.name)}</span>
+      ${badgeHtml}
     </div>
-    <div class="hud-rows">${rowsHtml}</div>
-  `;
+    <div class="hud-rows">${rowsHtml}</div>`;
+}
+
+function renderHudCard() {
+  const settings = currentSnapshot?.settings ?? defaultSettings;
+  const offline = !!currentSnapshot?.offline;
+  const hudCount = Math.max(1, Math.min(4, settings.hudCount ?? 1));
+  const hudLayout = settings.hudLayout === "horizontal" ? "horizontal" : "vertical";
+  const isMulti = hudCount >= 2 && hudItems.length >= 2;
+  const compactMulti = hudLayout === "vertical" && hudItems.length >= 3;
+
+  const winKey = (w: QuotaWindow | null) =>
+    w ? `${Math.round(w.remainingPercent)}:${Math.round((elapsedShare(w) ?? -1) * 100)}` : "-";
+  const itemsKey = hudItems
+    .map((it) => {
+      const f = it.focus;
+      const av = settings.accountPrefs?.[f.acc.id]?.avatar?.length ?? 0;
+      const working = activity.state === "working" && activity.accountId === f.acc.id;
+      return `${f.acc.id}:${f.name}:${f.acc.provider}:${av}:${f.stale}:${working}:${it.tagKey}:${winKey(f.short)}:${winKey(f.long)}`;
+    })
+    .join(";");
+  const key = [
+    petSize,
+    hudCount,
+    hudLayout,
+    offline,
+    settings.language ?? "system",
+    settings.workingThreshold,
+    settings.sleepingThreshold,
+    settings.usageDisplay,
+    settings.paceTick,
+    itemsKey,
+  ].join("|");
+  if (key === lastHudKey) return;
+  lastHudKey = key;
+
+  hudCard.classList.toggle("multi", isMulti);
+  hudCard.classList.toggle("horizontal", isMulti && hudLayout === "horizontal");
+  hudCard.classList.toggle("vertical", isMulti && hudLayout !== "horizontal");
+  hudCard.classList.toggle("dense-multi", compactMulti);
+  hudCard.classList.toggle("stale", !isMulti && (offline || !!focus?.stale));
+
+  if (hudItems.length === 0) {
+    hudCard.innerHTML = `
+      <div class="hud-head">
+        <span class="hud-tile claude"><svg><use href="#m-claude" /></svg></span>
+        <span class="hud-name">T3 DeskCat</span>
+      </div>
+      <div class="hud-empty">No accounts</div>
+    `;
+    return;
+  }
+
+  if (!isMulti) {
+    hudCard.innerHTML = renderSingleHudBody(hudItems[0], settings, offline, false);
+    return;
+  }
+
+  hudCard.innerHTML = hudItems
+    .map((item, idx) => {
+      const stale = offline || item.focus.stale;
+      return `<div class="hud-item${stale ? " stale" : ""}" data-hud-idx="${idx}">${renderSingleHudBody(item, settings, offline, compactMulti)}</div>`;
+    })
+    .join("");
 }
 
 // ---- opacity / idle fade
@@ -204,12 +242,15 @@ function scheduleIdle(ms: number) {
 function updateFocus() {
   const snap = currentSnapshot;
   const live = activity.state === "working" || activity.state === "done" || activity.state === "error";
-  focus = focusOf(snap, live ? activity.accountId : null);
+  hudItems = selectHudItems(snap, live ? activity.accountId : null);
+  focus = hudItems[0]?.focus ?? null;
+  if (hoveredIdx >= hudItems.length) hoveredIdx = 0;
 }
 
 function applySnapshot(snap: DashboardSnapshot) {
   currentSnapshot = snap;
   currentMood = snap.mood;
+  setLang(snap.settings.language);
   applyAppearance(snap.settings);
   updateFocus();
   if (bubbleShown) showBubble();
@@ -253,23 +294,27 @@ let bubbleTimer: number | undefined;
 
 function bubbleLines(): string[] {
   const snap = currentSnapshot;
-  const f = focus;
+  const item = hudItems[hoveredIdx] ?? hudItems[0];
+  const f = item?.focus ?? focus;
   if (!snap || !f) return ["No accounts found yet", "Click to open the panel"];
   const s = snap.settings;
   const who = `${providerShort(f.acc.provider)} · ${f.name}`;
   const lines: string[] = [];
-  const t = f.tight;
-  if (t) {
-    const pct = Math.max(0, Math.round(t.remainingPercent));
+  const tWin = f.tight;
+  if (tWin) {
+    const pct = Math.max(0, Math.round(tWin.remainingPercent));
     const tone = toneOf(pct, s, f.acc.id);
-    lines.push(`${tone === "bad" ? "!" : tone === "warn" ? "?" : ""}${who} · ${windowWord(t)} ${pct}% left`);
+    lines.push(`${tone === "bad" ? "!" : tone === "warn" ? "?" : ""}${who} · ${windowWord(tWin)} ${pct}% left`);
   } else {
     lines.push(who);
+  }
+  if (item) {
+    lines.push(`[${t(item.tagKey)}] ${item.reason}`);
   }
   const fc = snap.forecasts?.[f.acc.id];
   if (snap.offline || f.stale) lines.push("?Data may be out of date");
   else if (fc) lines.push(`?Runs out ${whenText(fc.exhaustAt)} at this pace${fc.resetAt ? ` · resets ${whenText(fc.resetAt)}` : ""}`);
-  else if (t?.resetAt) lines.push(`Resets ${whenText(t.resetAt)}`);
+  else if (tWin?.resetAt) lines.push(`Resets ${whenText(tWin.resetAt)}`);
   if (activity.accountId === f.acc.id) {
     if (activity.state === "working") lines.push("Working");
     else if (activity.state === "done") lines.push("Done, waiting for you");
@@ -298,6 +343,17 @@ function applyActivity(next: AgentActivity) {
   }
   if (bubbleShown) showBubble();
 }
+
+rootEl.addEventListener("pointermove", (e) => {
+  const itemEl = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-hud-idx]");
+  if (itemEl) {
+    const idx = Number(itemEl.dataset.hudIdx ?? 0);
+    if (!Number.isNaN(idx) && idx !== hoveredIdx) {
+      hoveredIdx = idx;
+      if (bubbleShown) showBubble();
+    }
+  }
+});
 
 // Hover: show detailed bubble
 rootEl.addEventListener("pointerenter", () => {

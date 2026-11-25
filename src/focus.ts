@@ -1,11 +1,21 @@
-import type { AccountQuota, AppSettings, DashboardSnapshot, ProviderKind, QuotaWindow } from "./types";
+import type {
+  AccountQuota,
+  AppSettings,
+  DashboardSnapshot,
+  Forecast,
+  ProviderKind,
+  QuotaWindow,
+  RankStrategy,
+} from "./types";
 
 /**
- * The one account the pet talks about: the account an agent is working in right
- * now, otherwise the best account to use next, otherwise the tightest one.
+ * Multi-dimensional account selector for the desktop HUD widget.
+ * Mirrors the Rust ranking engine (`src-tauri/src/ranking.rs`) so HUD,
+ * panel recommendations, and `quota_v1.json` follow one transparent model.
  */
 
 export type Tone = "good" | "warn" | "bad";
+export type HudTagKind = "live" | "good" | "waste" | "risk" | "reset" | "pin";
 
 export interface Focus {
   acc: AccountQuota;
@@ -19,9 +29,19 @@ export interface Focus {
   stale: boolean;
 }
 
+export interface HudItem {
+  focus: Focus;
+  /** Short badge key (localized via i18n in HUD). */
+  tagKey: string;
+  tagKind: HudTagKind;
+  /** Human-readable explanation shown in hover bubble. */
+  reason: string;
+}
+
 export function windowSeconds(label: string): number | null {
   if (/(^|\s)5h(\s|$)/.test(label)) return 5 * 3600;
   if (/(^|\s)(Wk|週)(\s|$)/.test(label)) return 7 * 86400;
+  if (/(^|\s)Mo(\s|$)/.test(label)) return 30 * 86400;
   const m = label.match(/(^|\s)(\d+)([hd])(\s|$)/);
   if (m) return Number(m[2]) * (m[3] === "h" ? 3600 : 86400);
   return null;
@@ -52,7 +72,7 @@ export function toneOf(pct: number, s: AppSettings, accId?: string): Tone {
 }
 
 function usable(a: AccountQuota) {
-  return a.status === "ok" || a.status === "stale" || a.status === "cooldown";
+  return a.status === "ok" || a.status === "stale" || (a.status === "expired" && a.primaryWindows.length > 0);
 }
 
 /** Session and weekly windows. Model- or pool-specific windows ("Wk Sonnet",
@@ -71,22 +91,10 @@ export function mainWindows(acc: AccountQuota): { short: QuotaWindow | null; lon
   return { short: pick((l) => l < 2 * 86400), long: pick((l) => l >= 2 * 86400) };
 }
 
-export function focusOf(snap: DashboardSnapshot | null, activeId: string | null): Focus | null {
-  if (!snap) return null;
-  const s = snap.settings;
-  const visible = snap.accounts.filter((a) => !s.accountPrefs?.[a.id]?.hidden);
-  const byId = (id: string | null | undefined) => (id ? visible.find((a) => a.id === id) : undefined);
-  const acc =
-    byId(activeId) ??
-    byId(snap.picks[0]?.accountId) ??
-    visible.filter(usable).sort((a, b) => a.effectiveRemaining - b.effectiveRemaining)[0] ??
-    visible[0];
-  if (!acc) return null;
+function buildFocus(acc: AccountQuota, s: AppSettings): Focus {
   const { short, long } = mainWindows(acc);
   const tight =
     short && long ? (long.remainingPercent < short.remainingPercent ? long : short) : (short ?? long);
-  // Only flag stale on real fetch errors/cooldown/expired or genuinely old cache (>= 15 min),
-  // never on healthy throttled snapshots that have no error.
   const ageSec = acc.updatedAt > 0 ? Math.floor(Date.now() / 1000) - acc.updatedAt : 0;
   const stale =
     acc.status === "expired" ||
@@ -94,6 +102,262 @@ export function focusOf(snap: DashboardSnapshot | null, activeId: string | null)
     acc.status === "cooldown" ||
     (acc.status === "stale" && (!!acc.error || ageSec >= 15 * 60));
   return { acc, name: displayName(acc, s), short, long, tight, stale };
+}
+
+/** Anti-waste pressure matching Rust `ranking::waste_pressure` (weekly 3x weight). */
+function wastePressure(acc: AccountQuota, nowSec: number): { score: number; isWeekly: boolean; resetAt: number | null; pct: number } {
+  const eff = Math.max(0, Math.min(100, acc.effectiveRemaining));
+  if (eff < 10) return { score: 0, isWeekly: false, resetAt: null, pct: eff };
+
+  const { short, long } = mainWindows(acc);
+  let best = { score: 0, isWeekly: false, resetAt: null as number | null, pct: eff };
+
+  if (long?.resetAt && long.resetAt > nowSec) {
+    const dur = windowSeconds(long.label) ?? 7 * 86400;
+    const ratio = Math.max(0.01, Math.min(1, (long.resetAt - nowSec) / dur));
+    const spendable = Math.min(long.remainingPercent, eff);
+    if (spendable >= 10) {
+      const score = (spendable / 100 / ratio) * 3.0;
+      if (score > best.score) best = { score, isWeekly: true, resetAt: long.resetAt, pct: spendable };
+    }
+  }
+
+  if (short?.resetAt && short.resetAt > nowSec && short.resetAt - nowSec <= 2 * 3600) {
+    const dur = windowSeconds(short.label) ?? 5 * 3600;
+    const ratio = Math.max(0.02, Math.min(1, (short.resetAt - nowSec) / dur));
+    const spendable = Math.min(short.remainingPercent, eff);
+    if (spendable >= 15) {
+      const score = spendable / 100 / ratio;
+      if (score > best.score) best = { score, isWeekly: false, resetAt: short.resetAt, pct: spendable };
+    }
+  }
+
+  return best;
+}
+
+function soonestResetTs(acc: AccountQuota, nowSec: number): number | null {
+  const times = acc.primaryWindows
+    .filter((w) => !w.label.includes(" ") && w.resetAt != null && w.resetAt > nowSec)
+    .map((w) => w.resetAt!);
+  return times.length ? Math.min(...times) : null;
+}
+
+function riskTuple(acc: AccountQuota, forecasts: Record<string, Forecast> | undefined, nowSec: number): [number, number, number] {
+  let tier = 0;
+  if (acc.status === "cooldown" || acc.status === "error" || acc.effectiveRemaining === 0) tier = 4;
+  else if (acc.status === "expired") tier = 3;
+  else if (forecasts?.[acc.id]) tier = 2;
+  else if (acc.status === "stale") tier = 1;
+  const fc = forecasts?.[acc.id];
+  const urgency = fc ? 1e12 - Math.max(0, fc.exhaustAt - nowSec) : 0;
+  const low = 100 - Math.max(0, Math.min(100, acc.effectiveRemaining));
+  return [tier, urgency, low];
+}
+
+function compareMostLeftDesc(a: AccountQuota, b: AccountQuota, nowSec: number): number {
+  const aTight = mainWindows(a);
+  const bTight = mainWindows(b);
+  const aBind = aTight.short && aTight.long ? (aTight.long.remainingPercent < aTight.short.remainingPercent ? aTight.long : aTight.short) : (aTight.short ?? aTight.long);
+  const bBind = bTight.short && bTight.long ? (bTight.long.remainingPercent < bTight.short.remainingPercent ? bTight.long : bTight.short) : (bTight.short ?? bTight.long);
+  const aSoon = aBind?.resetAt != null && aBind.resetAt > nowSec && aBind.resetAt - nowSec <= 30 * 60 && a.effectiveRemaining >= 10 ? 1 : 0;
+  const bSoon = bBind?.resetAt != null && bBind.resetAt > nowSec && bBind.resetAt - nowSec <= 30 * 60 && b.effectiveRemaining >= 10 ? 1 : 0;
+  if (bSoon !== aSoon) return bSoon - aSoon;
+  if (b.effectiveRemaining !== a.effectiveRemaining) return b.effectiveRemaining - a.effectiveRemaining;
+  const a5 = aTight.short?.remainingPercent ?? a.effectiveRemaining;
+  const b5 = bTight.short?.remainingPercent ?? b.effectiveRemaining;
+  if (b5 !== a5) return b5 - a5;
+  return a.name.localeCompare(b.name);
+}
+
+function sortByStrategy(
+  pool: AccountQuota[],
+  strategy: RankStrategy,
+  forecasts: Record<string, Forecast> | undefined,
+  nowSec: number,
+): AccountQuota[] {
+  const list = [...pool];
+  if (strategy === "use_before_reset") {
+    list.sort((a, b) => {
+      const wa = wastePressure(a, nowSec);
+      const wb = wastePressure(b, nowSec);
+      if (wb.score !== wa.score) return wb.score - wa.score;
+      return compareMostLeftDesc(a, b, nowSec);
+    });
+  } else if (strategy === "risk_first") {
+    list.sort((a, b) => {
+      const ra = riskTuple(a, forecasts, nowSec);
+      const rb = riskTuple(b, forecasts, nowSec);
+      if (rb[0] !== ra[0]) return rb[0] - ra[0];
+      if (rb[1] !== ra[1]) return rb[1] - ra[1];
+      if (rb[2] !== ra[2]) return rb[2] - ra[2];
+      return a.name.localeCompare(b.name);
+    });
+  } else if (strategy === "soonest_reset") {
+    list.sort((a, b) => {
+      const ra = soonestResetTs(a, nowSec) ?? Number.MAX_SAFE_INTEGER;
+      const rb = soonestResetTs(b, nowSec) ?? Number.MAX_SAFE_INTEGER;
+      if (ra !== rb) return ra - rb;
+      return compareMostLeftDesc(a, b, nowSec);
+    });
+  } else {
+    list.sort((a, b) => compareMostLeftDesc(a, b, nowSec));
+  }
+  return list;
+}
+
+function makeHudItem(
+  acc: AccountQuota,
+  s: AppSettings,
+  strategy: RankStrategy,
+  isActive: boolean,
+  forecasts: Record<string, Forecast> | undefined,
+  nowSec: number,
+): HudItem {
+  const focus = buildFocus(acc, s);
+  if (isActive) {
+    return { focus, tagKey: "使用中", tagKind: "live", reason: "Currently active agent account" };
+  }
+  if (strategy === "pinned") {
+    return { focus, tagKey: "釘選", tagKind: "pin", reason: "Pinned in HUD settings" };
+  }
+  if (strategy === "use_before_reset") {
+    const wp = wastePressure(acc, nowSec);
+    if (wp.score > 0 && wp.resetAt) {
+      return {
+        focus,
+        tagKey: "防浪費",
+        tagKind: "waste",
+        reason: `${wp.isWeekly ? "Weekly" : "5h"} ${wp.pct}% left · resets ${whenText(wp.resetAt)}`,
+      };
+    }
+    return { focus, tagKey: "最充裕", tagKind: "good", reason: "Most remaining quota" };
+  }
+  if (strategy === "risk_first") {
+    const fc = forecasts?.[acc.id];
+    const reason =
+      acc.status === "cooldown"
+        ? "Rate limited (cooldown)"
+        : acc.status === "expired"
+          ? "Credentials expired"
+          : acc.effectiveRemaining === 0
+            ? "Quota exhausted"
+            : fc
+              ? `Runs out ${whenText(fc.exhaustAt)} at current pace`
+              : `Low quota (${acc.effectiveRemaining}% left)`;
+    return { focus, tagKey: "警戒", tagKind: "risk", reason };
+  }
+  if (strategy === "soonest_reset") {
+    const r = soonestResetTs(acc, nowSec);
+    return {
+      focus,
+      tagKey: "快回血",
+      tagKind: "reset",
+      reason: r ? `Resets ${whenText(r)}` : "Next reset soonest",
+    };
+  }
+  // default "most_left"
+  const bind = focus.tight;
+  if (bind?.resetAt && bind.resetAt > nowSec && bind.resetAt - nowSec <= 30 * 60 && acc.effectiveRemaining >= 10) {
+    return { focus, tagKey: "防浪費", tagKind: "waste", reason: `Resets ${whenText(bind.resetAt)} · use before reset` };
+  }
+  return { focus, tagKey: "最充裕", tagKind: "good", reason: "Most remaining quota" };
+}
+
+export function selectHudItems(snap: DashboardSnapshot | null, activeId: string | null): HudItem[] {
+  if (!snap) return [];
+  const s = snap.settings;
+  const visible = snap.accounts.filter((a) => !s.accountPrefs?.[a.id]?.hidden);
+  if (visible.length === 0) return [];
+
+  const count = Math.max(1, Math.min(4, s.hudCount ?? 1));
+  const strategy: RankStrategy = (s.hudStrategy as RankStrategy) ?? "most_left";
+  const scope = s.hudScope === "per_provider" ? "per_provider" : "global";
+  const pinActive = s.hudPinActive !== false;
+  const pinnedIds = s.hudPinnedIds ?? [];
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const out: HudItem[] = [];
+  const taken = new Set<string>();
+
+  if (pinActive && activeId) {
+    const activeAcc = visible.find((a) => a.id === activeId);
+    if (activeAcc) {
+      out.push(makeHudItem(activeAcc, s, strategy, true, snap.forecasts, nowSec));
+      taken.add(activeAcc.id);
+      if (out.length >= count) return out;
+    }
+  }
+
+  if (strategy === "pinned") {
+    for (const pid of pinnedIds) {
+      if (taken.has(pid)) continue;
+      const found = visible.find((a) => a.id === pid);
+      if (found) {
+        out.push(makeHudItem(found, s, "pinned", false, snap.forecasts, nowSec));
+        taken.add(found.id);
+        if (out.length >= count) return out;
+      }
+    }
+    if (out.length > 0) return out;
+  }
+
+  const effStrategy: RankStrategy = strategy === "pinned" ? "most_left" : strategy;
+  const eligible = (a: AccountQuota) => {
+    if (taken.has(a.id)) return false;
+    if (effStrategy === "risk_first") return true;
+    if (effStrategy === "soonest_reset") return usable(a) || a.status === "cooldown";
+    return usable(a) && a.effectiveRemaining > 0;
+  };
+
+  const preferLive = (list: AccountQuota[]) => {
+    if (effStrategy === "most_left" || effStrategy === "use_before_reset") {
+      const live = list.filter((a) => a.status !== "expired");
+      return live.length ? live : list;
+    }
+    return list;
+  };
+
+  if (scope === "per_provider") {
+    const providers: ProviderKind[] = ["claude", "antigravity", "codex"];
+    // If slot 0 was taken by an active account, rotate other providers first so multi-HUD shows diverse providers.
+    const activeProv = out[0]?.focus.acc.provider;
+    const orderedProvs = activeProv
+      ? [...providers.filter((p) => p !== activeProv), activeProv]
+      : providers;
+    const queues = orderedProvs
+      .map((p) => sortByStrategy(preferLive(visible.filter((a) => a.provider === p && eligible(a))), effStrategy, snap.forecasts, nowSec))
+      .filter((q) => q.length > 0);
+    let idx = 0;
+    while (out.length < count && queues.some((q) => q.length > 0)) {
+      const q = queues[idx % queues.length];
+      idx++;
+      const next = q.shift();
+      if (!next || taken.has(next.id)) continue;
+      out.push(makeHudItem(next, s, effStrategy, false, snap.forecasts, nowSec));
+      taken.add(next.id);
+    }
+  } else {
+    const ranked = sortByStrategy(preferLive(visible.filter(eligible)), effStrategy, snap.forecasts, nowSec);
+    for (const acc of ranked) {
+      if (out.length >= count) break;
+      out.push(makeHudItem(acc, s, effStrategy, false, snap.forecasts, nowSec));
+      taken.add(acc.id);
+    }
+  }
+
+  // Last-resort fallback if every account is exhausted/error under a positive strategy.
+  if (out.length === 0) {
+    const fallback = visible.find((a) => !taken.has(a.id));
+    if (fallback) {
+      out.push(makeHudItem(fallback, s, "risk_first", false, snap.forecasts, nowSec));
+    }
+  }
+
+  return out;
+}
+
+export function focusOf(snap: DashboardSnapshot | null, activeId: string | null): Focus | null {
+  return selectHudItems(snap, activeId)[0]?.focus ?? null;
 }
 
 /** "19:40", "Tomorrow 09:10", "Thu 10:00", "Nov 28 09:10". */

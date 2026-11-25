@@ -68,6 +68,23 @@ const valSweatRange = $("val-sweat-range");
 const inpNotify = $<HTMLInputElement>("inp-notify");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
+const btnPicksStrategy = $<HTMLButtonElement>("btn-picks-strategy");
+const picksOptions = $("picks-options");
+const selPicksStrategy = $<HTMLSelectElement>("sel-picks-strategy");
+const rowPicksScope = $("row-picks-scope");
+const lblPicksCount = $("lbl-picks-count");
+const inpPicksPinActive = $<HTMLInputElement>("inp-picks-pin-active");
+const picksPinnedWrap = $("picks-pinned-wrap");
+const picksPinnedList = $("picks-pinned-list");
+const picksHint = $("picks-hint");
+const hudOptions = $("hud-options");
+const rowHudLayout = $("row-hud-layout");
+const rowHudScope = $("row-hud-scope");
+const selHudStrategy = $<HTMLSelectElement>("sel-hud-strategy");
+const inpHudPinActive = $<HTMLInputElement>("inp-hud-pin-active");
+const hudPinnedWrap = $("hud-pinned-wrap");
+const hudPinnedList = $("hud-pinned-list");
+const hudHint = $("hud-hint");
 const inpShowPet = $<HTMLInputElement>("inp-show-pet");
 const petOptions = $("pet-options");
 const segControls = Array.from(document.querySelectorAll<HTMLElement>(".segmented[data-key]"));
@@ -763,20 +780,55 @@ function localizePickReason(reason: string): string {
     .replace(/\bMo\b/g, t("每月"));
 }
 
+function strategyShortLabel(st: string | undefined): string {
+  switch (st) {
+    case "use_before_reset":
+      return t("防浪費");
+    case "risk_first":
+      return t("警戒");
+    case "soonest_reset":
+      return t("快回血");
+    case "pinned":
+      return t("已釘選");
+    default:
+      return t("最充裕");
+  }
+}
+
+function strategyHintText(st: string | undefined): string {
+  switch (st) {
+    case "use_before_reset":
+      return t("優先挑出重設前可能用不完的帳號（優先保護週額度）");
+    case "risk_first":
+      return t("優先浮出快見底、預計提前用完或異常冷卻的帳號以便避開");
+    case "soonest_reset":
+      return t("依下次重設倒數由短到長排列，方便掌握誰最快恢復額度");
+    case "pinned":
+      return t("只顯示下方手動勾選的帳號，順序固定不跳動");
+    default:
+      return t("優先顯示剩餘額度最充裕的帳號（30 分鐘內將重設且剩餘 >= 10% 者提前）");
+  }
+}
+
 function renderPicks(snap: DashboardSnapshot) {
   const secPicks = $("sec-picks");
+  const strategy = snap.settings.picksStrategy ?? "most_left";
+  const isRisk = strategy === "risk_first";
+  btnPicksStrategy.textContent = `${strategyShortLabel(strategy)} ▾`;
   secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
   if (panelLayout() === "dense") {
-    picksSection.className = "picks-grid";
+    picksSection.className = `picks-grid${snap.picks.length === 1 ? " single" : ""}`;
     picksSection.innerHTML = snap.picks
       .map((pick) => {
         const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
         const reason = localizePickReason(pick.reason);
         const sub = pick.note ? pick.note : reason;
+        const badge = pick.tag ? t(pick.tag) : t("首選");
+        const cardCls = isRisk ? "pick-risk" : pick.useBeforeReset ? "pick-soon" : "";
         return `
-        <div class="pick-card ${pick.useBeforeReset ? "pick-soon" : ""}" title="${escapeHtml(reason + reset)}">
+        <div class="pick-card ${cardCls}" title="${escapeHtml(reason + reset)}">
           <div class="pick-card-top">
-            <span class="pick-tag ${pick.provider}">${providerBadgeLabel(pick.provider)} ${t("首選")}</span>
+            <span class="pick-tag ${pick.provider}">${providerBadgeLabel(pick.provider)} · ${escapeHtml(badge)}</span>
             <span class="pick-card-pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}">${t("剩 {p}%", { p: pick.effectiveRemaining })}</span>
           </div>
           <div class="pick-card-name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</div>
@@ -792,9 +844,11 @@ function renderPicks(snap: DashboardSnapshot) {
     .map((pick) => {
       const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
       const reason = localizePickReason(pick.reason);
-      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(reason)}`;
+      const badge = pick.tag ? t(pick.tag) : t("首選");
+      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(badge)} · ${escapeHtml(reason)}`;
+      const rowCls = isRisk ? "pick-risk" : pick.useBeforeReset ? "pick-soon" : "";
       return `
-      <div class="row ${pick.useBeforeReset ? "pick-soon" : ""}">
+      <div class="row ${rowCls}">
         ${avatarHtml(pick.accountId, pick.provider)}
         <div class="row-main">
           <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
@@ -910,6 +964,32 @@ function syncSettingsForm(s: AppSettings) {
   if (currentSnapshot) renderAccountSettings(currentSnapshot.accounts);
 
   inpShowPicks.checked = s.showPicks !== false;
+  const showPicks = s.showPicks !== false;
+  picksOptions.classList.toggle("hidden", !showPicks);
+  const pStrategy = s.picksStrategy ?? "most_left";
+  const pScope = s.picksScope ?? "per_provider";
+  if (document.activeElement !== selPicksStrategy) selPicksStrategy.value = pStrategy;
+  rowPicksScope.classList.toggle("hidden", pStrategy === "pinned");
+  lblPicksCount.textContent = pScope === "per_provider" && pStrategy !== "pinned" ? t("每家顯示") : t("顯示數量");
+  inpPicksPinActive.checked = s.picksPinActive === true;
+  picksPinnedWrap.classList.toggle("hidden", pStrategy !== "pinned");
+  picksHint.textContent = showPicks ? strategyHintText(pStrategy) : "";
+  if (currentSnapshot && pStrategy === "pinned") {
+    renderPinnedPicker(picksPinnedList, currentSnapshot.accounts, s.picksPinnedIds ?? [], "picksPinnedIds");
+  }
+
+  hudOptions.classList.toggle("hidden", activeTheme !== "hud_gauge");
+  const hCount = Math.max(1, Math.min(4, s.hudCount ?? 1));
+  const hStrategy = s.hudStrategy ?? "most_left";
+  rowHudLayout.classList.toggle("hidden", hCount < 2);
+  rowHudScope.classList.toggle("hidden", hCount < 2 || hStrategy === "pinned");
+  if (document.activeElement !== selHudStrategy) selHudStrategy.value = hStrategy;
+  inpHudPinActive.checked = s.hudPinActive !== false;
+  hudPinnedWrap.classList.toggle("hidden", hStrategy !== "pinned");
+  hudHint.textContent = strategyHintText(hStrategy);
+  if (currentSnapshot && hStrategy === "pinned") {
+    renderPinnedPicker(hudPinnedList, currentSnapshot.accounts, s.hudPinnedIds ?? [], "hudPinnedIds");
+  }
 
   segControls.forEach((seg) => {
     const key = seg.dataset.key as keyof AppSettings;
@@ -1337,6 +1417,59 @@ segControls.forEach((seg) => {
 });
 
 inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
+btnPicksStrategy.addEventListener("click", () => {
+  const s = cfg();
+  const hasPinned = (s.picksPinnedIds?.length ?? 0) > 0;
+  const order: Array<NonNullable<AppSettings["picksStrategy"]>> = hasPinned
+    ? ["most_left", "use_before_reset", "risk_first", "soonest_reset", "pinned"]
+    : ["most_left", "use_before_reset", "risk_first", "soonest_reset"];
+  const cur = s.picksStrategy ?? "most_left";
+  const next = order[(order.indexOf(cur) + 1) % order.length];
+  commitSettings({ picksStrategy: next }, true);
+});
+selPicksStrategy.addEventListener("change", () =>
+  commitSettings({ picksStrategy: selPicksStrategy.value as AppSettings["picksStrategy"] }, true),
+);
+inpPicksPinActive.addEventListener("change", () =>
+  commitSettings({ picksPinActive: inpPicksPinActive.checked }, true),
+);
+selHudStrategy.addEventListener("change", () =>
+  commitSettings({ hudStrategy: selHudStrategy.value as AppSettings["hudStrategy"] }, true),
+);
+inpHudPinActive.addEventListener("change", () =>
+  commitSettings({ hudPinActive: inpHudPinActive.checked }, true),
+);
+
+function renderPinnedPicker(
+  container: HTMLElement,
+  accounts: AccountQuota[],
+  selectedIds: string[],
+  settingKey: "picksPinnedIds" | "hudPinnedIds",
+) {
+  const visible = accounts.filter((a) => !prefOf(a.id).hidden);
+  const selected = new Set(selectedIds);
+  const sig = visible.map((a) => `${a.id}:${displayName(a)}:${selected.has(a.id) ? 1 : 0}`).join("|");
+  if (container.dataset.sig === sig) return;
+  container.dataset.sig = sig;
+  container.innerHTML = visible
+    .map((a) => {
+      const on = selected.has(a.id);
+      return `<button type="button" class="pin-chip${on ? " active" : ""}" data-pin-id="${escapeHtml(a.id)}"><i class="pin-chip-dot ${a.provider}"></i><span>${escapeHtml(displayName(a))}</span></button>`;
+    })
+    .join("");
+  container.querySelectorAll<HTMLButtonElement>(".pin-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.pinId;
+      if (!id) return;
+      const curList = [...(cfg()[settingKey] ?? [])];
+      const idx = curList.indexOf(id);
+      if (idx >= 0) curList.splice(idx, 1);
+      else curList.push(id);
+      commitSettings({ [settingKey]: curList } as Partial<AppSettings>, true);
+    });
+  });
+}
+
 inpShowPet.addEventListener("change", () => commitSettings({ showPet: inpShowPet.checked }, true));
 
 segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((btn) => {

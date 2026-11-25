@@ -177,8 +177,122 @@ body {
 }
 
 .hud-card.stale .hud-name,
-.hud-card.stale .hud-val {
+.hud-card.stale .hud-val,
+.hud-item.stale .hud-name,
+.hud-item.stale .hud-val {
   opacity: 0.78;
+}
+
+/* Multi-account HUD shell (vertical stack or horizontal bar) */
+.hud-card.multi {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0;
+  gap: calc(5px * var(--s));
+  overflow: visible;
+}
+
+.hud-card.multi.vertical {
+  flex-direction: column;
+}
+
+.hud-card.multi.horizontal {
+  flex-direction: row;
+}
+
+.hud-item {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  border-radius: calc(10px * var(--s));
+  padding: calc(6px * var(--s)) calc(9px * var(--s)) calc(7px * var(--s));
+  background: linear-gradient(180deg, rgba(24, 27, 34, 0.96) 0%, var(--hud-bg) 100%);
+  border: 1px solid var(--hud-border);
+  box-shadow: var(--hud-shadow), inset 0 1px 0 var(--hud-inset);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  transition: border-color 0.16s var(--ease);
+}
+
+.hud-item:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+:root[data-theme="light"] .hud-item {
+  background: var(--hud-bg);
+}
+
+:root[data-theme="light"] .hud-item:hover {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hud-item {
+    background: var(--hud-bg);
+  }
+  :root:not([data-theme="dark"]) .hud-item:hover {
+    border-color: rgba(15, 23, 42, 0.22);
+  }
+}
+
+.hud-card.dense-multi .hud-item {
+  padding: calc(5px * var(--s)) calc(9px * var(--s));
+}
+
+/* Tiny semantic pill explaining why this account is displayed */
+.hud-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3px * var(--s));
+  font-size: calc(8.5px * var(--s));
+  font-weight: 600;
+  line-height: 1;
+  padding: calc(2.5px * var(--s)) calc(5px * var(--s));
+  border-radius: 99px;
+  color: var(--label-2);
+  background: var(--fill);
+  white-space: nowrap;
+}
+
+.hud-pill.live {
+  color: var(--good-ink);
+  background: color-mix(in srgb, var(--good-ink) 14%, transparent);
+}
+
+.hud-pdot {
+  width: calc(4.5px * var(--s));
+  height: calc(4.5px * var(--s));
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.hud-pill.good {
+  color: var(--good-ink);
+  background: color-mix(in srgb, var(--good-ink) 12%, transparent);
+}
+
+.hud-pill.waste {
+  color: var(--warn-ink);
+  background: color-mix(in srgb, var(--warn-ink) 14%, transparent);
+}
+
+.hud-pill.risk {
+  color: var(--bad-ink);
+  background: color-mix(in srgb, var(--bad-ink) 14%, transparent);
+}
+
+.hud-pill.reset {
+  color: var(--ag);
+  background: color-mix(in srgb, var(--ag) 14%, transparent);
+}
+
+.hud-pill.pin {
+  color: var(--label-2);
+  background: var(--fill);
 }
 
 .hud-status-dot {

@@ -85,6 +85,29 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.tray_style.as_str(), "number" | "ring" | "icon") {
         s.tray_style = "number".to_string();
     }
+    if !crate::ranking::STRATEGIES.contains(&s.picks_strategy.as_str()) {
+        s.picks_strategy = "most_left".to_string();
+    }
+    if !crate::ranking::SCOPES.contains(&s.picks_scope.as_str()) {
+        s.picks_scope = "per_provider".to_string();
+    }
+    s.picks_count = s.picks_count.clamp(1, 4);
+    s.hud_count = s.hud_count.clamp(1, 4);
+    if !matches!(s.hud_layout.as_str(), "vertical" | "horizontal") {
+        s.hud_layout = "vertical".to_string();
+    }
+    if !crate::ranking::STRATEGIES.contains(&s.hud_strategy.as_str()) {
+        s.hud_strategy = "most_left".to_string();
+    }
+    if !crate::ranking::SCOPES.contains(&s.hud_scope.as_str()) {
+        s.hud_scope = "global".to_string();
+    }
+    {
+        let mut seen_p = std::collections::HashSet::new();
+        s.picks_pinned_ids.retain(|id| !id.trim().is_empty() && seen_p.insert(id.clone()));
+        let mut seen_h = std::collections::HashSet::new();
+        s.hud_pinned_ids.retain(|id| !id.trim().is_empty() && seen_h.insert(id.clone()));
+    }
     for p in s.account_prefs.values_mut() {
         if let Some(a) = p.alias.as_mut() {
             *a = a.trim().chars().take(40).collect();

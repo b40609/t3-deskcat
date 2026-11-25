@@ -11,6 +11,7 @@ mod notify_state;
 mod providers;
 mod quota_cache;
 mod quota_contract;
+mod ranking;
 mod settings;
 mod support;
 mod tray_icon;
@@ -18,8 +19,8 @@ mod usage_stats;
 
 use crate::discovery::{discover_accounts, DiscoveredAccount};
 use crate::models::{
-    AccountQuota, AppSettings, CatMood, DashboardSnapshot, PetTheme, ProviderKind, QuotaWindow,
-    ScoreMode, SmartPick,
+    AccountQuota, AppSettings, CatMood, DashboardSnapshot, PetTheme, ProviderKind, ScoreMode,
+    SmartPick,
 };
 use crate::providers::{
     antigravity::fetch_antigravity_quota,
@@ -276,6 +277,12 @@ async fn remote_invoke(
             next.panel_height = cur.panel_height;
             next.pet_x = cur.pet_x;
             next.pet_y = cur.pet_y;
+            next.hud_count = cur.hud_count;
+            next.hud_layout = cur.hud_layout.clone();
+            next.hud_strategy = cur.hud_strategy.clone();
+            next.hud_scope = cur.hud_scope.clone();
+            next.hud_pin_active = cur.hud_pin_active;
+            next.hud_pinned_ids = cur.hud_pinned_ids.clone();
             next.extra_account_dirs = cur.extra_account_dirs.clone();
             next.mobile_enabled = cur.mobile_enabled;
             next.mobile_port = cur.mobile_port;
@@ -435,6 +442,8 @@ fn update_settings(
     let new_pet_size;
     let new_pet_theme;
     let new_show_pet;
+    let new_hud_count;
+    let new_hud_layout;
     let mut updated_snapshot;
     {
         let mut guard = state.0.lock().map_err(|_| "State poisoned".to_string())?;
@@ -470,6 +479,8 @@ fn update_settings(
         new_pet_size = clean.pet_size;
         new_pet_theme = clean.pet_theme.clone();
         new_show_pet = clean.show_pet;
+        new_hud_count = clean.hud_count;
+        new_hud_layout = clean.hud_layout.clone();
         new_startup = clean.launch_at_startup;
         new_hotkey = clean.hotkey.clone();
         new_panel_position = clean.panel_position.clone();
@@ -491,7 +502,8 @@ fn update_settings(
     }
 
     if let Some(pet) = app.get_webview_window("pet") {
-        let (pet_w, pet_h) = pet_window_dimensions(&new_pet_theme, new_pet_size);
+        let (pet_w, pet_h) =
+            pet_window_dimensions_for(&new_pet_theme, new_pet_size, new_hud_count, &new_hud_layout);
         let _ = pet.set_size(Size::Logical(LogicalSize::new(pet_w, pet_h)));
         clamp_pet_inside_monitor(&pet);
         if new_show_pet {
@@ -1775,7 +1787,19 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
         .cloned()
         .collect();
     let offline = !visible.is_empty() && !visible.iter().any(is_live);
-    let picks = compute_picks(&visible, Utc::now().timestamp());
+    let act = activity::get();
+    let active_id = matches!(act.state, "working" | "done" | "error")
+        .then_some(act.account_id.as_deref())
+        .flatten();
+    let rank_cfg = ranking::RankConfig {
+        strategy: &settings.picks_strategy,
+        scope: &settings.picks_scope,
+        count: settings.picks_count as usize,
+        pin_active: settings.picks_pin_active,
+        active_id,
+        pinned_ids: &settings.picks_pinned_ids,
+    };
+    let picks = ranking::compute_ranked_picks(&visible, &snap.forecasts, &rank_cfg, Utc::now().timestamp());
     let mut tooltip = format_tooltip(&picks, &visible);
     if offline {
         tooltip = tr!("暫時抓不到最新額度｜{tooltip}", tooltip = tooltip);
@@ -1814,112 +1838,17 @@ fn is_live(a: &AccountQuota) -> bool {
     a.status == "ok" || (a.status == "stale" && a.error.is_none())
 }
 
-/// A limit that resets within this long, with at least this much left, is
-/// recommended first: whatever is left would be lost at the reset anyway.
-const RESET_SOON_SECS: i64 = 30 * 60;
-const RESET_SOON_MIN_LEFT: i32 = 10;
-
-/// The limit currently capping the account (model-specific windows excluded).
-fn binding_window(acc: &AccountQuota) -> Option<&QuotaWindow> {
-    acc.primary_windows
-        .iter()
-        .filter(|w| !w.label.contains(' '))
-        .min_by_key(|w| w.remaining_percent)
-}
-
-fn resets_soon(acc: &AccountQuota, now: i64) -> Option<i64> {
-    let r = binding_window(acc)?.reset_at?;
-    (r > now && r - now <= RESET_SOON_SECS && acc.effective_remaining >= RESET_SOON_MIN_LEFT)
-        .then_some(r)
-}
-
+#[cfg_attr(not(test), allow(dead_code))]
 fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
-    let mut picks = Vec::new();
-    for provider in [ProviderKind::Claude, ProviderKind::Antigravity] {
-        let all_usable: Vec<&AccountQuota> = accounts
-            .iter()
-            .filter(|a| a.provider == provider && is_usable(a) && a.effective_remaining > 0)
-            .collect();
-        if all_usable.is_empty() {
-            continue;
-        }
-        // Never let expired cached snapshots crowd out ready-to-use active accounts;
-        // only fall back to expired last-known entries when every account for this provider expired.
-        let active: Vec<&AccountQuota> = all_usable
-            .iter()
-            .copied()
-            .filter(|a| a.status != "expired")
-            .collect();
-        let candidates = if active.is_empty() { all_usable } else { active };
-
-        let soon = candidates
-            .iter()
-            .filter_map(|a| resets_soon(a, now).map(|r| (*a, r)))
-            .max_by(|(a, _), (b, _)| compare_accounts(a, b));
-        let (best, use_before_reset) = match soon {
-            Some((a, _)) => (a, true),
-            None => (
-                candidates.iter().copied().max_by(|a, b| compare_accounts(a, b)).unwrap(),
-                false,
-            ),
-        };
-
-        let reset_at = binding_window(best).and_then(|w| w.reset_at).filter(|r| *r > now);
-        let reason = if use_before_reset {
-            let mins = ((reset_at.unwrap_or(now) - now) + 59) / 60;
-            tr!("{n} 分鐘後重設，建議優先使用", n = mins.max(1))
-        } else {
-            build_pick_reason(best)
-        };
-        let note = (best.status == "expired")
-            .then(|| tr!("最後已知額度（憑證過期，切換過去用一次就會更新）"));
-        picks.push(SmartPick {
-            provider,
-            account_id: best.id.clone(),
-            account_name: best.name.clone(),
-            effective_remaining: best.effective_remaining,
-            reason,
-            reset_at,
-            use_before_reset,
-            note,
-        });
-    }
-    picks
-}
-
-fn compare_accounts(a: &AccountQuota, b: &AccountQuota) -> std::cmp::Ordering {
-    let a_eff = a.effective_remaining;
-    let b_eff = b.effective_remaining;
-    if a_eff != b_eff {
-        return a_eff.cmp(&b_eff);
-    }
-    let a_5h = window_percent(a, "5h");
-    let b_5h = window_percent(b, "5h");
-    if a_5h != b_5h {
-        return a_5h.cmp(&b_5h);
-    }
-    let a_wk = window_percent(a, "Wk");
-    let b_wk = window_percent(b, "Wk");
-    a_wk.cmp(&b_wk)
-}
-
-fn window_percent(acc: &AccountQuota, label: &str) -> i32 {
-    acc.primary_windows
-        .iter()
-        .find(|w| w.label == label)
-        .map(|w| w.remaining_percent)
-        .unwrap_or(acc.effective_remaining)
-}
-
-fn build_pick_reason(acc: &AccountQuota) -> String {
-    if acc.primary_windows.is_empty() {
-        return tr!("剩餘 {n}%", n = acc.effective_remaining);
-    }
-    acc.primary_windows
-        .iter()
-        .map(|w| format!("{} {}%", w.label, w.remaining_percent))
-        .collect::<Vec<_>>()
-        .join(" · ")
+    let cfg = ranking::RankConfig {
+        strategy: "most_left",
+        scope: "per_provider",
+        count: 1,
+        pin_active: false,
+        active_id: None,
+        pinned_ids: &[],
+    };
+    ranking::compute_ranked_picks(accounts, &HashMap::new(), &cfg, now)
 }
 
 fn format_tooltip(picks: &[SmartPick], accounts: &[AccountQuota]) -> String {
@@ -2062,11 +1991,36 @@ fn hud_card_scale(pet_size: u32) -> f64 {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn pet_window_dimensions(theme: &PetTheme, pet_size: u32) -> (f64, f64) {
+    pet_window_dimensions_for(theme, pet_size, 1, "vertical")
+}
+
+fn pet_window_dimensions_for(
+    theme: &PetTheme,
+    pet_size: u32,
+    hud_count: u32,
+    hud_layout: &str,
+) -> (f64, f64) {
     match theme {
         PetTheme::HudGauge => {
             let s = hud_card_scale(pet_size);
-            ((178.0 * s).round(), (64.0 * s).round())
+            let n = hud_count.clamp(1, 4) as f64;
+            if n <= 1.0 {
+                return ((178.0 * s).round(), (64.0 * s).round());
+            }
+            let gap = (5.0 * s).round();
+            if hud_layout == "horizontal" {
+                let card_w = (if hud_count == 2 { 164.0 } else { 152.0 } * s).round();
+                let total_w = card_w * n + gap * (n - 1.0) + 6.0;
+                let total_h = (64.0 * s).round();
+                (total_w, total_h)
+            } else {
+                let card_w = (184.0 * s).round();
+                let card_h = (if hud_count >= 3 { 54.0 } else { 58.0 } * s).round();
+                let total_h = card_h * n + gap * (n - 1.0) + 6.0;
+                (card_w, total_h)
+            }
         }
         _ => {
             let h = pet_size as f64;
@@ -2103,7 +2057,7 @@ fn position_pet_initial(app: &AppHandle, cfg: &AppSettings) {
     let Some(pet) = app.get_webview_window("pet") else {
         return;
     };
-    let (pet_w, pet_h) = pet_window_dimensions(&cfg.pet_theme, cfg.pet_size);
+    let (pet_w, pet_h) = pet_window_dimensions_for(&cfg.pet_theme, cfg.pet_size, cfg.hud_count, &cfg.hud_layout);
     let _ = pet.set_size(Size::Logical(LogicalSize::new(pet_w, pet_h)));
 
     if let (Some(x), Some(y)) = (cfg.pet_x, cfg.pet_y) {
@@ -2809,6 +2763,11 @@ mod tests {
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 64), (178.0, 64.0));
         assert_eq!(pet_window_dimensions(&PetTheme::HudGauge, 128), (217.0, 78.0));
         assert_eq!(pet_window_dimensions(&PetTheme::Custom, 64), (64.0, 64.0));
+        // Multi-account vertical & horizontal layouts scale cleanly.
+        let (vw, vh) = pet_window_dimensions_for(&PetTheme::HudGauge, 64, 2, "vertical");
+        assert!(vw >= 178.0 && vh > 100.0);
+        let (hw, hh) = pet_window_dimensions_for(&PetTheme::HudGauge, 64, 2, "horizontal");
+        assert!(hw > 300.0 && hh == 64.0);
     }
 
     #[test]
@@ -2868,12 +2827,13 @@ mod tests {
         ];
 
         let picks = compute_picks(&accounts, 0);
-        assert_eq!(picks.len(), 2);
+        assert_eq!(picks.len(), 3);
         assert_eq!(picks[0].account_name, "Beta");
         assert_eq!(picks[1].account_name, "Delta");
+        assert_eq!(picks[2].account_name, "Codex");
 
         let tip = format_tooltip(&picks, &accounts);
-        assert_eq!(tip, "Claude: Beta 94%｜AG: Delta 88%");
+        assert_eq!(tip, "Claude: Beta 94%｜AG: Delta 88%｜ChatGPT: Codex 90%");
     }
 
     #[test]

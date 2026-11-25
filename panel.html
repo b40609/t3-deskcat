@@ -59,7 +59,10 @@
             <div id="accounts-alert" class="notice notice-bad hidden"></div>
 
             <section id="sec-picks" class="group">
-              <div class="group-header" data-i18n>推薦使用</div>
+              <div class="group-header picks-header">
+                <span data-i18n>推薦使用</span>
+                <button id="btn-picks-strategy" class="picks-mode-btn" type="button" title="點擊切換推薦排序策略" data-i18n-attr="title"></button>
+              </div>
               <div class="list" id="picks-section"></div>
             </section>
 
@@ -270,6 +273,48 @@
                     <span><span data-i18n>推薦使用</span><small class="row-hint" data-i18n>在最上方列出現在最適合用的帳號</small></span>
                     <input id="inp-show-picks" class="switch" type="checkbox" checked />
                   </label>
+                  <div id="picks-options">
+                    <div class="row">
+                      <span data-i18n>推薦排序</span>
+                      <select id="sel-picks-strategy" class="select">
+                        <option value="most_left" data-i18n>額度最充裕</option>
+                        <option value="use_before_reset" data-i18n>防浪費（週額度優先）</option>
+                        <option value="risk_first" data-i18n>警戒避開（最低優先）</option>
+                        <option value="soonest_reset" data-i18n>最快重設回血</option>
+                        <option value="pinned" data-i18n>手動釘選</option>
+                      </select>
+                    </div>
+                    <div class="row" id="row-picks-scope">
+                      <span data-i18n>挑選範圍</span>
+                      <div class="segmented" data-key="picksScope">
+                        <button data-value="per_provider" class="seg-btn" data-i18n>各供應商</button>
+                        <button data-value="global" class="seg-btn" data-i18n>全部混排</button>
+                      </div>
+                    </div>
+                    <div class="row">
+                      <span id="lbl-picks-count" data-i18n>顯示數量</span>
+                      <div class="segmented" data-key="picksCount" data-number>
+                        <button data-value="1" class="seg-btn">1</button>
+                        <button data-value="2" class="seg-btn">2</button>
+                        <button data-value="3" class="seg-btn">3</button>
+                        <button data-value="4" class="seg-btn">4</button>
+                      </div>
+                    </div>
+                    <label class="row">
+                      <span><span data-i18n>置頂使用中帳號</span><small class="row-hint" data-i18n>有代理執行時排在第 1 位</small></span>
+                      <input id="inp-picks-pin-active" class="switch" type="checkbox" />
+                    </label>
+                    <div class="row row-col hidden" id="picks-pinned-wrap">
+                      <span class="row-sub-title" data-i18n>勾選要固定顯示的帳號</span>
+                      <div class="pinned-chips" id="picks-pinned-list"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="group-footer" id="picks-hint"></div>
+              </section>
+
+              <section class="group">
+                <div class="list">
                   <label class="row">
                     <span><span data-i18n>用完預測</span><small class="row-hint" data-i18n>照目前速度會在重設前用完時提醒</small></span>
                     <input id="inp-show-forecast" class="switch" type="checkbox" checked />
@@ -376,6 +421,54 @@
                     </div>
                     <button id="btn-clear-custom" class="row row-button destructive" data-i18n>清除自訂圖片</button>
                   </div>
+                </section>
+
+                <section class="group" id="hud-options">
+                  <div class="group-header" data-i18n>桌面卡片顯示</div>
+                  <div class="list">
+                    <div class="row">
+                      <span data-i18n>同時顯示帳號</span>
+                      <div class="segmented" data-key="hudCount" data-number>
+                        <button data-value="1" class="seg-btn">1</button>
+                        <button data-value="2" class="seg-btn">2</button>
+                        <button data-value="3" class="seg-btn">3</button>
+                        <button data-value="4" class="seg-btn">4</button>
+                      </div>
+                    </div>
+                    <div class="row hidden" id="row-hud-layout">
+                      <span data-i18n>排列方向</span>
+                      <div class="segmented" data-key="hudLayout">
+                        <button data-value="vertical" class="seg-btn" data-i18n>直排</button>
+                        <button data-value="horizontal" class="seg-btn" data-i18n>橫排</button>
+                      </div>
+                    </div>
+                    <div class="row">
+                      <span data-i18n>顯示排序</span>
+                      <select id="sel-hud-strategy" class="select">
+                        <option value="most_left" data-i18n>額度最充裕</option>
+                        <option value="use_before_reset" data-i18n>防浪費（週額度優先）</option>
+                        <option value="risk_first" data-i18n>警戒避開（最低優先）</option>
+                        <option value="soonest_reset" data-i18n>最快重設回血</option>
+                        <option value="pinned" data-i18n>手動釘選</option>
+                      </select>
+                    </div>
+                    <div class="row hidden" id="row-hud-scope">
+                      <span data-i18n>挑選範圍</span>
+                      <div class="segmented" data-key="hudScope">
+                        <button data-value="global" class="seg-btn" data-i18n>全部混排</button>
+                        <button data-value="per_provider" class="seg-btn" data-i18n>各供應商</button>
+                      </div>
+                    </div>
+                    <label class="row">
+                      <span><span data-i18n>優先顯示使用中帳號</span><small class="row-hint" data-i18n>有代理執行時置頂在第 1 格</small></span>
+                      <input id="inp-hud-pin-active" class="switch" type="checkbox" checked />
+                    </label>
+                    <div class="row row-col hidden" id="hud-pinned-wrap">
+                      <span class="row-sub-title" data-i18n>勾選要固定顯示的帳號</span>
+                      <div class="pinned-chips" id="hud-pinned-list"></div>
+                    </div>
+                  </div>
+                  <div class="group-footer" id="hud-hint"></div>
                 </section>
 
                 <section class="group">

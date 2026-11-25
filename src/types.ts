@@ -21,12 +21,18 @@ export interface AccountQuota {
   updatedAt: number;
 }
 
+export type RankStrategy = "most_left" | "use_before_reset" | "risk_first" | "soonest_reset" | "pinned";
+export type RankScope = "per_provider" | "global";
+export type HudLayout = "vertical" | "horizontal";
+
 export interface SmartPick {
   provider: ProviderKind;
   accountId: string;
   accountName: string;
   effectiveRemaining: number;
   reason: string;
+  /** Short semantic badge explaining why this account was surfaced. */
+  tag?: string;
   /** Reset of the account's tightest limit. */
   resetAt?: number | null;
   /** Tightest limit resets soon with quota left: use it first. */
@@ -97,6 +103,17 @@ export interface AppSettings {
   /** UI language; "system" follows Windows. */
   language?: "system" | "en" | "zh-TW" | "zh-CN" | "ja" | "ko";
   showPicks?: boolean;
+  picksStrategy?: RankStrategy;
+  picksScope?: RankScope;
+  picksCount?: number;
+  picksPinActive?: boolean;
+  picksPinnedIds?: string[];
+  hudCount?: number;
+  hudLayout?: HudLayout;
+  hudStrategy?: RankStrategy;
+  hudScope?: RankScope;
+  hudPinActive?: boolean;
+  hudPinnedIds?: string[];
   petEffects?: boolean;
   // accounts
   accountPrefs?: Record<string, AccountPref>;

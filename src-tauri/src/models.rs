@@ -62,6 +62,9 @@ pub struct SmartPick {
     pub account_name: String,
     pub effective_remaining: i32,
     pub reason: String,
+    /// Short semantic badge explaining why this account was picked (e.g. "使用中", "最充裕", "防浪費", "警戒").
+    #[serde(default)]
+    pub tag: String,
     /// Reset time of the account's tightest limit.
     #[serde(default)]
     pub reset_at: Option<i64>,
@@ -195,6 +198,39 @@ pub struct AppSettings {
     pub model_prices: HashMap<String, crate::usage_stats::Price>,
     #[serde(default = "default_true")]
     pub show_picks: bool,
+    /// Panel recommendation strategy: "most_left" | "use_before_reset" | "risk_first" | "soonest_reset" | "pinned"
+    #[serde(default = "default_strategy")]
+    pub picks_strategy: String,
+    /// Panel recommendation scope: "per_provider" | "global"
+    #[serde(default = "default_picks_scope")]
+    pub picks_scope: String,
+    /// Panel recommendation count (per provider when per_provider, total when global; 1..=4).
+    #[serde(default = "default_picks_count")]
+    pub picks_count: u32,
+    /// Whether the panel recommendation list pins the currently active account first.
+    #[serde(default)]
+    pub picks_pin_active: bool,
+    /// Manually pinned account IDs for panel recommendations when `picks_strategy == "pinned"`.
+    #[serde(default)]
+    pub picks_pinned_ids: Vec<String>,
+    /// Desktop HUD number of accounts displayed simultaneously (1..=4).
+    #[serde(default = "default_hud_count")]
+    pub hud_count: u32,
+    /// Desktop HUD multi-account layout: "vertical" | "horizontal"
+    #[serde(default = "default_hud_layout")]
+    pub hud_layout: String,
+    /// Desktop HUD ranking strategy (independent from panel picks).
+    #[serde(default = "default_strategy")]
+    pub hud_strategy: String,
+    /// Desktop HUD scope: "global" | "per_provider"
+    #[serde(default = "default_hud_scope")]
+    pub hud_scope: String,
+    /// Pin currently active/working account at HUD slot 0.
+    #[serde(default = "default_true")]
+    pub hud_pin_active: bool,
+    /// Manually pinned account IDs for desktop HUD when `hud_strategy == "pinned"`.
+    #[serde(default)]
+    pub hud_pinned_ids: Vec<String>,
     /// Pet particle effects (music notes, Zzz, sweat, sparks)
     #[serde(default = "default_true")]
     pub pet_effects: bool,
@@ -348,6 +384,24 @@ fn default_language() -> String {
 fn default_true() -> bool {
     true
 }
+fn default_strategy() -> String {
+    "most_left".to_string()
+}
+fn default_picks_scope() -> String {
+    "per_provider".to_string()
+}
+fn default_picks_count() -> u32 {
+    1
+}
+fn default_hud_count() -> u32 {
+    1
+}
+fn default_hud_layout() -> String {
+    "vertical".to_string()
+}
+fn default_hud_scope() -> String {
+    "global".to_string()
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -375,6 +429,17 @@ impl Default for AppSettings {
             language: default_language(),
             model_prices: HashMap::new(),
             show_picks: true,
+            picks_strategy: default_strategy(),
+            picks_scope: default_picks_scope(),
+            picks_count: default_picks_count(),
+            picks_pin_active: false,
+            picks_pinned_ids: Vec::new(),
+            hud_count: default_hud_count(),
+            hud_layout: default_hud_layout(),
+            hud_strategy: default_strategy(),
+            hud_scope: default_hud_scope(),
+            hud_pin_active: true,
+            hud_pinned_ids: Vec::new(),
             pet_effects: true,
             account_prefs: HashMap::new(),
             account_order: Vec::new(),
