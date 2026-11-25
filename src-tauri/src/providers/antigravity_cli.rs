@@ -37,8 +37,36 @@ pub fn find_agy() -> Option<PathBuf> {
 
 /// Whether agy has a stored sign-in. Checked first so a signed-out agy is never
 /// started in the background (it would try to open a browser to sign in).
-#[cfg(windows)]
+///
+/// With `AGY_CLI_FORCE_FILE_TOKEN_STORAGE` set (inherited by the agy we spawn), agy reads
+/// only its file token store and ignores the keyring, so a leftover keyring entry must not
+/// count: otherwise every probe reports "not logged in" and starts an OAuth flow.
 pub fn has_signin() -> bool {
+    if force_file_token_storage(std::env::var("AGY_CLI_FORCE_FILE_TOKEN_STORAGE").ok().as_deref()) {
+        return dirs::home_dir().is_some_and(|home| has_file_token(&home));
+    }
+    has_keyring_signin()
+}
+
+fn force_file_token_storage(raw: Option<&str>) -> bool {
+    raw.map(|v| v.trim().to_ascii_lowercase())
+        .is_some_and(|v| !v.is_empty() && !matches!(v.as_str(), "0" | "false" | "no" | "off"))
+}
+
+/// agy's file token store lives in `~/.gemini/antigravity-cli/` as `*-oauth-token`.
+/// Only file names are checked; contents are never read.
+fn has_file_token(home: &Path) -> bool {
+    let dir = home.join(".gemini").join("antigravity-cli");
+    std::fs::read_dir(dir).is_ok_and(|rd| {
+        rd.flatten().any(|e| {
+            e.file_type().is_ok_and(|t| t.is_file())
+                && e.file_name().to_string_lossy().ends_with("-oauth-token")
+        })
+    })
+}
+
+#[cfg(windows)]
+fn has_keyring_signin() -> bool {
     use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
     let target: Vec<u16> = "gemini:antigravity".encode_utf16().chain(Some(0)).collect();
     let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
@@ -51,7 +79,7 @@ pub fn has_signin() -> bool {
 }
 
 #[cfg(not(windows))]
-pub fn has_signin() -> bool {
+fn has_keyring_signin() -> bool {
     // macOS / Linux keyrings are not probed; assume signed in when agy is installed.
     true
 }
@@ -184,6 +212,27 @@ mod tests {
         assert_eq!(extra.len(), 2);
         assert!(extra.iter().all(|w| w.label.starts_with("3P ") && w.remaining_percent == 100));
         assert!(primary[0].reset_at.is_some());
+    }
+
+    #[test]
+    fn file_token_storage_flag_and_detection() {
+        assert!(force_file_token_storage(Some("1")));
+        assert!(force_file_token_storage(Some("true")));
+        assert!(!force_file_token_storage(Some("0")));
+        assert!(!force_file_token_storage(Some(" false ")));
+        assert!(!force_file_token_storage(Some("")));
+        assert!(!force_file_token_storage(None));
+
+        let tmp = std::env::temp_dir().join(format!("dc-agy-filetoken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let dir = tmp.join(".gemini").join("antigravity-cli");
+        std::fs::create_dir_all(dir.join("brain")).unwrap();
+        std::fs::write(dir.join("settings.json"), "{}").unwrap();
+        // Keyring-only sign-in leaves no file token: agy under the flag is signed out.
+        assert!(!has_file_token(&tmp));
+        std::fs::write(dir.join("antigravity-cli-oauth-token"), "{}").unwrap();
+        assert!(has_file_token(&tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
