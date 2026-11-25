@@ -2493,6 +2493,45 @@ html.remote .scroll {
   color: var(--bad-ink);
 }
 
+/* Classic-card pick row: inline badge next to account name, clean full-width reason below */
+.pick-inline-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 99px;
+  color: var(--label-2);
+  background: var(--fill);
+  white-space: nowrap;
+}
+
+.pick-inline-tag.good,
+.pick-inline-tag.live {
+  color: var(--good-ink);
+  background: color-mix(in srgb, var(--good-ink) 13%, transparent);
+}
+
+.pick-inline-tag.soon {
+  color: var(--warn-ink);
+  background: color-mix(in srgb, var(--warn-ink) 14%, transparent);
+}
+
+.pick-inline-tag.risk {
+  color: var(--bad-ink);
+  background: color-mix(in srgb, var(--bad-ink) 14%, transparent);
+}
+
+.pick-inline-tag.reset {
+  color: var(--ag);
+  background: color-mix(in srgb, var(--ag) 14%, transparent);
+}
+
+.row.pick-row .row-sub {
+  white-space: normal;
+  line-height: 1.38;
+}
+
 .row-col {
   flex-direction: column;
   align-items: stretch !important;

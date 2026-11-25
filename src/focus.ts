@@ -1,3 +1,4 @@
+import { locale, t, weekday } from "./i18n";
 import type {
   AccountQuota,
   AppSettings,
@@ -215,52 +216,73 @@ function makeHudItem(
 ): HudItem {
   const focus = buildFocus(acc, s);
   if (isActive) {
-    return { focus, tagKey: "使用中", tagKind: "live", reason: "Currently active agent account" };
+    return { focus, tagKey: "使用中", tagKind: "live", reason: t("目前正在使用中的帳號") };
   }
   if (strategy === "pinned") {
-    return { focus, tagKey: "釘選", tagKind: "pin", reason: "Pinned in HUD settings" };
+    return { focus, tagKey: "固定", tagKind: "pin", reason: t("於設定中固定顯示") };
   }
   if (strategy === "use_before_reset") {
     const wp = wastePressure(acc, nowSec);
     if (wp.score > 0 && wp.resetAt) {
+      const when = whenText(wp.resetAt);
       return {
         focus,
-        tagKey: "防浪費",
+        tagKey: "將重設",
         tagKind: "waste",
-        reason: `${wp.isWeekly ? "Weekly" : "5h"} ${wp.pct}% left · resets ${whenText(wp.resetAt)}`,
+        reason: wp.isWeekly
+          ? t("週額度剩 {p}%，{when}重設", { p: wp.pct, when })
+          : t("5 小時剩 {p}%，{when}重設", { p: wp.pct, when }),
       };
     }
-    return { focus, tagKey: "最充裕", tagKind: "good", reason: "Most remaining quota" };
+    return { focus, tagKey: "充裕", tagKind: "good", reason: t("目前剩餘額度最多") };
   }
   if (strategy === "risk_first") {
     const fc = forecasts?.[acc.id];
-    const reason =
-      acc.status === "cooldown"
-        ? "Rate limited (cooldown)"
-        : acc.status === "expired"
-          ? "Credentials expired"
-          : acc.effectiveRemaining === 0
-            ? "Quota exhausted"
-            : fc
-              ? `Runs out ${whenText(fc.exhaustAt)} at current pace`
-              : `Low quota (${acc.effectiveRemaining}% left)`;
-    return { focus, tagKey: "警戒", tagKind: "risk", reason };
+    if (acc.status === "cooldown") {
+      return { focus, tagKey: "受限", tagKind: "risk", reason: t("目前限流冷卻中，建議改用其他帳號") };
+    }
+    if (acc.status === "expired") {
+      return { focus, tagKey: "過期", tagKind: "risk", reason: t("憑證已過期，重新使用一次即自動更新") };
+    }
+    if (acc.effectiveRemaining === 0) {
+      return { focus, tagKey: "用盡", tagKind: "risk", reason: t("額度已用盡，請改用其他帳號") };
+    }
+    if (fc) {
+      return {
+        focus,
+        tagKey: "偏低",
+        tagKind: "risk",
+        reason: t("依目前消耗速度，預計 {when} 用完", { when: whenText(fc.exhaustAt) }),
+      };
+    }
+    return {
+      focus,
+      tagKey: "偏低",
+      tagKind: "risk",
+      reason: t("僅剩 {p}%，建議改用其他帳號", { p: acc.effectiveRemaining }),
+    };
   }
   if (strategy === "soonest_reset") {
     const r = soonestResetTs(acc, nowSec);
     return {
       focus,
-      tagKey: "快回血",
+      tagKey: "最快重設",
       tagKind: "reset",
-      reason: r ? `Resets ${whenText(r)}` : "Next reset soonest",
+      reason: r ? t("{when}重設", { when: whenText(r) }) : t("最快恢復額度"),
     };
   }
   // default "most_left"
   const bind = focus.tight;
   if (bind?.resetAt && bind.resetAt > nowSec && bind.resetAt - nowSec <= 30 * 60 && acc.effectiveRemaining >= 10) {
-    return { focus, tagKey: "防浪費", tagKind: "waste", reason: `Resets ${whenText(bind.resetAt)} · use before reset` };
+    const mins = Math.max(1, Math.ceil((bind.resetAt - nowSec) / 60));
+    return {
+      focus,
+      tagKey: "將重設",
+      tagKind: "waste",
+      reason: t("{n} 分鐘後重設，建議優先使用", { n: mins }),
+    };
   }
-  return { focus, tagKey: "最充裕", tagKind: "good", reason: "Most remaining quota" };
+  return { focus, tagKey: "充裕", tagKind: "good", reason: t("目前剩餘額度最多") };
 }
 
 export function selectHudItems(snap: DashboardSnapshot | null, activeId: string | null): HudItem[] {
@@ -360,22 +382,23 @@ export function focusOf(snap: DashboardSnapshot | null, activeId: string | null)
   return selectHudItems(snap, activeId)[0]?.focus ?? null;
 }
 
-/** "19:40", "Tomorrow 09:10", "Thu 10:00", "Nov 28 09:10". */
+/** Localized short time ("19:40", "明天 09:10", "週四 10:00", "11/28 09:10"). */
 export function whenText(ts: number): string {
   const d = new Date(ts * 1000);
   const now = new Date();
-  const hm = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const hm = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", hour12: false });
   if (d.toDateString() === now.toDateString()) return hm;
   const tmr = new Date(now);
   tmr.setDate(now.getDate() + 1);
-  if (d.toDateString() === tmr.toDateString()) return `tomorrow ${hm}`;
-  if (d.getTime() - now.getTime() < 6.5 * 86400 * 1000) return `${d.toLocaleDateString("en-US", { weekday: "short" })} ${hm}`;
-  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${hm}`;
+  if (d.toDateString() === tmr.toDateString()) return t("明天 {time}", { time: hm });
+  if (d.getTime() - now.getTime() < 6.5 * 86400 * 1000) return `${weekday(d)} ${hm}`;
+  const md = d.toLocaleDateString(locale(), { month: "short", day: "numeric" });
+  return `${md} ${hm}`;
 }
 
-/** "5h" or "Week". */
+/** "5 小時" or "每週". */
 export function windowWord(w: QuotaWindow): string {
   const len = windowSeconds(w.label);
   if (len == null) return w.label;
-  return len >= 2 * 86400 ? "Week" : `${Math.round(len / 3600)}h`;
+  return len >= 2 * 86400 ? t("每週") : t("{h} 小時", { h: Math.round(len / 3600) });
 }

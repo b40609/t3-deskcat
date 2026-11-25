@@ -200,7 +200,7 @@ function renderHudCard() {
         <span class="hud-tile claude"><svg><use href="#m-claude" /></svg></span>
         <span class="hud-name">T3 DeskCat</span>
       </div>
-      <div class="hud-empty">No accounts</div>
+      <div class="hud-empty">${escapeHtml(t("尚未偵測到帳號"))}</div>
     `;
     return;
   }
@@ -296,7 +296,7 @@ function bubbleLines(): string[] {
   const snap = currentSnapshot;
   const item = hudItems[hoveredIdx] ?? hudItems[0];
   const f = item?.focus ?? focus;
-  if (!snap || !f) return ["No accounts found yet", "Click to open the panel"];
+  if (!snap || !f) return [t("尚未偵測到帳號"), t("點擊開啟面板")];
   const s = snap.settings;
   const who = `${providerShort(f.acc.provider)} · ${f.name}`;
   const lines: string[] = [];
@@ -304,7 +304,7 @@ function bubbleLines(): string[] {
   if (tWin) {
     const pct = Math.max(0, Math.round(tWin.remainingPercent));
     const tone = toneOf(pct, s, f.acc.id);
-    lines.push(`${tone === "bad" ? "!" : tone === "warn" ? "?" : ""}${who} · ${windowWord(tWin)} ${pct}% left`);
+    lines.push(`${tone === "bad" ? "!" : tone === "warn" ? "?" : ""}${who} · ${windowWord(tWin)} ${t("剩 {p}%", { p: pct })}`);
   } else {
     lines.push(who);
   }
@@ -312,13 +312,15 @@ function bubbleLines(): string[] {
     lines.push(`[${t(item.tagKey)}] ${item.reason}`);
   }
   const fc = snap.forecasts?.[f.acc.id];
-  if (snap.offline || f.stale) lines.push("?Data may be out of date");
-  else if (fc) lines.push(`?Runs out ${whenText(fc.exhaustAt)} at this pace${fc.resetAt ? ` · resets ${whenText(fc.resetAt)}` : ""}`);
-  else if (tWin?.resetAt) lines.push(`Resets ${whenText(tWin.resetAt)}`);
+  if (snap.offline || f.stale) lines.push(`?${t("資料可能非最新")}`);
+  else if (fc) {
+    const base = t("依目前消耗速度，預計 {when} 用完", { when: whenText(fc.exhaustAt) });
+    lines.push(`?${base}${fc.resetAt ? ` · ${t("{when}重設", { when: whenText(fc.resetAt) })}` : ""}`);
+  } else if (tWin?.resetAt) lines.push(t("{when}重設", { when: whenText(tWin.resetAt) }));
   if (activity.accountId === f.acc.id) {
-    if (activity.state === "working") lines.push("Working");
-    else if (activity.state === "done") lines.push("Done, waiting for you");
-    else if (activity.state === "error") lines.push("!Hit an error");
+    if (activity.state === "working") lines.push(t("執行中"));
+    else if (activity.state === "done") lines.push(t("已完成，等待下一步"));
+    else if (activity.state === "error") lines.push(`!${t("發生錯誤")}`);
   }
   return lines;
 }

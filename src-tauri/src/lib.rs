@@ -315,7 +315,7 @@ fn add_account_login(provider: String, name: String) -> Result<String, String> {
         "claude" => ("CLAUDE_CONFIG_DIR", Some(home.join(format!(".claude-{slug}"))), "claude auth login", ".credentials.json"),
         "codex" => ("CODEX_HOME", Some(home.join(format!(".codex-{slug}"))), "codex login", "auth.json"),
         "antigravity" => ("", None, "agy", ""),
-        _ => return Err(tr!("不支援的供應商")),
+        _ => return Err(tr!("不支援的平台")),
     };
     if let Some(dir) = &dir {
         if !valid {
@@ -747,7 +747,7 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
     app.notification()
         .builder()
         .title("T3 DeskCat")
-        .body(tr!("系統通知運作正常！額度過低或重置時會在這裡提醒你。"))
+        .body(tr!("系統通知運作正常！額度過低或重設時會在這裡提醒你。"))
         .show()
         .map_err(|err| tr!("通知發送失敗: {err}", err = err))
 }
@@ -1686,7 +1686,7 @@ async fn run_refresh(
                         if prev_val < 80 && rem >= 98 {
                             notifications.push((
                                 tr!("✨ {who} 額度已恢復", who = who),
-                                tr!("已恢復至 {rem}%，小貓繼續上工！", rem = rem),
+                                tr!("已恢復至 {rem}%，可繼續使用。", rem = rem),
                             ));
                         }
                     }
@@ -1699,7 +1699,7 @@ async fn run_refresh(
                         n.zero_notified.insert(acc.id.clone(), true);
                         n.low_notified.insert(acc.id.clone(), true);
                         notifications.push((
-                            tr!("😴 {who} 額度已見底", who = who),
+                            tr!("⚠️ {who} 額度已用盡", who = who),
                             tr!("剩餘 0%，請切換推薦帳號或等待重設。"),
                         ));
                     }
@@ -1712,7 +1712,7 @@ async fn run_refresh(
                             n.low_notified.insert(acc.id.clone(), true);
                             notifications.push((
                                 tr!("⚠️ {who} 額度偏低", who = who),
-                                tr!("目前僅剩 {rem}%（警戒線 {low}%）。", rem = rem, low = low),
+                                tr!("目前剩餘 {rem}%（低於危險線 {low}%）。", rem = rem, low = low),
                             ));
                         }
                     } else if rem >= low + 10 {
@@ -1977,7 +1977,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle_item = MenuItem::with_id(app, "toggle", tr!("展開 / 收合面板"), true, None::<&str>)?;
     let analytics_item = MenuItem::with_id(app, "analytics", tr!("用量分析"), true, None::<&str>)?;
     let refresh_item = MenuItem::with_id(app, "refresh", tr!("立即更新額度"), true, None::<&str>)?;
-    let reset_pos_item = MenuItem::with_id(app, "reset_pos", tr!("重設小貓位置"), true, None::<&str>)?;
+    let reset_pos_item = MenuItem::with_id(app, "reset_pos", tr!("重設浮動卡片位置"), true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", tr!("結束 T3 DeskCat"), true, None::<&str>)?;
     Menu::with_items(app, &[&toggle_item, &analytics_item, &refresh_item, &reset_pos_item, &quit_item])
 }

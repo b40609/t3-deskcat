@@ -204,7 +204,7 @@ fn build_pick(
     let mut reset_at = binding_window(acc).and_then(|w| w.reset_at).filter(|r| *r > now);
     let mut use_before_reset = false;
     let note = (acc.status == "expired")
-        .then(|| crate::tr!("最後已知額度（憑證過期，切換過去用一次就會更新）"));
+        .then(|| crate::tr!("最後已知額度（憑證已過期，重新使用一次即自動更新）"));
 
     let (tag, reason) = if is_active {
         (
@@ -224,36 +224,35 @@ fn build_pick(
                     } else {
                         crate::tr!("5 小時剩 {p}%，{when}重設", p = pct, when = when)
                     };
-                    (crate::tr!("防浪費"), reason)
+                    (crate::tr!("將重設"), reason)
                 } else {
-                    (crate::tr!("最充裕"), build_default_reason(acc))
+                    (crate::tr!("充裕"), build_default_reason(acc))
                 }
             }
             "risk_first" => {
-                let reason = if acc.status == "cooldown" {
-                    crate::tr!("請求受限冷卻中，暫時避開")
+                if acc.status == "cooldown" {
+                    (crate::tr!("受限"), crate::tr!("目前限流冷卻中，建議改用其他帳號"))
                 } else if acc.status == "expired" {
-                    crate::tr!("憑證已過期，需重新開啟更新")
+                    (crate::tr!("過期"), crate::tr!("憑證已過期，重新使用一次即自動更新"))
                 } else if acc.effective_remaining == 0 {
-                    crate::tr!("額度已見底，請暫時避開")
+                    (crate::tr!("用盡"), crate::tr!("額度已用盡，請改用其他帳號"))
                 } else if let Some(fc) = forecasts.get(&acc.id) {
                     let when = format_countdown((fc.exhaust_at - now).max(60));
-                    crate::tr!("依目前速度預計 {when} 用完", when = when)
+                    (crate::tr!("偏低"), crate::tr!("依目前消耗速度，預計 {when} 用完", when = when))
                 } else {
-                    crate::tr!("剩餘僅 {p}%，留意避開", p = acc.effective_remaining)
-                };
-                (crate::tr!("警戒"), reason)
+                    (crate::tr!("偏低"), crate::tr!("僅剩 {p}%，建議改用其他帳號", p = acc.effective_remaining))
+                }
             }
             "soonest_reset" => {
                 let soon = soonest_reset_ts(acc, now);
                 reset_at = soon;
                 let reason = match soon {
-                    Some(r) => crate::tr!("{when}重設恢復", when = format_countdown(r - now)),
+                    Some(r) => crate::tr!("{when}重設", when = format_countdown(r - now)),
                     None => build_default_reason(acc),
                 };
-                (crate::tr!("快回血"), reason)
+                (crate::tr!("最快重設"), reason)
             }
-            "pinned" => (crate::tr!("已釘選"), build_default_reason(acc)),
+            "pinned" => (crate::tr!("固定"), build_default_reason(acc)),
             _ => {
                 // Default "most_left" (keeps 30-min imminent reset bonus when >= 10% left)
                 let soon_30m = binding_window(acc)
@@ -264,11 +263,11 @@ fn build_pick(
                     reset_at = Some(r);
                     let mins = ((r - now) + 59) / 60;
                     (
-                        crate::tr!("即將重設"),
+                        crate::tr!("將重設"),
                         crate::tr!("{n} 分鐘後重設，建議優先使用", n = mins.max(1)),
                     )
                 } else {
-                    (crate::tr!("最充裕"), build_default_reason(acc))
+                    (crate::tr!("充裕"), build_default_reason(acc))
                 }
             }
         }

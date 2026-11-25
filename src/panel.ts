@@ -783,31 +783,42 @@ function localizePickReason(reason: string): string {
 function strategyShortLabel(st: string | undefined): string {
   switch (st) {
     case "use_before_reset":
-      return t("防浪費");
+      return t("將重設");
     case "risk_first":
-      return t("警戒");
+      return t("低額度");
     case "soonest_reset":
-      return t("快回血");
+      return t("最快重設");
     case "pinned":
-      return t("已釘選");
+      return t("固定");
     default:
-      return t("最充裕");
+      return t("剩餘最多");
   }
 }
 
 function strategyHintText(st: string | undefined): string {
   switch (st) {
     case "use_before_reset":
-      return t("優先挑出重設前可能用不完的帳號（優先保護週額度）");
+      return t("優先挑出重設前可能用不完的帳號，以週額度為優先");
     case "risk_first":
-      return t("優先浮出快見底、預計提前用完或異常冷卻的帳號以便避開");
+      return t("優先列出剩餘過低、即將耗盡、限流或過期的帳號，方便留意避開");
     case "soonest_reset":
-      return t("依下次重設倒數由短到長排列，方便掌握誰最快恢復額度");
+      return t("依下次重設時間由近到遠排列，掌握哪個帳號最快恢復");
     case "pinned":
-      return t("只顯示下方手動勾選的帳號，順序固定不跳動");
+      return t("僅顯示下方勾選的帳號，維持固定順序");
     default:
-      return t("優先顯示剩餘額度最充裕的帳號（30 分鐘內將重設且剩餘 >= 10% 者提前）");
+      return t("依剩餘額度由高到低排列；30 分鐘內重設且剩餘 10% 以上者優先");
   }
+}
+
+function pickTagToneClass(strategy: string, pick: { tag?: string; useBeforeReset?: boolean }): string {
+  if (pick.tag === "使用中") return "live";
+  if (strategy === "risk_first" || pick.tag === "受限" || pick.tag === "過期" || pick.tag === "用盡" || pick.tag === "偏低") {
+    return "risk";
+  }
+  if (pick.useBeforeReset || pick.tag === "將重設") return "soon";
+  if (strategy === "soonest_reset" || pick.tag === "最快重設") return "reset";
+  if (strategy === "pinned" || pick.tag === "固定") return "pin";
+  return "good";
 }
 
 function renderPicks(snap: DashboardSnapshot) {
@@ -845,14 +856,17 @@ function renderPicks(snap: DashboardSnapshot) {
       const reset = pick.resetAt ? `\n${formatResetAt(pick.resetAt)}` : "";
       const reason = localizePickReason(pick.reason);
       const badge = pick.tag ? t(pick.tag) : t("首選");
-      const sub = `${providerLabel(pick.provider)} · ${escapeHtml(badge)} · ${escapeHtml(reason)}`;
+      const badgeTone = pickTagToneClass(strategy, pick);
       const rowCls = isRisk ? "pick-risk" : pick.useBeforeReset ? "pick-soon" : "";
       return `
-      <div class="row ${rowCls}">
+      <div class="row pick-row ${rowCls}">
         ${avatarHtml(pick.accountId, pick.provider)}
         <div class="row-main">
-          <div class="row-title"><span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span></div>
-          <span class="row-sub" title="${escapeHtml(reason + reset)}">${sub}</span>
+          <div class="row-title">
+            <span class="name" title="${escapeHtml(pick.accountName)}">${escapeHtml(pick.accountName)}</span>
+            <span class="pick-inline-tag ${badgeTone}">${escapeHtml(badge)}</span>
+          </div>
+          <span class="row-sub" title="${escapeHtml(reason + reset)}">${escapeHtml(reason)}</span>
           ${pick.note ? `<span class="row-sub muted">${escapeHtml(pick.note)}</span>` : ""}
         </div>
         <span class="pct tone-${getTone(pick.effectiveRemaining, pick.accountId)}"><small class="pct-cap">${t("剩餘")}</small>${pick.effectiveRemaining}<small>%</small></span>
@@ -876,7 +890,7 @@ function renderDashboard(snap: DashboardSnapshot) {
     hour: "2-digit",
     minute: "2-digit",
   });
-  btnRefresh.title = `${t("立即刷新")} · ${t("{time} 更新", { time: timeStr })}`;
+  btnRefresh.title = `${t("立即更新")} · ${t("{time} 更新", { time: timeStr })}`;
   analyticsView.syncContext(snap, snap.settings);
 }
 
@@ -926,7 +940,7 @@ function syncSettingsForm(s: AppSettings) {
   valWorkTh.textContent = `${s.workingThreshold}%`;
   setRangeIfIdle(inpSleepTh, s.sleepingThreshold);
   valSleepTh.textContent = `${s.sleepingThreshold}%`;
-  valSweatRange.textContent = t("剩餘低於 {warn}% 額度條轉琥珀色、貓開始冒汗；低於 {bad}% 轉紅色、發通知、貓趴睡", { warn: s.workingThreshold, bad: s.sleepingThreshold });
+  valSweatRange.textContent = t("剩餘低於 {warn}% 轉為琥珀色；低於 {bad}% 轉為紅色並發送通知", { warn: s.workingThreshold, bad: s.sleepingThreshold });
   const th = $("th-preview");
   th.style.setProperty("--bad", `${s.sleepingThreshold}%`);
   th.style.setProperty("--warn", `${s.workingThreshold - s.sleepingThreshold}%`);
@@ -970,7 +984,7 @@ function syncSettingsForm(s: AppSettings) {
   const pScope = s.picksScope ?? "per_provider";
   if (document.activeElement !== selPicksStrategy) selPicksStrategy.value = pStrategy;
   rowPicksScope.classList.toggle("hidden", pStrategy === "pinned");
-  lblPicksCount.textContent = pScope === "per_provider" && pStrategy !== "pinned" ? t("每家顯示") : t("顯示數量");
+  lblPicksCount.textContent = pScope === "per_provider" && pStrategy !== "pinned" ? t("各平台顯示") : t("顯示數量");
   inpPicksPinActive.checked = s.picksPinActive === true;
   picksPinnedWrap.classList.toggle("hidden", pStrategy !== "pinned");
   picksHint.textContent = showPicks ? strategyHintText(pStrategy) : "";
@@ -1101,8 +1115,8 @@ function applyDisplay(s: AppSettings) {
   btnLayout.classList.remove("active");
   btnLayout.title =
     layout === "dense"
-      ? t("目前：緊湊畫面（點此切回卡片）")
-      : t("目前：卡片畫面（點此切換緊湊）");
+      ? t("目前：列表畫面（點此切回卡片）")
+      : t("目前：卡片畫面（點此切換列表）");
 
   pinned = s.panelPinned === true;
   btnPin.classList.toggle("active", pinned);

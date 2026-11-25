@@ -47,7 +47,7 @@
             <span class="nav-drag-spacer" data-tauri-drag-region></span>
             <div class="nav-actions">
               <button id="btn-layout" class="circle-btn" title="切換畫面樣式" data-i18n-attr="title"><svg><use href="#i-layout-dense" /></svg></button>
-              <button id="btn-refresh" class="circle-btn" title="立即刷新" data-i18n-attr="title"><svg><use href="#i-refresh" /></svg></button>
+              <button id="btn-refresh" class="circle-btn" title="立即更新" data-i18n-attr="title"><svg><use href="#i-refresh" /></svg></button>
               <button id="btn-pin" class="circle-btn desktop-only" title="釘選面板" data-i18n-attr="title"><svg><use href="#i-pin" /></svg></button>
               <button id="btn-settings" class="circle-btn" title="設定" data-i18n-attr="title"><svg><use href="#i-gear" /></svg></button>
               <button id="btn-close" class="circle-btn desktop-only" title="收合面板" data-i18n-attr="title"><svg><use href="#i-x" /></svg></button>
@@ -55,13 +55,13 @@
           </header>
 
           <div class="scroll" id="dash-quota">
-            <div id="offline-note" class="notice hidden" data-i18n>暫時抓不到最新額度，下面是最後一次成功取得的數字。</div>
+            <div id="offline-note" class="notice hidden" data-i18n>暫時無法取得最新額度，目前顯示上次更新的資料。</div>
             <div id="accounts-alert" class="notice notice-bad hidden"></div>
 
             <section id="sec-picks" class="group">
               <div class="group-header picks-header">
                 <span data-i18n>推薦使用</span>
-                <button id="btn-picks-strategy" class="picks-mode-btn" type="button" title="點擊切換推薦排序策略" data-i18n-attr="title"></button>
+                <button id="btn-picks-strategy" class="picks-mode-btn" type="button" title="點擊切換排序方式" data-i18n-attr="title"></button>
               </div>
               <div class="list" id="picks-section"></div>
             </section>
@@ -77,7 +77,7 @@
 
             <section id="sec-expired" class="group hidden">
               <div class="group-header expired-group-header">
-                <span data-i18n>憑證過期（開過一次即自動恢復）</span>
+                <span data-i18n>憑證已過期（重新使用一次即自動更新）</span>
                 <span class="group-header-aside" id="expired-count">0</span>
               </div>
               <div class="list" id="expired-section"></div>
@@ -151,7 +151,7 @@
             <button class="tab" role="tab" data-tab="accounts" data-i18n>帳號</button>
             <button class="tab" role="tab" data-tab="panel" data-i18n>面板</button>
             <button class="tab" role="tab" data-tab="alerts" data-i18n>通知</button>
-            <button class="tab desktop-only" role="tab" data-tab="pet" data-i18n>桌寵</button>
+            <button class="tab desktop-only" role="tab" data-tab="pet" data-i18n>浮動卡片</button>
           </nav>
 
           <div class="scroll" id="settings-scroll">
@@ -198,7 +198,7 @@
                   <div class="row">
                     <span data-i18n>開啟位置</span>
                     <select id="sel-panel-pos" class="select">
-                      <option value="pet" data-i18n>跟著桌寵</option>
+                      <option value="pet" data-i18n>緊鄰浮動卡片</option>
                       <option value="remember" data-i18n>記住上次位置</option>
                       <option value="top_right" data-i18n>右上角</option>
                       <option value="bottom_right" data-i18n>右下角</option>
@@ -238,7 +238,7 @@
                     <span data-i18n>畫面樣式</span>
                     <div class="segmented" data-key="panelLayout">
                       <button data-value="classic" class="seg-btn" data-i18n>卡片</button>
-                      <button data-value="dense" class="seg-btn" data-i18n>緊湊</button>
+                      <button data-value="dense" class="seg-btn" data-i18n>列表</button>
                     </div>
                   </div>
                   <div class="row">
@@ -256,7 +256,7 @@
                     </div>
                   </div>
                   <div class="row">
-                    <span data-i18n>顯示範圍</span>
+                    <span data-i18n>額度項目</span>
                     <div class="segmented" id="seg-acc-detail">
                       <button data-value="compact" class="seg-btn" data-i18n data-i18n-attr="title" title="精簡：每個帳號只顯示最吃緊的 1 條額度（5 小時或每週中剩餘最低者）">精簡</button>
                       <button data-value="standard" class="seg-btn" data-i18n data-i18n-attr="title" title="標準：顯示每個帳號的主要額度（5 小時、每週及單模型限制）">標準</button>
@@ -275,20 +275,20 @@
                   </label>
                   <div id="picks-options">
                     <div class="row">
-                      <span data-i18n>推薦排序</span>
+                      <span data-i18n>排序方式</span>
                       <select id="sel-picks-strategy" class="select">
-                        <option value="most_left" data-i18n>額度最充裕</option>
-                        <option value="use_before_reset" data-i18n>防浪費（週額度優先）</option>
-                        <option value="risk_first" data-i18n>警戒避開（最低優先）</option>
-                        <option value="soonest_reset" data-i18n>最快重設回血</option>
-                        <option value="pinned" data-i18n>手動釘選</option>
+                        <option value="most_left" data-i18n>剩餘最多</option>
+                        <option value="use_before_reset" data-i18n>即將重設優先（週額度優先）</option>
+                        <option value="risk_first" data-i18n>低額度與異常優先</option>
+                        <option value="soonest_reset" data-i18n>最快重設優先</option>
+                        <option value="pinned" data-i18n>自訂固定</option>
                       </select>
                     </div>
                     <div class="row" id="row-picks-scope">
-                      <span data-i18n>挑選範圍</span>
+                      <span data-i18n>分組方式</span>
                       <div class="segmented" data-key="picksScope">
-                        <button data-value="per_provider" class="seg-btn" data-i18n>各供應商</button>
-                        <button data-value="global" class="seg-btn" data-i18n>全部混排</button>
+                        <button data-value="per_provider" class="seg-btn" data-i18n>各平台分開</button>
+                        <button data-value="global" class="seg-btn" data-i18n>不分平台</button>
                       </div>
                     </div>
                     <div class="row">
@@ -301,7 +301,7 @@
                       </div>
                     </div>
                     <label class="row">
-                      <span><span data-i18n>置頂使用中帳號</span><small class="row-hint" data-i18n>有代理執行時排在第 1 位</small></span>
+                      <span><span data-i18n>優先顯示使用中帳號</span><small class="row-hint" data-i18n>目前有對話執行時，自動排在第一位</small></span>
                       <input id="inp-picks-pin-active" class="switch" type="checkbox" />
                     </label>
                     <div class="row row-col hidden" id="picks-pinned-wrap">
@@ -316,11 +316,11 @@
               <section class="group">
                 <div class="list">
                   <label class="row">
-                    <span><span data-i18n>用完預測</span><small class="row-hint" data-i18n>照目前速度會在重設前用完時提醒</small></span>
+                    <span><span data-i18n>耗盡預測</span><small class="row-hint" data-i18n>照目前速度會在重設前用完時提醒</small></span>
                     <input id="inp-show-forecast" class="switch" type="checkbox" checked />
                   </label>
                   <label class="row">
-                    <span><span data-i18n>今日用量與花費</span><small class="row-hint" data-i18n>讀本機紀錄，花費以 API 牌價估算</small></span>
+                    <span><span data-i18n>今日用量與花費</span><small class="row-hint" data-i18n>讀取本機紀錄，金額依官方 API 定價估算</small></span>
                     <input id="inp-show-usage" class="switch" type="checkbox" />
                   </label>
                 </div>
@@ -375,12 +375,12 @@
               </section>
             </div>
 
-            <!-- ===== 桌寵 ===== -->
+            <!-- ===== 浮動卡片 ===== -->
             <div class="pane hidden desktop-only" data-pane="pet">
               <section class="group">
                 <div class="list">
                   <label class="row">
-                    <span><span data-i18n>顯示桌面桌寵</span><small class="row-hint" data-i18n>關掉後只保留系統匣與快捷鍵</small></span>
+                    <span><span data-i18n>顯示桌面浮動卡片</span><small class="row-hint" data-i18n>關掉後只保留系統匣與快捷鍵</small></span>
                     <input id="inp-show-pet" class="switch" type="checkbox" checked />
                   </label>
                 </div>
@@ -391,7 +391,7 @@
                   <div class="theme-picker" id="theme-selector">
                     <button data-theme="hud_gauge" class="theme-btn">
                       <span class="theme-thumb gauge"><svg><use href="#i-gauge" /></svg></span>
-                      <span class="theme-name" data-i18n>圓環儀表</span>
+                      <span class="theme-name" data-i18n>額度卡片</span>
                       <span class="theme-check"><svg><use href="#i-check" /></svg></span>
                     </button>
                     <button data-theme="custom" class="theme-btn">
@@ -405,17 +405,17 @@
                     <div class="custom-slots">
                       <label class="custom-slot">
                         <span class="slot-preview" id="prev-slot-working"></span>
-                        <span class="slot-name" data-i18n>充沛</span>
+                        <span class="slot-name" data-i18n>正常</span>
                         <input type="file" id="file-working" accept="image/*" class="hidden-file-input" />
                       </label>
                       <label class="custom-slot">
                         <span class="slot-preview" id="prev-slot-sweating"></span>
-                        <span class="slot-name" data-i18n>趕工</span>
+                        <span class="slot-name" data-i18n>偏低</span>
                         <input type="file" id="file-sweating" accept="image/*" class="hidden-file-input" />
                       </label>
                       <label class="custom-slot">
                         <span class="slot-preview" id="prev-slot-sleeping"></span>
-                        <span class="slot-name" data-i18n>見底</span>
+                        <span class="slot-name" data-i18n>危急</span>
                         <input type="file" id="file-sleeping" accept="image/*" class="hidden-file-input" />
                       </label>
                     </div>
@@ -424,10 +424,10 @@
                 </section>
 
                 <section class="group" id="hud-options">
-                  <div class="group-header" data-i18n>桌面卡片顯示</div>
+                  <div class="group-header" data-i18n>顯示設定</div>
                   <div class="list">
                     <div class="row">
-                      <span data-i18n>同時顯示帳號</span>
+                      <span data-i18n>顯示帳號數</span>
                       <div class="segmented" data-key="hudCount" data-number>
                         <button data-value="1" class="seg-btn">1</button>
                         <button data-value="2" class="seg-btn">2</button>
@@ -443,24 +443,24 @@
                       </div>
                     </div>
                     <div class="row">
-                      <span data-i18n>顯示排序</span>
+                      <span data-i18n>排序方式</span>
                       <select id="sel-hud-strategy" class="select">
-                        <option value="most_left" data-i18n>額度最充裕</option>
-                        <option value="use_before_reset" data-i18n>防浪費（週額度優先）</option>
-                        <option value="risk_first" data-i18n>警戒避開（最低優先）</option>
-                        <option value="soonest_reset" data-i18n>最快重設回血</option>
-                        <option value="pinned" data-i18n>手動釘選</option>
+                        <option value="most_left" data-i18n>剩餘最多</option>
+                        <option value="use_before_reset" data-i18n>即將重設優先（週額度優先）</option>
+                        <option value="risk_first" data-i18n>低額度與異常優先</option>
+                        <option value="soonest_reset" data-i18n>最快重設優先</option>
+                        <option value="pinned" data-i18n>自訂固定</option>
                       </select>
                     </div>
                     <div class="row hidden" id="row-hud-scope">
-                      <span data-i18n>挑選範圍</span>
+                      <span data-i18n>分組方式</span>
                       <div class="segmented" data-key="hudScope">
-                        <button data-value="global" class="seg-btn" data-i18n>全部混排</button>
-                        <button data-value="per_provider" class="seg-btn" data-i18n>各供應商</button>
+                        <button data-value="global" class="seg-btn" data-i18n>不分平台</button>
+                        <button data-value="per_provider" class="seg-btn" data-i18n>各平台分開</button>
                       </div>
                     </div>
                     <label class="row">
-                      <span><span data-i18n>優先顯示使用中帳號</span><small class="row-hint" data-i18n>有代理執行時置頂在第 1 格</small></span>
+                      <span><span data-i18n>優先顯示使用中帳號</span><small class="row-hint" data-i18n>目前有對話執行時，顯示在第 1 格</small></span>
                       <input id="inp-hud-pin-active" class="switch" type="checkbox" checked />
                     </label>
                     <div class="row row-col hidden" id="hud-pinned-wrap">
@@ -574,7 +574,7 @@
 
             <div class="subpane hidden" data-subpane="add-account" data-title="新增帳號">
               <section class="group">
-                <div class="group-header" data-i18n>供應商</div>
+                <div class="group-header" data-i18n>平台</div>
                 <div class="provider-picker" id="provider-picker">
                   <button class="provider-btn" data-provider="claude"><span class="p-icon claude"><svg><use href="#m-claude" /></svg></span><span>Claude</span></button>
                   <button class="provider-btn" data-provider="codex"><span class="p-icon codex"><svg><use href="#m-codex" /></svg></span><span>ChatGPT · Codex</span></button>

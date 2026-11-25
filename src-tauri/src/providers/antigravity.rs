@@ -219,7 +219,7 @@ async fn fetch_antigravity_quota_at(
                 now,
                 if t3_token.is_some() { "expired" } else { "error" },
                 if t3_token.is_some() {
-                    crate::tr!("憑證已過期：開啟 Antigravity（或 T3 Code）會自動刷新")
+                    crate::tr!("憑證已過期：開啟 Antigravity（或 T3 Code）會自動更新")
                 } else {
                     crate::tr!("憑證缺少 client_id / client_secret")
                 },

@@ -38,7 +38,7 @@ async fn fetch_codex_quota_at(
                 name,
                 now,
                 "error",
-                crate::tr!("無法讀取認證: {err}", err = err),
+                crate::tr!("無法讀取憑證: {err}", err = err),
             ));
         }
     };
@@ -51,7 +51,7 @@ async fn fetch_codex_quota_at(
                 name,
                 now,
                 "error",
-                crate::tr!("認證 JSON 錯誤: {err}", err = err),
+                crate::tr!("憑證 JSON 格式錯誤: {err}", err = err),
             ));
         }
     };
