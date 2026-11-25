@@ -2509,10 +2509,16 @@ pub fn run() {
             if let Some(panel) = panel {
                 let pinned = app
                     .try_state::<SharedState>()
-                    .and_then(|s| s.0.lock().ok().map(|g| g.panel_pinned))
+                    .and_then(|s| {
+                        s.0.lock().ok().map(|mut g| {
+                            g.last_toggle = Instant::now();
+                            g.panel_pinned
+                        })
+                    })
                     .unwrap_or(false);
                 apply_saved_panel_size(app, &panel);
                 apply_panel_pin_state(&panel, pinned);
+                apply_panel_backdrop_from_state(app, &panel);
                 position_panel(app, &panel);
                 let _ = panel.unminimize();
                 let _ = panel.show();
@@ -2619,6 +2625,9 @@ pub fn run() {
                 g.hotkey_error = hk_err;
             }
             if let Some(ref panel) = app.get_webview_window("panel") {
+                if let Ok(mut g) = shared.0.lock() {
+                    g.last_toggle = Instant::now();
+                }
                 apply_saved_panel_size(&handle, panel);
                 apply_panel_pin_state(panel, loaded_settings.panel_pinned);
                 apply_panel_backdrop(
@@ -2646,7 +2655,7 @@ pub fn run() {
                         let recently_toggled = panel_state
                             .0
                             .lock()
-                            .map(|g| g.last_toggle.elapsed() < Duration::from_millis(220))
+                            .map(|g| g.last_toggle.elapsed() < Duration::from_millis(600))
                             .unwrap_or(false);
                         if !pinned && !recently_toggled && !DIALOG_OPEN.load(Ordering::Acquire) {
                             if let Some(w) = panel_handle.get_webview_window("panel") {
