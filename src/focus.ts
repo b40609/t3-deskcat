@@ -105,35 +105,40 @@ function buildFocus(acc: AccountQuota, s: AppSettings): Focus {
   return { acc, name: displayName(acc, s), short, long, tight, stale };
 }
 
-/** Anti-waste pressure matching Rust `ranking::waste_pressure` (weekly 3x weight). */
-function wastePressure(acc: AccountQuota, nowSec: number): { score: number; isWeekly: boolean; resetAt: number | null; pct: number } {
+/** Normalize legacy strategy strings (`use_before_reset` -> `use_before_reset_weekly`). */
+export function normalizeStrategy(raw: string | undefined): RankStrategy {
+  if (raw === "use_before_reset") return "use_before_reset_weekly";
+  if (
+    raw === "most_left" ||
+    raw === "use_before_reset_weekly" ||
+    raw === "use_before_reset_5h" ||
+    raw === "risk_first" ||
+    raw === "soonest_reset" ||
+    raw === "pinned"
+  ) {
+    return raw;
+  }
+  return "most_left";
+}
+
+/** Anti-waste pressure for a specific window kind (weekly or 5h), matching Rust `ranking::window_waste_pressure`. */
+function windowWastePressure(
+  acc: AccountQuota,
+  isWeekly: boolean,
+  nowSec: number,
+): { score: number; resetAt: number | null; pct: number } {
   const eff = Math.max(0, Math.min(100, acc.effectiveRemaining));
-  if (eff < 10) return { score: 0, isWeekly: false, resetAt: null, pct: eff };
+  if (eff < 10) return { score: 0, resetAt: null, pct: eff };
 
   const { short, long } = mainWindows(acc);
-  let best = { score: 0, isWeekly: false, resetAt: null as number | null, pct: eff };
+  const w = isWeekly ? long : short;
+  if (!w?.resetAt || w.resetAt <= nowSec) return { score: 0, resetAt: null, pct: eff };
 
-  if (long?.resetAt && long.resetAt > nowSec) {
-    const dur = windowSeconds(long.label) ?? 7 * 86400;
-    const ratio = Math.max(0.01, Math.min(1, (long.resetAt - nowSec) / dur));
-    const spendable = Math.min(long.remainingPercent, eff);
-    if (spendable >= 10) {
-      const score = (spendable / 100 / ratio) * 3.0;
-      if (score > best.score) best = { score, isWeekly: true, resetAt: long.resetAt, pct: spendable };
-    }
-  }
-
-  if (short?.resetAt && short.resetAt > nowSec && short.resetAt - nowSec <= 2 * 3600) {
-    const dur = windowSeconds(short.label) ?? 5 * 3600;
-    const ratio = Math.max(0.02, Math.min(1, (short.resetAt - nowSec) / dur));
-    const spendable = Math.min(short.remainingPercent, eff);
-    if (spendable >= 15) {
-      const score = spendable / 100 / ratio;
-      if (score > best.score) best = { score, isWeekly: false, resetAt: short.resetAt, pct: spendable };
-    }
-  }
-
-  return best;
+  const dur = windowSeconds(w.label) ?? (isWeekly ? 7 * 86400 : 5 * 3600);
+  const ratio = Math.max(0.01, Math.min(1, (w.resetAt - nowSec) / dur));
+  const spendable = Math.min(w.remainingPercent, eff);
+  if (spendable < 10) return { score: 0, resetAt: w.resetAt, pct: spendable };
+  return { score: spendable / 100 / ratio, resetAt: w.resetAt, pct: spendable };
 }
 
 function soonestResetTs(acc: AccountQuota, nowSec: number): number | null {
@@ -177,10 +182,11 @@ function sortByStrategy(
   nowSec: number,
 ): AccountQuota[] {
   const list = [...pool];
-  if (strategy === "use_before_reset") {
+  if (strategy === "use_before_reset_weekly" || strategy === "use_before_reset_5h") {
+    const isWeekly = strategy === "use_before_reset_weekly";
     list.sort((a, b) => {
-      const wa = wastePressure(a, nowSec);
-      const wb = wastePressure(b, nowSec);
+      const wa = windowWastePressure(a, isWeekly, nowSec);
+      const wb = windowWastePressure(b, isWeekly, nowSec);
       if (wb.score !== wa.score) return wb.score - wa.score;
       return compareMostLeftDesc(a, b, nowSec);
     });
@@ -221,17 +227,26 @@ function makeHudItem(
   if (strategy === "pinned") {
     return { focus, tagKey: "固定", tagKind: "pin", reason: t("於設定中固定顯示") };
   }
-  if (strategy === "use_before_reset") {
-    const wp = wastePressure(acc, nowSec);
+  if (strategy === "use_before_reset_weekly") {
+    const wp = windowWastePressure(acc, true, nowSec);
     if (wp.score > 0 && wp.resetAt) {
-      const when = whenText(wp.resetAt);
       return {
         focus,
-        tagKey: "將重設",
+        tagKey: "週將重設",
         tagKind: "waste",
-        reason: wp.isWeekly
-          ? t("週額度剩 {p}%，{when}重設", { p: wp.pct, when })
-          : t("5 小時剩 {p}%，{when}重設", { p: wp.pct, when }),
+        reason: t("週額度剩 {p}%，{when}重設", { p: wp.pct, when: whenText(wp.resetAt) }),
+      };
+    }
+    return { focus, tagKey: "充裕", tagKind: "good", reason: t("目前剩餘額度最多") };
+  }
+  if (strategy === "use_before_reset_5h") {
+    const wp = windowWastePressure(acc, false, nowSec);
+    if (wp.score > 0 && wp.resetAt) {
+      return {
+        focus,
+        tagKey: "5h 將重設",
+        tagKind: "waste",
+        reason: t("5 小時剩 {p}%，{when}重設", { p: wp.pct, when: whenText(wp.resetAt) }),
       };
     }
     return { focus, tagKey: "充裕", tagKind: "good", reason: t("目前剩餘額度最多") };
@@ -275,9 +290,10 @@ function makeHudItem(
   const bind = focus.tight;
   if (bind?.resetAt && bind.resetAt > nowSec && bind.resetAt - nowSec <= 30 * 60 && acc.effectiveRemaining >= 10) {
     const mins = Math.max(1, Math.ceil((bind.resetAt - nowSec) / 60));
+    const isWeekly = (windowSeconds(bind.label) ?? 0) >= 2 * 86400;
     return {
       focus,
-      tagKey: "將重設",
+      tagKey: isWeekly ? "週將重設" : "5h 將重設",
       tagKind: "waste",
       reason: t("{n} 分鐘後重設，建議優先使用", { n: mins }),
     };
@@ -292,7 +308,7 @@ export function selectHudItems(snap: DashboardSnapshot | null, activeId: string 
   if (visible.length === 0) return [];
 
   const count = Math.max(1, Math.min(4, s.hudCount ?? 1));
-  const strategy: RankStrategy = (s.hudStrategy as RankStrategy) ?? "most_left";
+  const strategy: RankStrategy = normalizeStrategy(s.hudStrategy);
   const scope = s.hudScope === "per_provider" ? "per_provider" : "global";
   const pinActive = s.hudPinActive !== false;
   const pinnedIds = s.hudPinnedIds ?? [];
@@ -332,7 +348,11 @@ export function selectHudItems(snap: DashboardSnapshot | null, activeId: string 
   };
 
   const preferLive = (list: AccountQuota[]) => {
-    if (effStrategy === "most_left" || effStrategy === "use_before_reset") {
+    if (
+      effStrategy === "most_left" ||
+      effStrategy === "use_before_reset_weekly" ||
+      effStrategy === "use_before_reset_5h"
+    ) {
       const live = list.filter((a) => a.status !== "expired");
       return live.length ? live : list;
     }

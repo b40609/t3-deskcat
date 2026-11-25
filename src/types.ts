@@ -21,7 +21,13 @@ export interface AccountQuota {
   updatedAt: number;
 }
 
-export type RankStrategy = "most_left" | "use_before_reset" | "risk_first" | "soonest_reset" | "pinned";
+export type RankStrategy =
+  | "most_left"
+  | "use_before_reset_weekly"
+  | "use_before_reset_5h"
+  | "risk_first"
+  | "soonest_reset"
+  | "pinned";
 export type RankScope = "per_provider" | "global";
 export type HudLayout = "vertical" | "horizontal";
 

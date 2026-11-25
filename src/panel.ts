@@ -1,4 +1,4 @@
-import { mainWindows } from "./focus";
+import { mainWindows, normalizeStrategy } from "./focus";
 import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
 import { call as invoke, isRemote, subscribe } from "./bridge";
 import { createAnalyticsView } from "./analyticsView";
@@ -782,8 +782,11 @@ function localizePickReason(reason: string): string {
 
 function strategyShortLabel(st: string | undefined): string {
   switch (st) {
+    case "use_before_reset_weekly":
     case "use_before_reset":
-      return t("將重設");
+      return t("週將重設");
+    case "use_before_reset_5h":
+      return t("5h 將重設");
     case "risk_first":
       return t("低額度");
     case "soonest_reset":
@@ -797,8 +800,11 @@ function strategyShortLabel(st: string | undefined): string {
 
 function strategyHintText(st: string | undefined): string {
   switch (st) {
+    case "use_before_reset_weekly":
     case "use_before_reset":
-      return t("優先挑出重設前可能用不完的帳號，以週額度為優先");
+      return t("優先挑出每週額度快重設且剩餘較多的帳號，避免訂閱額度浪費");
+    case "use_before_reset_5h":
+      return t("優先挑出 5 小時額度快重設且還有餘裕的帳號，順手用完再重設");
     case "risk_first":
       return t("優先列出剩餘過低、即將耗盡、限流或過期的帳號，方便留意避開");
     case "soonest_reset":
@@ -815,7 +821,7 @@ function pickTagToneClass(strategy: string, pick: { tag?: string; useBeforeReset
   if (strategy === "risk_first" || pick.tag === "受限" || pick.tag === "過期" || pick.tag === "用盡" || pick.tag === "偏低") {
     return "risk";
   }
-  if (pick.useBeforeReset || pick.tag === "將重設") return "soon";
+  if (pick.useBeforeReset || pick.tag === "週將重設" || pick.tag === "5h 將重設" || pick.tag === "將重設") return "soon";
   if (strategy === "soonest_reset" || pick.tag === "最快重設") return "reset";
   if (strategy === "pinned" || pick.tag === "固定") return "pin";
   return "good";
@@ -980,7 +986,7 @@ function syncSettingsForm(s: AppSettings) {
   inpShowPicks.checked = s.showPicks !== false;
   const showPicks = s.showPicks !== false;
   picksOptions.classList.toggle("hidden", !showPicks);
-  const pStrategy = s.picksStrategy ?? "most_left";
+  const pStrategy = normalizeStrategy(s.picksStrategy);
   const pScope = s.picksScope ?? "per_provider";
   if (document.activeElement !== selPicksStrategy) selPicksStrategy.value = pStrategy;
   rowPicksScope.classList.toggle("hidden", pStrategy === "pinned");
@@ -994,7 +1000,7 @@ function syncSettingsForm(s: AppSettings) {
 
   hudOptions.classList.toggle("hidden", activeTheme !== "hud_gauge");
   const hCount = Math.max(1, Math.min(4, s.hudCount ?? 1));
-  const hStrategy = s.hudStrategy ?? "most_left";
+  const hStrategy = normalizeStrategy(s.hudStrategy);
   rowHudLayout.classList.toggle("hidden", hCount < 2);
   rowHudScope.classList.toggle("hidden", hCount < 2 || hStrategy === "pinned");
   if (document.activeElement !== selHudStrategy) selHudStrategy.value = hStrategy;
@@ -1435,9 +1441,9 @@ btnPicksStrategy.addEventListener("click", () => {
   const s = cfg();
   const hasPinned = (s.picksPinnedIds?.length ?? 0) > 0;
   const order: Array<NonNullable<AppSettings["picksStrategy"]>> = hasPinned
-    ? ["most_left", "use_before_reset", "risk_first", "soonest_reset", "pinned"]
-    : ["most_left", "use_before_reset", "risk_first", "soonest_reset"];
-  const cur = s.picksStrategy ?? "most_left";
+    ? ["most_left", "use_before_reset_weekly", "use_before_reset_5h", "risk_first", "soonest_reset", "pinned"]
+    : ["most_left", "use_before_reset_weekly", "use_before_reset_5h", "risk_first", "soonest_reset"];
+  const cur = normalizeStrategy(s.picksStrategy);
   const next = order[(order.indexOf(cur) + 1) % order.length];
   commitSettings({ picksStrategy: next }, true);
 });

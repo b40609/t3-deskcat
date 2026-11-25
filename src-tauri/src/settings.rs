@@ -85,9 +85,7 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.tray_style.as_str(), "number" | "ring" | "icon") {
         s.tray_style = "number".to_string();
     }
-    if !crate::ranking::STRATEGIES.contains(&s.picks_strategy.as_str()) {
-        s.picks_strategy = "most_left".to_string();
-    }
+    s.picks_strategy = crate::ranking::normalize_strategy(&s.picks_strategy).to_string();
     if !crate::ranking::SCOPES.contains(&s.picks_scope.as_str()) {
         s.picks_scope = "per_provider".to_string();
     }
@@ -96,9 +94,7 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.hud_layout.as_str(), "vertical" | "horizontal") {
         s.hud_layout = "vertical".to_string();
     }
-    if !crate::ranking::STRATEGIES.contains(&s.hud_strategy.as_str()) {
-        s.hud_strategy = "most_left".to_string();
-    }
+    s.hud_strategy = crate::ranking::normalize_strategy(&s.hud_strategy).to_string();
     if !crate::ranking::SCOPES.contains(&s.hud_scope.as_str()) {
         s.hud_scope = "global".to_string();
     }

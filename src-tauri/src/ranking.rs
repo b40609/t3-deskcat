@@ -19,11 +19,21 @@ use std::collections::{HashMap, HashSet};
 
 pub const STRATEGIES: &[&str] = &[
     "most_left",
-    "use_before_reset",
+    "use_before_reset_weekly",
+    "use_before_reset_5h",
     "risk_first",
     "soonest_reset",
     "pinned",
 ];
+
+/// Migrate legacy strategy identifiers cleanly.
+pub fn normalize_strategy(raw: &str) -> &str {
+    match raw {
+        "use_before_reset" => "use_before_reset_weekly",
+        s if STRATEGIES.contains(&s) => s,
+        _ => "most_left",
+    }
+}
 
 pub const SCOPES: &[&str] = &["per_provider", "global"];
 
@@ -98,59 +108,30 @@ pub fn compare_most_left(a: &AccountQuota, b: &AccountQuota) -> Ordering {
         .then_with(|| b.name.to_lowercase().cmp(&a.name.to_lowercase()))
 }
 
-/// Anti-waste score: measures how likely remaining quota will go unused before reset.
-/// Weekly pools receive a 3x priority weight over 5h pools to protect larger allowances.
-/// Returns `(score, dominant_is_weekly, dominant_window_reset_at, spendable_pct)`.
-pub fn waste_pressure(acc: &AccountQuota, now: i64) -> (f64, bool, Option<i64>, i32) {
+/// Anti-waste pressure for a specific window kind (`is_weekly = true` for weekly pool,
+/// `false` for 5h pool). Returns `(pressure_score, reset_at, spendable_pct)`.
+/// Higher score = more spendable quota likely to expire unused before reset.
+pub fn window_waste_pressure(acc: &AccountQuota, is_weekly: bool, now: i64) -> (f64, Option<i64>, i32) {
     let eff = acc.effective_remaining.clamp(0, 100);
     if eff < 10 {
-        return (0.0, false, None, eff);
+        return (0.0, None, eff);
     }
-
-    let mut best_score = 0.0f64;
-    let mut best_weekly = false;
-    let mut best_reset: Option<i64> = None;
-    let mut best_pct = eff;
-
-    // 1. Weekly window (3x weight: protecting weekly allowance from expiring unused)
-    if let Some(w) = find_main_window(acc, true) {
-        if let Some(r) = w.reset_at.filter(|r| *r > now) {
-            let dur = window_duration_secs(&w.label).unwrap_or(7 * 86400) as f64;
-            let left = (r - now) as f64;
-            let time_left_ratio = (left / dur).clamp(0.01, 1.0);
-            let spendable_pct = w.remaining_percent.min(eff);
-            if spendable_pct >= 10 {
-                let score = ((spendable_pct as f64) / 100.0) / time_left_ratio * 3.0;
-                if score > best_score {
-                    best_score = score;
-                    best_weekly = true;
-                    best_reset = Some(r);
-                    best_pct = spendable_pct;
-                }
-            }
-        }
+    let Some(w) = find_main_window(acc, is_weekly) else {
+        return (0.0, None, eff);
+    };
+    let Some(r) = w.reset_at.filter(|r| *r > now) else {
+        return (0.0, None, eff);
+    };
+    let default_dur = if is_weekly { 7 * 86400 } else { 5 * 3600 };
+    let dur = window_duration_secs(&w.label).unwrap_or(default_dur) as f64;
+    let left = (r - now) as f64;
+    let time_left_ratio = (left / dur).clamp(0.01, 1.0);
+    let spendable_pct = w.remaining_percent.min(eff);
+    if spendable_pct < 10 {
+        return (0.0, Some(r), spendable_pct);
     }
-
-    // 2. Short 5h window (1x weight, only meaningful when resetting within 2h and >= 15% left)
-    if let Some(w) = find_main_window(acc, false) {
-        if let Some(r) = w.reset_at.filter(|r| *r > now && (*r - now) <= 2 * 3600) {
-            let dur = window_duration_secs(&w.label).unwrap_or(5 * 3600) as f64;
-            let left = (r - now) as f64;
-            let time_left_ratio = (left / dur).clamp(0.02, 1.0);
-            let spendable_pct = w.remaining_percent.min(eff);
-            if spendable_pct >= 15 {
-                let score = ((spendable_pct as f64) / 100.0) / time_left_ratio;
-                if score > best_score {
-                    best_score = score;
-                    best_weekly = false;
-                    best_reset = Some(r);
-                    best_pct = spendable_pct;
-                }
-            }
-        }
-    }
-
-    (best_score, best_weekly, best_reset, best_pct)
+    let score = ((spendable_pct as f64) / 100.0) / time_left_ratio;
+    (score, Some(r), spendable_pct)
 }
 
 /// Risk severity tuple (higher = needs attention sooner):
@@ -212,19 +193,31 @@ fn build_pick(
             build_default_reason(acc),
         )
     } else {
-        match strategy {
-            "use_before_reset" => {
-                let (score, is_weekly, dom_reset, pct) = waste_pressure(acc, now);
+        match normalize_strategy(strategy) {
+            "use_before_reset_weekly" => {
+                let (score, dom_reset, pct) = window_waste_pressure(acc, true, now);
                 if score > 0.0 {
                     use_before_reset = true;
                     reset_at = dom_reset;
                     let when = dom_reset.map(|r| format_countdown(r - now)).unwrap_or_default();
-                    let reason = if is_weekly {
-                        crate::tr!("週額度剩 {p}%，{when}重設", p = pct, when = when)
-                    } else {
-                        crate::tr!("5 小時剩 {p}%，{when}重設", p = pct, when = when)
-                    };
-                    (crate::tr!("將重設"), reason)
+                    (
+                        crate::tr!("週將重設"),
+                        crate::tr!("週額度剩 {p}%，{when}重設", p = pct, when = when),
+                    )
+                } else {
+                    (crate::tr!("充裕"), build_default_reason(acc))
+                }
+            }
+            "use_before_reset_5h" => {
+                let (score, dom_reset, pct) = window_waste_pressure(acc, false, now);
+                if score > 0.0 {
+                    use_before_reset = true;
+                    reset_at = dom_reset;
+                    let when = dom_reset.map(|r| format_countdown(r - now)).unwrap_or_default();
+                    (
+                        crate::tr!("5h 將重設"),
+                        crate::tr!("5 小時剩 {p}%，{when}重設", p = pct, when = when),
+                    )
                 } else {
                     (crate::tr!("充裕"), build_default_reason(acc))
                 }
@@ -255,15 +248,24 @@ fn build_pick(
             "pinned" => (crate::tr!("固定"), build_default_reason(acc)),
             _ => {
                 // Default "most_left" (keeps 30-min imminent reset bonus when >= 10% left)
-                let soon_30m = binding_window(acc)
+                let bind = binding_window(acc);
+                let soon_30m = bind
                     .and_then(|w| w.reset_at)
                     .filter(|r| *r > now && (*r - now) <= 30 * 60 && acc.effective_remaining >= 10);
                 if let Some(r) = soon_30m {
                     use_before_reset = true;
                     reset_at = Some(r);
                     let mins = ((r - now) + 59) / 60;
+                    let is_weekly = bind
+                        .and_then(|w| window_duration_secs(&w.label))
+                        .is_some_and(|d| d >= 2 * 86400);
+                    let tag = if is_weekly {
+                        crate::tr!("週將重設")
+                    } else {
+                        crate::tr!("5h 將重設")
+                    };
                     (
-                        crate::tr!("將重設"),
+                        tag,
                         crate::tr!("{n} 分鐘後重設，建議優先使用", n = mins.max(1)),
                     )
                 } else {
@@ -305,14 +307,22 @@ fn rank_pool<'a>(
     now: i64,
 ) -> Vec<&'a AccountQuota> {
     let mut list = pool;
-    match strategy {
-        "use_before_reset" => {
+    match normalize_strategy(strategy) {
+        "use_before_reset_weekly" => {
             list.sort_by(|a, b| {
-                let (sa, wa, _, _) = waste_pressure(a, now);
-                let (sb, wb, _, _) = waste_pressure(b, now);
+                let (sa, _, _) = window_waste_pressure(a, true, now);
+                let (sb, _, _) = window_waste_pressure(b, true, now);
                 sb.partial_cmp(&sa)
                     .unwrap_or(Ordering::Equal)
-                    .then_with(|| wb.cmp(&wa))
+                    .then_with(|| compare_most_left(b, a))
+            });
+        }
+        "use_before_reset_5h" => {
+            list.sort_by(|a, b| {
+                let (sa, _, _) = window_waste_pressure(a, false, now);
+                let (sb, _, _) = window_waste_pressure(b, false, now);
+                sb.partial_cmp(&sa)
+                    .unwrap_or(Ordering::Equal)
                     .then_with(|| compare_most_left(b, a))
             });
         }
@@ -398,7 +408,10 @@ pub fn compute_ranked_picks(
         // Fallback to most_left when user hasn't pinned any valid account yet.
     }
 
-    let eff_strategy = if cfg.strategy == "pinned" { "most_left" } else { cfg.strategy };
+    let eff_strategy = {
+        let s = normalize_strategy(cfg.strategy);
+        if s == "pinned" { "most_left" } else { s }
+    };
 
     if cfg.scope == "per_provider" {
         for provider in [ProviderKind::Claude, ProviderKind::Antigravity, ProviderKind::Codex] {
@@ -414,7 +427,10 @@ pub fn compute_ranked_picks(
                 continue;
             }
             // For positive recommendation modes, prefer non-expired accounts when available.
-            let pool = if matches!(eff_strategy, "most_left" | "use_before_reset") {
+            let pool = if matches!(
+                eff_strategy,
+                "most_left" | "use_before_reset_weekly" | "use_before_reset_5h"
+            ) {
                 let active: Vec<&AccountQuota> = all_elig
                     .iter()
                     .copied()
@@ -437,7 +453,10 @@ pub fn compute_ranked_picks(
             .iter()
             .filter(|a| !taken.contains(&a.id) && eligible_for_strategy(a, eff_strategy))
             .collect();
-        let pool = if matches!(eff_strategy, "most_left" | "use_before_reset") {
+        let pool = if matches!(
+            eff_strategy,
+            "most_left" | "use_before_reset_weekly" | "use_before_reset_5h"
+        ) {
             let active: Vec<&AccountQuota> = all_elig
                 .iter()
                 .copied()
@@ -483,28 +502,42 @@ mod tests {
     }
 
     #[test]
-    fn use_before_reset_protects_weekly_allowance_over_far_or_small_windows() {
+    fn weekly_and_5h_reset_strategies_rank_their_own_windows_independently() {
         let now = 1_000_000;
-        // A: 70% weekly left, resets in 20h -> huge weekly waste risk
+        // A: 70% weekly left, resets in 20h; 5h resets in 4h
         let a = mk("ag:a", ProviderKind::Antigravity, "A", 90, Some(now + 4 * 3600), 70, Some(now + 20 * 3600));
-        // B: 95% weekly left, resets in 6 days -> plenty of time
+        // B: 95% weekly left, resets in 6 days; 5h resets in 4h
         let b = mk("ag:b", ProviderKind::Antigravity, "B", 100, Some(now + 4 * 3600), 95, Some(now + 6 * 86400));
-        // C: 50% 5h left, resets in 40m, but weekly resets in 6 days
-        let c = mk("ag:c", ProviderKind::Antigravity, "C", 50, Some(now + 40 * 60), 80, Some(now + 6 * 86400));
+        // C: 60% 5h left, resets in 40m; weekly resets in 6 days
+        let c = mk("ag:c", ProviderKind::Antigravity, "C", 60, Some(now + 40 * 60), 80, Some(now + 6 * 86400));
 
-        let cfg = RankConfig {
-            strategy: "use_before_reset",
+        // Weekly mode: A wins (weekly pool expiring soonest with big balance)
+        let cfg_wk = RankConfig {
+            strategy: "use_before_reset_weekly",
             scope: "global",
             count: 3,
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
         };
-        let picks = compute_ranked_picks(&[b, c, a], &HashMap::new(), &cfg, now);
-        assert_eq!(picks[0].account_name, "A");
-        assert!(picks[0].use_before_reset);
-        assert_eq!(picks[1].account_name, "C");
-        assert_eq!(picks[2].account_name, "B");
+        let picks_wk = compute_ranked_picks(&[b.clone(), c.clone(), a.clone()], &HashMap::new(), &cfg_wk, now);
+        assert_eq!(picks_wk[0].account_name, "A");
+        assert!(picks_wk[0].use_before_reset);
+        assert_eq!(picks_wk[0].tag, "週將重設");
+
+        // 5h mode: C wins (5h pool resetting in 40m with 60% spendable)
+        let cfg_5h = RankConfig {
+            strategy: "use_before_reset_5h",
+            scope: "global",
+            count: 3,
+            pin_active: false,
+            active_id: None,
+            pinned_ids: &[],
+        };
+        let picks_5h = compute_ranked_picks(&[b, c, a], &HashMap::new(), &cfg_5h, now);
+        assert_eq!(picks_5h[0].account_name, "C");
+        assert!(picks_5h[0].use_before_reset);
+        assert_eq!(picks_5h[0].tag, "5h 將重設");
     }
 
     #[test]
