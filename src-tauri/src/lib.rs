@@ -1830,12 +1830,13 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
 fn is_usable(a: &AccountQuota) -> bool {
     a.status == "ok"
         || a.status == "stale"
-        || (a.status == "expired" && !a.primary_windows.is_empty())
+        || ((a.status == "expired" || a.status == "idle") && !a.primary_windows.is_empty())
 }
 
 /// Fresh this round, or deliberately not re-fetched yet (min interval, no error).
+/// Idle accounts count too: they are skipped on purpose, not failing.
 fn is_live(a: &AccountQuota) -> bool {
-    a.status == "ok" || (a.status == "stale" && a.error.is_none())
+    a.status == "ok" || a.status == "idle" || (a.status == "stale" && a.error.is_none())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

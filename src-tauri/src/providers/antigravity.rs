@@ -139,16 +139,12 @@ async fn fetch_antigravity_quota_at(
         .unwrap_or("");
     let env_client_id = std::env::var("T3_DESKCAT_AG_CLIENT_ID").ok();
     let env_client_secret = std::env::var("T3_DESKCAT_AG_CLIENT_SECRET").ok();
-    // New-format files have no client: borrow it from an older `acp_token.json`
-    // of any Antigravity account (they all use the Antigravity app's client).
-    let sibling = if t3_token.is_some() { sibling_client(token_path) } else { None };
     let client_id = parsed
         .get("client_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or(env_client_id.as_deref())
-        .or(sibling.as_ref().map(|s| s.0.as_str()))
         .unwrap_or("");
     let client_secret = parsed
         .get("client_secret")
@@ -156,7 +152,6 @@ async fn fetch_antigravity_quota_at(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or(env_client_secret.as_deref())
-        .or(sibling.as_ref().map(|s| s.1.as_str()))
         .unwrap_or("");
     let token_uri = parsed
         .get("token_uri")
@@ -189,6 +184,20 @@ async fn fetch_antigravity_quota_at(
         None
     };
 
+    // T3 0.1.11+ / agy 1.5.x sign-ins: only agy renews the token, during a turn, so an
+    // expired one means the account has sat unused for about an hour. DeskCat never
+    // renews it itself: refreshing many personal Google accounts in the background
+    // from one machine is the pattern Google treats as account pooling. Keep the
+    // last-known numbers (marked idle) and send nothing until agy renews the file.
+    if access_token.is_none() && t3_token.is_some() {
+        let (status, msg) = if refresh_token.is_empty() {
+            ("expired", crate::tr!("缺少 Refresh Token"))
+        } else {
+            ("idle", crate::tr!("閒置超過 1 小時：用這個帳號跑一次對話就會恢復即時額度"))
+        };
+        return FetchOutcome::local(error_account(id, name, now, status, msg));
+    }
+
     // 2. Otherwise check our in-memory refreshed-token cache before hitting Google OAuth.
     let rt_hash = hash_str(refresh_token);
     if access_token.is_none() && !refresh_token.is_empty() {
@@ -217,12 +226,8 @@ async fn fetch_antigravity_quota_at(
                 id,
                 name,
                 now,
-                if t3_token.is_some() { "expired" } else { "error" },
-                if t3_token.is_some() {
-                    crate::tr!("憑證已過期：開啟 Antigravity（或 T3 Code）會自動更新")
-                } else {
-                    crate::tr!("憑證缺少 client_id / client_secret")
-                },
+                "error",
+                crate::tr!("憑證缺少 client_id / client_secret"),
             ));
         }
         match refresh_google_token(client, token_uri, client_id, client_secret, refresh_token, now)
@@ -388,22 +393,6 @@ async fn fetch_antigravity_quota_at(
 
 /// Find an OAuth client (id, secret) in any `<instance>/antigravity-acp/acp_token.json`
 /// next to this account's token. Read-only; nothing is written.
-fn sibling_client(token_path: &Path) -> Option<(String, String)> {
-    // token_path = .../providers/antigravity/<hash>/antigravity-acp/<file>
-    let root = token_path.parent()?.parent()?.parent()?;
-    for entry in fs::read_dir(root).ok()?.flatten() {
-        let p = entry.path().join("antigravity-acp").join("acp_token.json");
-        let Ok(raw) = fs::read_to_string(&p) else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(&raw) else { continue };
-        let id = v.get("client_id").and_then(Value::as_str).unwrap_or("").trim();
-        let secret = v.get("client_secret").and_then(Value::as_str).unwrap_or("").trim();
-        if !id.is_empty() && !secret.is_empty() {
-            return Some((id.to_string(), secret.to_string()));
-        }
-    }
-    None
-}
-
 async fn refresh_google_token(
     client: &Client,
     token_uri: &str,
@@ -804,9 +793,19 @@ mod tests {
         fs::create_dir_all(t3_expired_no_client.parent().unwrap()).unwrap();
         fs::write(&t3_expired_no_client, r#"{"token":{"access_token":"old","refresh_token":"rt","expiry":"2020-01-01T00:00:00Z"}}"#).unwrap();
         let no_cli = fetch_antigravity_quota(&client, "ag:c".into(), "C".into(), &t3_expired_no_client, false).await;
-        assert_eq!(no_cli.quota.status, "expired");
+        assert_eq!(no_cli.quota.status, "idle");
         assert!(!no_cli.network_hit);
-        assert!(no_cli.quota.error.as_deref().unwrap_or("").contains("Antigravity"));
+
+        // An idle T3 sign-in is never refreshed by DeskCat, even with a client at hand
+        // (env override or an old acp_token.json next to it).
+        fs::write(
+            t3_expired_no_client.with_file_name("acp_token.json"),
+            r#"{"client_id":"cid","client_secret":"csec","refresh_token":"rt2","token_uri":"http://127.0.0.1:9/oauth/token"}"#,
+        )
+        .unwrap();
+        let idle = fetch_antigravity_quota(&client, "ag:c2".into(), "C".into(), &t3_expired_no_client, false).await;
+        assert_eq!(idle.quota.status, "idle");
+        assert!(!idle.network_hit);
 
         let _ = fs::remove_dir_all(&dir);
     }

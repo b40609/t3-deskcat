@@ -189,7 +189,8 @@ function relReset(resetAt) {
 }
 
 function accountHtml(a) {
-  const lastKnown = a.status === "expired" && a.windows.length > 0;
+  const idle = a.status === "idle";
+  const lastKnown = (a.status === "expired" || idle) && a.windows.length > 0;
   const plan = a.plan ? `<span class="plan">${esc(a.plan)}</span>` : "";
   const fi = fcInfo(a.forecast);
   const u = a.usage && a.usage.requests > 0 ? a.usage : null;
@@ -197,7 +198,8 @@ function accountHtml(a) {
   const fc = fi ? `<span class="fc ${fi.lv}">⚠ ${esc(windowName(a.forecast.label, a.provider))} ${fi.at} 耗盡${fi.gap ? " · " + gapText(fi.gap) : ""} · ${a.forecast.ratePerHour}%/h</span>` : "";
   const extras = usage || fc ? `<div class="extras">${usage}${fc}</div>` : "";
   let body = "";
-  if (a.status === "expired" && !lastKnown) body = `<div class="status">${esc(a.error || "授權已過期，請在 T3 重新登入")}</div>`;
+  if (idle && !lastKnown) body = `<div class="status cool">${esc(a.error || "閒置中，用一次即更新")}</div>`;
+  else if (a.status === "expired" && !lastKnown) body = `<div class="status">${esc(a.error || "授權已過期，請在 T3 重新登入")}</div>`;
   else if (a.status === "cooldown") body = `<div class="status cool">${esc(a.error || "查詢受限，稍後自動重試")}</div>`;
   else if (a.status !== "ok" && a.status !== "stale" && !lastKnown) body = `<div class="status">${esc(a.error || "讀取失敗")}</div>`;
   else {
@@ -211,7 +213,8 @@ function accountHtml(a) {
       return `<div class="wrow"><div class="wl"><b>${esc(windowName(w.label, a.provider))}${mark}</b><span>${w.resetAt ? esc(relReset(w.resetAt)) : ""}</span><i>${val}%</i></div>
         <div class="bar"><span class="b-${cls}" style="width:${val}%"></span></div></div>`;
     }).join("")}</div>` : `<div class="status cool">沒有用量資料</div>`;
-    if (lastKnown) body += `<div class="note warn">憑證過期，顯示最後一次的數字</div>`;
+    if (lastKnown && idle) body += `<div class="note">閒置中，顯示最後一次的數字（${age(a.updatedAt)}）</div>`;
+    else if (lastKnown) body += `<div class="note warn">憑證過期，顯示最後一次的數字</div>`;
     else if (a.status === "stale" && nowSec() - a.updatedAt >= 600) body += `<div class="note">資料時間 ${age(a.updatedAt)}</div>`;
   }
   return `<div class="acc ${lastKnown ? "last-known" : ""}">

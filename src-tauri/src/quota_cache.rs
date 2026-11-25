@@ -16,7 +16,7 @@
 
 use crate::models::AccountQuota;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -51,6 +51,14 @@ pub struct QuotaCache {
     pub last_error: HashMap<String, String>,
     #[serde(default)]
     pub last_expired: HashMap<String, String>,
+    /// Subset of `last_expired` whose token simply lapsed from disuse ("idle"),
+    /// as opposed to a sign-in the server rejected.
+    #[serde(default)]
+    pub last_idle: HashSet<String>,
+    /// One-time migration: Antigravity accounts marked expired before "idle" existed
+    /// are re-checked once so a lapsed token shows as idle instead.
+    #[serde(default)]
+    idle_migrated: bool,
     #[serde(skip)]
     dirty: bool,
 }
@@ -61,10 +69,24 @@ fn cache_path() -> Option<PathBuf> {
 
 impl QuotaCache {
     pub fn load() -> Self {
-        cache_path()
+        let mut cache: Self = cache_path()
             .and_then(|p| fs::read_to_string(p).ok())
             .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cache.migrate_idle();
+        cache
+    }
+
+    fn migrate_idle(&mut self) {
+        if self.idle_migrated {
+            return;
+        }
+        // T3 Antigravity instances ("ag:antigravity", "ag:antigravity_*"); the agy CLI ("ag:agy")
+        // and legacy files keep their state.
+        self.last_expired
+            .retain(|id, _| !id.starts_with("ag:antigravity"));
+        self.idle_migrated = true;
+        self.dirty = true;
     }
 
     pub fn save(&mut self) {
@@ -118,9 +140,15 @@ impl QuotaCache {
 
     /// Clear local expired state (e.g. when a credential file's mtime changed).
     pub fn clear_expired(&mut self, id: &str) {
-        if self.last_expired.remove(id).is_some() {
+        let had_idle = self.last_idle.remove(id);
+        if self.last_expired.remove(id).is_some() || had_idle {
             self.dirty = true;
         }
+    }
+
+    /// "expired" or "idle": the status to keep showing for a known-expired account.
+    fn expired_status(&self, id: &str) -> &'static str {
+        if self.last_idle.contains(id) { "idle" } else { "expired" }
     }
 
     /// Whether we are allowed to hit the network for this account right now.
@@ -174,6 +202,7 @@ impl QuotaCache {
                 self.backoff.remove(&fresh.id);
                 self.last_error.remove(&fresh.id);
                 self.last_expired.remove(&fresh.id);
+                self.last_idle.remove(&fresh.id);
                 // Anchor `last_attempt` to at least `fresh.updated_at` so a fresh zero-network
                 // local read (`.claude.json` / Codex `.jsonl`) also satisfies the refresh interval
                 // instead of triggering a redundant HTTP call on the very next 30 s tick.
@@ -190,9 +219,10 @@ impl QuotaCache {
                 self.last_good.insert(fresh.id.clone(), fresh.clone());
                 fresh
             }
-            // Auth problem: keep showing the last-known numbers (marked as such)
-            // instead of an empty row; the status stays "expired".
-            "expired" => {
+            // Auth problem or an idle (lapsed) token: keep showing the last-known
+            // numbers (marked as such) instead of an empty row; the status is kept.
+            "expired" | "idle" => {
+                let status = if fresh.status == "idle" { "idle" } else { "expired" };
                 self.backoff.remove(&fresh.id);
                 self.last_error.remove(&fresh.id);
                 let note = fresh.error.clone();
@@ -201,13 +231,19 @@ impl QuotaCache {
                 } else {
                     self.last_expired.insert(fresh.id.clone(), crate::tr!("憑證已過期"));
                 }
-                match self.cached_view_with_status(&fresh, now, "expired", note) {
+                if status == "idle" {
+                    self.last_idle.insert(fresh.id.clone());
+                } else {
+                    self.last_idle.remove(&fresh.id);
+                }
+                match self.cached_view_with_status(&fresh, now, status, note) {
                     Some(last) => last,
                     None => fresh,
                 }
             }
             "cooldown" => {
                 self.last_expired.remove(&fresh.id);
+                self.last_idle.remove(&fresh.id);
                 let b = self.backoff.entry(fresh.id.clone()).or_default();
                 if !b.is_rate_limit {
                     b.strikes = 0;
@@ -234,6 +270,7 @@ impl QuotaCache {
             }
             _ => {
                 self.last_expired.remove(&fresh.id);
+                self.last_idle.remove(&fresh.id);
                 let b = self.backoff.entry(fresh.id.clone()).or_default();
                 if b.is_rate_limit && b.next_allowed_at <= now {
                     b.strikes = 0;
@@ -266,10 +303,11 @@ impl QuotaCache {
 
         if let Some(exp_msg) = self.last_expired.get(id) {
             let note = Some(exp_msg.clone());
-            f.status = "expired".to_string();
+            let status = self.expired_status(id);
+            f.status = status.to_string();
             f.error = note.clone();
             return self
-                .cached_view_with_status(&f, now, "expired", note)
+                .cached_view_with_status(&f, now, status, note)
                 .unwrap_or(f);
         }
 
@@ -450,6 +488,54 @@ mod tests {
         err.effective_remaining = 0;
         let s = c.reconcile(err, 2500);
         assert_eq!(s.effective_remaining, 100);
+    }
+
+    #[test]
+    fn migration_rechecks_old_antigravity_expired_entries_once() {
+        let mut c = QuotaCache::default();
+        c.last_expired.insert("ag:antigravity_ryan".into(), "old".into());
+        c.last_expired.insert("ag:agy".into(), "cli".into());
+        c.last_expired.insert("claude:a".into(), "x".into());
+        c.migrate_idle();
+        assert!(!c.is_known_expired("ag:antigravity_ryan"));
+        assert!(c.is_known_expired("ag:agy"));
+        assert!(c.is_known_expired("claude:a"));
+        // Runs once only.
+        c.last_expired.insert("ag:antigravity_ryan".into(), "new".into());
+        c.migrate_idle();
+        assert!(c.is_known_expired("ag:antigravity_ryan"));
+    }
+
+    #[test]
+    fn idle_keeps_last_known_numbers_and_status_until_credentials_change() {
+        let mut c = QuotaCache::default();
+        c.reconcile(acc("ok", 60, Some(5000)), 1000);
+        let mut fresh = acc("idle", 0, None);
+        fresh.primary_windows.clear();
+        fresh.error = Some("idle".into());
+        let shown = c.reconcile(fresh, 1100);
+        assert_eq!(shown.status, "idle");
+        assert_eq!(shown.effective_remaining, 60);
+        assert!(c.is_known_expired("claude:a"));
+
+        // Skipped rounds keep "idle", never "expired".
+        let sk = c.skipped("claude:a", acc("ok", 0, None), 1200);
+        assert_eq!(sk.status, "idle");
+        assert_eq!(sk.effective_remaining, 60);
+        // The window reset while idle -> shown as full.
+        let later = c.skipped("claude:a", acc("ok", 0, None), 6000);
+        assert_eq!(later.effective_remaining, 100);
+
+        // A real auth failure afterwards turns it into "expired".
+        let mut rejected = acc("expired", 0, None);
+        rejected.primary_windows.clear();
+        assert_eq!(c.reconcile(rejected, 1300).status, "expired");
+        assert_eq!(c.skipped("claude:a", acc("ok", 0, None), 1400).status, "expired");
+
+        // A credential change clears both.
+        c.clear_expired("claude:a");
+        assert!(!c.is_known_expired("claude:a"));
+        assert!(c.last_idle.is_empty());
     }
 
     #[test]

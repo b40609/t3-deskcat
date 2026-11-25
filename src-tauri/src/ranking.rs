@@ -50,7 +50,7 @@ pub struct RankConfig<'a> {
 pub fn is_usable(a: &AccountQuota) -> bool {
     a.status == "ok"
         || a.status == "stale"
-        || (a.status == "expired" && !a.primary_windows.is_empty())
+        || ((a.status == "expired" || a.status == "idle") && !a.primary_windows.is_empty())
 }
 
 pub fn binding_window(acc: &AccountQuota) -> Option<&QuotaWindow> {
@@ -184,8 +184,12 @@ fn build_pick(
 ) -> SmartPick {
     let mut reset_at = binding_window(acc).and_then(|w| w.reset_at).filter(|r| *r > now);
     let mut use_before_reset = false;
-    let note = (acc.status == "expired")
-        .then(|| crate::tr!("最後已知額度（憑證已過期，重新使用一次即自動更新）"));
+    let note = match acc.status.as_str() {
+        "expired" => Some(crate::tr!("最後已知額度（憑證已過期，重新使用一次即自動更新）")),
+        // Unused accounts only change when a window resets, which the cache applies.
+        "idle" => Some(crate::tr!("最後已知額度（閒置中，用一次即更新）")),
+        _ => None,
+    };
 
     let (tag, reason) = if is_active {
         (

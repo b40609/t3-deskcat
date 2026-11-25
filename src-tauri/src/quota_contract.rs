@@ -69,7 +69,8 @@ pub struct ContractAccount {
     /// "t3" | "native_cli" | "extra_dir" | "legacy" | "unknown"
     pub source_kind: String,
     pub bindings: ContractBindings,
-    /// "ok" | "stale" | "cooldown" | "expired" | "error"
+    /// "ok" | "stale" | "cooldown" | "idle" | "expired" | "error"
+    /// ("idle": the token lapsed from disuse; numbers are last-known with resets applied.)
     pub status: String,
     /// True when numeric windows represent usable quota (not empty error/expired without data).
     pub usable: bool,
@@ -172,7 +173,7 @@ fn build_account(
     }
 
     let has_numbers = !windows.is_empty();
-    let usable = has_numbers && matches!(acc.status.as_str(), "ok" | "stale");
+    let usable = has_numbers && matches!(acc.status.as_str(), "ok" | "stale" | "idle");
     let stale = acc.status != "ok";
     let age_seconds = if acc.updated_at > 0 {
         (now - acc.updated_at).max(0)

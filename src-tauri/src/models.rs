@@ -49,7 +49,7 @@ pub struct AccountQuota {
     pub effective_remaining: i32,
     pub primary_windows: Vec<QuotaWindow>,
     pub extra_windows: Vec<QuotaWindow>,
-    pub status: String, // "ok" | "stale" (cached) | "cooldown" | "error" | "expired"
+    pub status: String, // "ok" | "stale" (cached) | "cooldown" | "error" | "expired" | "idle" (unused, last-known)
     pub error: Option<String>,
     pub updated_at: i64,
 }

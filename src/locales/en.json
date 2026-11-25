@@ -504,5 +504,8 @@
   "目前：iOS 雙環主題（點此切換經典）": "Theme: iOS Rings (click for Classic)",
   "目前：經典主題（點此切換玻璃磚）": "Theme: Classic (click for Liquid Glass)",
   "週": "Wk",
-  "月": "Mo"
+  "月": "Mo",
+  "閒置": "Idle",
+  "閒置超過 1 小時：用這個帳號跑一次對話就會恢復即時額度": "Idle for over an hour: run one turn with this account to get live quota again",
+  "最後已知額度（閒置中，用一次即更新）": "Last known quota (idle, updates on next use)"
 }

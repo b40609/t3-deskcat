@@ -16,7 +16,7 @@ export interface AccountQuota {
   effectiveRemaining: number;
   primaryWindows: QuotaWindow[];
   extraWindows: QuotaWindow[];
-  status: "ok" | "error" | "expired" | string;
+  status: "ok" | "error" | "expired" | "idle" | string;
   error: string | null;
   updatedAt: number;
 }

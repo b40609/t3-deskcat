@@ -73,7 +73,11 @@ export function toneOf(pct: number, s: AppSettings, accId?: string): Tone {
 }
 
 function usable(a: AccountQuota) {
-  return a.status === "ok" || a.status === "stale" || (a.status === "expired" && a.primaryWindows.length > 0);
+  return (
+    a.status === "ok" ||
+    a.status === "stale" ||
+    ((a.status === "expired" || a.status === "idle") && a.primaryWindows.length > 0)
+  );
 }
 
 /** Session and weekly windows. Model- or pool-specific windows ("Wk Sonnet",

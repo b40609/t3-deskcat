@@ -529,9 +529,11 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
+  // Unused account (token lapsed): last-known numbers, shown neutrally.
+  const isIdle = acc.status === "idle";
   // Expired but with last-known numbers: show them, marked.
-  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip = dupNames.has(nameKey)
     ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
@@ -552,7 +554,9 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
     body = wins.length
       ? wins.map((w) => renderWindow(w, acc.provider, acc.id)).join("")
       : `<span class="status stale">${t("沒有用量資料")}</span>`;
-    if (isLastKnown) {
+    if (isIdle && isLastKnown) {
+      note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${t("閒置")} · ${ageLabel(acc.updatedAt)}</span>`;
+    } else if (isLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")} · ${ageLabel(acc.updatedAt)}</span>`;
     } else if (isStale && acc.error) {
       const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -673,8 +677,10 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  // Unused account (token lapsed): last-known numbers, shown neutrally.
+  const isIdle = acc.status === "idle";
+  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -682,7 +688,9 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
       : "";
 
   let badge = "";
-  if (isLastKnown) {
+  if (isIdle && isLastKnown) {
+    badge = `<span class="d-badge" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></span>`;
+  } else if (isLastKnown) {
     badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`;
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -765,8 +773,10 @@ function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupName
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  // Unused account (token lapsed): last-known numbers, shown neutrally.
+  const isIdle = acc.status === "idle";
+  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -788,7 +798,9 @@ function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupName
   } else {
     const resetShort = wins[0]?.resetAt ? formatResetShort(wins[0].resetAt) : "";
     const statusParts: string[] = [];
-    if (isLastKnown) {
+    if (isIdle && isLastKnown) {
+      statusParts.push(`<span class="ios-fc" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></span>`);
+    } else if (isLastKnown) {
       statusParts.push(`<span class="ios-fc warn urgent"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`);
     } else if (isStale && acc.error) {
       const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -852,8 +864,10 @@ function renderGlassAccountCard(
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  const isLastKnown = isExpired && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown;
+  // Unused account (token lapsed): last-known numbers, shown neutrally.
+  const isIdle = acc.status === "idle";
+  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -867,7 +881,9 @@ function renderGlassAccountCard(
   const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
 
   let statusHtml = "";
-  if (isLastKnown) {
+  if (isIdle && isLastKnown) {
+    statusHtml = `<div class="g-fc" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></div>`;
+  } else if (isLastKnown) {
     statusHtml = `<div class="g-fc warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></div>`;
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -985,7 +1001,7 @@ function renderAccounts(snap: DashboardSnapshot) {
   // Idle expired tokens already show per-row badges and the bottom expired group;
   // reserve the top red alert banner for real fetch / connection failures and name them.
   const badAccounts = visible.filter(
-    (a) => a.status !== "ok" && a.status !== "stale" && a.status !== "expired",
+    (a) => a.status !== "ok" && a.status !== "stale" && a.status !== "expired" && a.status !== "idle",
   );
   accountsAlert.classList.toggle("hidden", badAccounts.length === 0);
   if (badAccounts.length > 0) {
