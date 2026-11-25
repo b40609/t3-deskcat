@@ -477,10 +477,19 @@ function ageLabel(ts: number): string {
 function pickWindows(acc: AccountQuota, showExtra: boolean) {
   let wins = [...acc.primaryWindows, ...(showExtra ? acc.extraWindows : [])];
   if (cfg().compactAccounts) {
-    // Only the 5-hour and weekly limits; model and pool limits are dropped.
+    // One tightest limit per account (from 5h/weekly main windows; ties keep the shorter window).
     const { short, long } = mainWindows(acc);
     const main = [short, long].filter((w): w is NonNullable<typeof w> => !!w);
-    if (main.length) wins = main;
+    const candidates = main.length ? main : wins;
+    if (candidates.length) {
+      let tightest = candidates[0];
+      for (const w of candidates.slice(1)) {
+        if (w.remainingPercent < tightest.remainingPercent) {
+          tightest = w;
+        }
+      }
+      wins = [tightest];
+    }
   }
   return wins;
 }
@@ -883,10 +892,10 @@ function syncSettingsForm(s: AppSettings) {
   segAccDetail.style.setProperty("--i", String(detailIdx));
   accDetailHint.textContent =
     detailMode === "compact"
-      ? t("每個帳號只顯示 5 小時與每週限制")
+      ? t("精簡：每個帳號只顯示最吃緊的 1 條額度（5 小時或每週中剩餘最低者）")
       : detailMode === "all"
-        ? t("顯示主要限制與 Antigravity 次要池")
-        : t("顯示每個帳號的主要限制");
+        ? t("全部：顯示主要額度，外加 Antigravity 次要池（Claude/GPT 共用池、Argon）")
+        : t("標準：顯示每個帳號的主要額度（5 小時、每週及單模型限制）");
   inpShowForecast.checked = s.showForecast !== false;
   inpShowUsage.checked = s.showUsageStats === true;
   inpMobile.checked = s.mobileEnabled === true;
