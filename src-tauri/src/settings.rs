@@ -78,7 +78,7 @@ pub fn sanitize(s: &mut AppSettings) {
     if !matches!(s.panel_theme.as_str(), "glass" | "ios" | "default") {
         s.panel_theme = "glass".to_string();
     }
-    s.panel_opacity = s.panel_opacity.clamp(45, 100);
+    s.panel_opacity = s.panel_opacity.clamp(0, 100);
     s.panel_width = s.panel_width.map(|w| w.clamp(320, 680));
     s.panel_height = s.panel_height.map(|h| h.clamp(420, 1080));
     s.hotkey = s.hotkey.trim().to_string();
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(s.hotkey, "Ctrl+Alt+Q");
         assert_eq!(s.panel_layout, "classic");
         assert_eq!(s.panel_theme, "glass");
-        assert_eq!(s.panel_opacity, 100);
+        assert_eq!(s.panel_opacity, 45);
         assert!(!s.panel_pinned);
         assert!(s.panel_x.is_none() && s.panel_width.is_none());
         assert_eq!(s.claude_min_interval_secs, 90);
@@ -195,7 +195,7 @@ mod tests {
             panel_position: "floating".into(),
             panel_layout: "grid".into(),
             panel_theme: "vaporwave".into(),
-            panel_opacity: 10,
+            panel_opacity: 150,
             panel_width: Some(120),
             panel_height: Some(2500),
             hotkey: "  Ctrl+Alt+K  ".into(),
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(s.panel_position, "pet");
         assert_eq!(s.panel_layout, "classic");
         assert_eq!(s.panel_theme, "glass");
-        assert_eq!(s.panel_opacity, 45);
+        assert_eq!(s.panel_opacity, 100);
         assert_eq!(s.panel_width, Some(320));
         assert_eq!(s.panel_height, Some(1080));
         assert_eq!(s.hotkey, "Ctrl+Alt+K");

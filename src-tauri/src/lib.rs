@@ -366,6 +366,7 @@ fn show_panel_tab(app: &AppHandle, tab: &str) -> tauri::Result<()> {
             spawn_on_demand_refresh(app);
         }
         let _ = panel.unminimize();
+        apply_panel_backdrop_from_state(app, &panel);
         panel.show()?;
         panel.set_focus()?;
         let _ = panel.emit("open-dash-tab", tab);
@@ -438,6 +439,9 @@ fn update_settings(
     let new_hotkey;
     let old_panel_position;
     let new_panel_position;
+    let new_panel_theme;
+    let new_panel_opacity;
+    let new_appearance;
     let lang_changed;
     let new_pet_size;
     let new_pet_theme;
@@ -484,6 +488,9 @@ fn update_settings(
         new_startup = clean.launch_at_startup;
         new_hotkey = clean.hotkey.clone();
         new_panel_position = clean.panel_position.clone();
+        new_panel_theme = clean.panel_theme.clone();
+        new_panel_opacity = clean.panel_opacity;
+        new_appearance = clean.appearance.clone();
 
         if let Some(ref mut snap) = guard.snapshot {
             recompute_snapshot_metrics(snap, &clean);
@@ -515,6 +522,10 @@ fn update_settings(
                 let _ = b.hide();
             }
         }
+    }
+
+    if let Some(panel) = app.get_webview_window("panel") {
+        apply_panel_backdrop(&panel, &new_panel_theme, new_panel_opacity, &new_appearance);
     }
 
     if new_panel_position != old_panel_position {
@@ -595,6 +606,7 @@ fn toggle_panel_window(app: &AppHandle) -> Option<bool> {
         apply_panel_pin_state(&panel, pinned);
         position_panel(app, &panel);
         let _ = panel.unminimize();
+        apply_panel_backdrop_from_state(app, &panel);
         let _ = panel.show();
         let _ = panel.set_focus();
         spawn_on_demand_refresh(app);
@@ -648,6 +660,84 @@ fn hide_panel(app: AppHandle, state: tauri::State<SharedState>, force: Option<bo
     }
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();
+    }
+}
+
+/// Applies native Windows 11 DWM Acrylic blur + native rounded corners when the panel
+/// background is translucent (`opacity < 100`), or clears it when fully opaque (`opacity == 100`).
+fn apply_panel_backdrop(
+    panel: &tauri::WebviewWindow,
+    _panel_theme: &str,
+    panel_opacity: u32,
+    appearance: &str,
+) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::c_void;
+        use tauri::window::{Effect, EffectsBuilder};
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        };
+        use windows_sys::Win32::UI::Controls::MARGINS;
+
+        let dark_mode: i32 = match appearance {
+            "light" => 0,
+            "dark" => 1,
+            _ => match panel.theme() {
+                Ok(tauri::Theme::Light) => 0,
+                _ => 1,
+            },
+        };
+
+        if let Ok(hwnd_raw) = panel.hwnd() {
+            let hwnd = hwnd_raw.0 as windows_sys::Win32::Foundation::HWND;
+            let corner_pref: u32 = DWMWCP_ROUND as u32;
+            let margins = MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            };
+            unsafe {
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                    &dark_mode as *const i32 as *const c_void,
+                    std::mem::size_of::<i32>() as u32,
+                );
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                    &corner_pref as *const u32 as *const c_void,
+                    std::mem::size_of::<u32>() as u32,
+                );
+                let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+            }
+        }
+
+        if panel_opacity < 100 {
+            let effects = EffectsBuilder::new().effect(Effect::Acrylic).build();
+            let _ = panel.set_effects(effects);
+        } else {
+            let _ = panel.set_effects(None);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (panel, panel_opacity, appearance);
+    }
+}
+
+fn apply_panel_backdrop_from_state(app: &AppHandle, panel: &tauri::WebviewWindow) {
+    if let Some(state) = app.try_state::<SharedState>() {
+        if let Ok(g) = state.0.lock() {
+            let theme = g.settings.panel_theme.clone();
+            let opacity = g.settings.panel_opacity;
+            let appearance = g.settings.appearance.clone();
+            drop(g);
+            apply_panel_backdrop(panel, &theme, opacity, &appearance);
+        }
     }
 }
 
@@ -2531,6 +2621,12 @@ pub fn run() {
             if let Some(ref panel) = app.get_webview_window("panel") {
                 apply_saved_panel_size(&handle, panel);
                 apply_panel_pin_state(panel, loaded_settings.panel_pinned);
+                apply_panel_backdrop(
+                    panel,
+                    &loaded_settings.panel_theme,
+                    loaded_settings.panel_opacity,
+                    &loaded_settings.appearance,
+                );
                 position_panel(&handle, panel);
                 let _ = panel.show();
                 let _ = panel.set_focus();

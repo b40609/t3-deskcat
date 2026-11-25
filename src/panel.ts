@@ -163,7 +163,7 @@ const fallbackSettings: AppSettings = {
   panelPosition: "pet",
   panelLayout: "classic",
   panelTheme: "glass",
-  panelOpacity: 100,
+  panelOpacity: 45,
   panelPinned: false,
   panelX: null,
   panelY: null,
@@ -1289,7 +1289,7 @@ function syncSettingsForm(s: AppSettings) {
 
   setRangeIfIdle(inpPetOpacity, s.petOpacity ?? 100);
   valPetOpacity.textContent = `${s.petOpacity ?? 100}%`;
-  const pOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 100));
+  const pOpacity = Math.max(0, Math.min(100, s.panelOpacity ?? 45));
   setRangeIfIdle(inpPanelOpacity, pOpacity);
   valPanelOpacity.textContent = `${pOpacity}%`;
   rowPanelLayout.classList.toggle("hidden", (s.panelTheme ?? "glass") !== "default");
@@ -1451,9 +1451,10 @@ function applyDisplay(s: AppSettings) {
   root.style.setProperty("--ui-zoom", String((s.uiScale ?? 90) / 100));
 
   const uiTheme: PanelTheme = s.panelTheme === "ios" || s.panelTheme === "default" ? s.panelTheme : "glass";
-  const panelOpacity = Math.max(45, Math.min(100, s.panelOpacity ?? 100));
+  const panelOpacity = Math.max(0, Math.min(100, s.panelOpacity ?? 45));
   root.dataset.uiTheme = uiTheme;
   shell.dataset.uiTheme = uiTheme;
+  shell.dataset.panelSolid = panelOpacity >= 100 ? "1" : "0";
   root.style.setProperty("--panel-alpha", String(panelOpacity / 100));
 
   const layout: PanelLayout = s.panelLayout === "dense" ? "dense" : "classic";
@@ -1545,6 +1546,7 @@ inpPanelOpacity.addEventListener("input", () => {
   const v = Number(inpPanelOpacity.value);
   valPanelOpacity.textContent = `${v}%`;
   document.documentElement.style.setProperty("--panel-alpha", String(v / 100));
+  shell.dataset.panelSolid = v >= 100 ? "1" : "0";
   commitSettings({ panelOpacity: v });
 });
 

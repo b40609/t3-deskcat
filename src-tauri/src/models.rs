@@ -280,7 +280,7 @@ pub struct AppSettings {
     /// Panel visual theme: "glass" (iOS 26 Liquid Glass Bento) | "ios" (iOS Battery Rings) | "default" (Obsidian/Ceramic)
     #[serde(default = "default_panel_theme")]
     pub panel_theme: String,
-    /// Panel background opacity in percent (45-100); text and meters stay 100% crisp.
+    /// Panel background opacity in percent (0-100); text and meters stay 100% crisp.
     #[serde(default = "default_panel_opacity")]
     pub panel_opacity: u32,
     /// Remembered desktop pinned state (stays open, non-always-on-top, shown on taskbar).
@@ -366,7 +366,7 @@ fn default_panel_theme() -> String {
     "glass".to_string()
 }
 fn default_panel_opacity() -> u32 {
-    100
+    45
 }
 fn default_hotkey() -> String {
     "Ctrl+Alt+Q".to_string()
