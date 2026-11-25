@@ -1,3 +1,9 @@
+#[cfg(all(not(debug_assertions), dev))]
+compile_error!(
+    "Release builds MUST enable `tauri/custom-protocol` so frontend assets from `../dist` are embedded \
+     instead of connecting to http://localhost:1420. Use `npm run build:exe` or `npm run deploy:local`."
+);
+
 mod activity;
 #[macro_use]
 mod i18n;
