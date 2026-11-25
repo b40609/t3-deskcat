@@ -10,6 +10,14 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Antigravity => "antigravity",
+            Self::Codex => "codex",
+        }
+    }
+
     pub fn short_label(self) -> &'static str {
         match self {
             Self::Claude => "Claude",
@@ -22,6 +30,10 @@ impl ProviderKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaWindow {
+    /// Stable machine-readable window/bucket identifier (e.g. "5h", "weekly",
+    /// "gemini-5h", "gemini-argon-weekly", "3p-weekly"). Optional for legacy cache files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub label: String,
     pub remaining_percent: i32,
     pub reset_at: Option<i64>,

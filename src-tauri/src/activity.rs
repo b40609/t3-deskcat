@@ -33,8 +33,8 @@ pub enum Kind {
 pub struct Src {
     pub account_id: String,
     pub kind: Kind,
-    /// Claude: config dir; Codex: codex home; Antigravity: brain dir.
-    pub dir: PathBuf,
+    /// Claude: config dir; Codex: codex home; Antigravity: one or more brain dirs.
+    pub dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -214,21 +214,22 @@ fn scan(list: &[Src]) -> Vec<(PathBuf, usize)> {
     let mut out = Vec::new();
     for (i, s) in list.iter().enumerate() {
         let mut files = Vec::new();
-        match s.kind {
-            Kind::Claude => collect(&s.dir.join("projects"), 4, cutoff, &mut files),
-            Kind::Codex => {
-                let today = chrono::Local::now().date_naive();
-                for d in [today, today.pred_opt().unwrap_or(today)] {
-                    let dir = s
-                        .dir
-                        .join("sessions")
-                        .join(d.format("%Y").to_string())
-                        .join(d.format("%m").to_string())
-                        .join(d.format("%d").to_string());
-                    collect(&dir, 1, cutoff, &mut files);
+        for dir in &s.dirs {
+            match s.kind {
+                Kind::Claude => collect(&dir.join("projects"), 4, cutoff, &mut files),
+                Kind::Codex => {
+                    let today = chrono::Local::now().date_naive();
+                    for d in [today, today.pred_opt().unwrap_or(today)] {
+                        let day_dir = dir
+                            .join("sessions")
+                            .join(d.format("%Y").to_string())
+                            .join(d.format("%m").to_string())
+                            .join(d.format("%d").to_string());
+                        collect(&day_dir, 1, cutoff, &mut files);
+                    }
                 }
+                Kind::Antigravity => collect_antigravity(dir, cutoff, &mut files),
             }
-            Kind::Antigravity => collect_antigravity(&s.dir, cutoff, &mut files),
         }
         out.extend(files.into_iter().map(|f| (f, i)));
     }

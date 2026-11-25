@@ -130,7 +130,7 @@ mod tests {
     fn acc(windows: &[(&str, i32, Option<i64>)]) -> AccountQuota {
         let primary: Vec<QuotaWindow> = windows
             .iter()
-            .map(|(l, p, r)| QuotaWindow { label: l.to_string(), remaining_percent: *p, reset_at: *r })
+            .map(|(l, p, r)| QuotaWindow { id: None, label: l.to_string(), remaining_percent: *p, reset_at: *r })
             .collect();
         let eff = primary.iter().filter(|w| !w.label.contains(' ')).map(|w| w.remaining_percent).min().unwrap();
         AccountQuota {

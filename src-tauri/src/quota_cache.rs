@@ -362,6 +362,7 @@ mod tests {
             plan: Some("Pro".into()),
             effective_remaining: pct,
             primary_windows: vec![QuotaWindow {
+                id: None,
                 label: "5h".into(),
                 remaining_percent: pct,
                 reset_at,

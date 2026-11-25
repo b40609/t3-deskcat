@@ -360,6 +360,14 @@ fn scoped_limits(body: &Value, existing: &[QuotaWindow]) -> Vec<QuotaWindow> {
             Some("session") => "5h",
             _ => "Wk",
         };
+        let span_id = if span == "5h" { "5h" } else { "weekly" };
+        let model_slug: String = model
+            .to_ascii_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
         let label = format!("{span} {model}");
         if existing.iter().chain(out.iter()).any(|w| w.label == label) {
             continue;
@@ -370,12 +378,23 @@ fn scoped_limits(body: &Value, existing: &[QuotaWindow]) -> Vec<QuotaWindow> {
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|d| d.timestamp());
         out.push(QuotaWindow {
+            id: Some(format!("{span_id}-{model_slug}")),
             label,
             remaining_percent: (100.0 - used).round().clamp(0.0, 100.0) as i32,
             reset_at,
         });
     }
     out
+}
+
+fn claude_window_id(label: &str) -> String {
+    match label {
+        "5h" => "5h".to_string(),
+        "Wk" => "weekly".to_string(),
+        "Wk Sonnet" => "weekly-sonnet".to_string(),
+        "Wk Opus" => "weekly-opus".to_string(),
+        other => other.to_ascii_lowercase().replace(' ', "-"),
+    }
 }
 
 fn parse_window(label: &str, block: Option<&Value>) -> Option<QuotaWindow> {
@@ -395,6 +414,7 @@ fn parse_window(label: &str, block: Option<&Value>) -> Option<QuotaWindow> {
         .map(|dt| dt.timestamp());
 
     Some(QuotaWindow {
+        id: Some(claude_window_id(label)),
         label: label.to_string(),
         remaining_percent: remaining,
         reset_at,

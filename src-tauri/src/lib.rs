@@ -10,6 +10,7 @@ mod models;
 mod notify_state;
 mod providers;
 mod quota_cache;
+mod quota_contract;
 mod settings;
 mod support;
 mod tray_icon;
@@ -1147,6 +1148,12 @@ async fn run_refresh(
     let discovered = discover_accounts(&extra_dirs);
     log_discovery_changes(&discovered);
 
+    // Snapshot discovery metadata before `discovered` is partitioned/moved, for `quota_v1.json`.
+    let binding_meta: HashMap<String, quota_contract::AccountBindingMeta> = discovered
+        .iter()
+        .map(|a| (a.id().to_string(), quota_contract::AccountBindingMeta::from_discovered(a)))
+        .collect();
+
     // Local CLI / transcript log sources for activity tracking + incremental usage ledger.
     let usage_sources: Vec<usage_stats::Source> = discovered
         .iter()
@@ -1166,17 +1173,23 @@ async fn run_refresh(
             DiscoveredAccount::Antigravity { id, token_path, is_legacy_gemini, .. } => {
                 token_path.parent().map(|d| usage_stats::Source::Antigravity {
                     account_id: id.clone(),
-                    brain_dir: if *is_legacy_gemini {
-                        d.join("antigravity").join("brain")
+                    brain_dirs: if *is_legacy_gemini {
+                        vec![
+                            d.join("antigravity-cli").join("brain"),
+                            d.join("antigravity").join("brain"),
+                        ]
                     } else {
-                        d.join("brain")
+                        vec![d.join("brain")]
                     },
                 })
             }
             DiscoveredAccount::AntigravityCli { id, .. } => {
                 dirs::home_dir().map(|h| usage_stats::Source::Antigravity {
                     account_id: id.clone(),
-                    brain_dir: h.join(".gemini").join("antigravity").join("brain"),
+                    brain_dirs: vec![
+                        h.join(".gemini").join("antigravity-cli").join("brain"),
+                        h.join(".gemini").join("antigravity").join("brain"),
+                    ],
                 })
             }
         })
@@ -1189,17 +1202,17 @@ async fn run_refresh(
                 usage_stats::Source::Claude { account_id, config_dir } => activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Claude,
-                    dir: config_dir.clone(),
+                    dirs: vec![config_dir.clone()],
                 },
                 usage_stats::Source::Codex { account_id, codex_home } => activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Codex,
-                    dir: codex_home.clone(),
+                    dirs: vec![codex_home.clone()],
                 },
-                usage_stats::Source::Antigravity { account_id, brain_dir } => activity::Src {
+                usage_stats::Source::Antigravity { account_id, brain_dirs } => activity::Src {
                     account_id: account_id.clone(),
                     kind: activity::Kind::Antigravity,
-                    dir: brain_dir.clone(),
+                    dirs: brain_dirs.clone(),
                 },
             })
             .collect(),
@@ -1417,16 +1430,18 @@ async fn run_refresh(
                     name,
                     token_path,
                     is_legacy_gemini,
+                    ..
                 } => {
                     fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
                 }
-                DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
                     providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
                 }
                 DiscoveredAccount::Codex {
                     id,
                     name,
                     auth_path,
+                    ..
                 } => fetch_codex_quota(&client, id, name, &auth_path).await,
                 _ => unreachable!(),
             };
@@ -1449,6 +1464,7 @@ async fn run_refresh(
             id,
             name,
             credentials_path,
+            ..
         } = acc
         else {
             continue;
@@ -1577,6 +1593,8 @@ async fn run_refresh(
             accounts.push(reconciled);
         }
         guard.cache.save();
+        let contract = quota_contract::build_contract(&accounts, &binding_meta, &guard.cache, now);
+        quota_contract::write_contract(&contract);
         guard.history.prune(now);
         guard.history.save();
 
@@ -2766,11 +2784,13 @@ mod tests {
             effective_remaining: pct,
             primary_windows: vec![
                 QuotaWindow {
+                    id: None,
                     label: "5h".to_string(),
                     remaining_percent: pct,
                     reset_at: None,
                 },
                 QuotaWindow {
+                    id: None,
                     label: "Wk".to_string(),
                     remaining_percent: pct,
                     reset_at: None,
@@ -3151,16 +3171,16 @@ mod live_probe_tests {
         let mut results = Vec::new();
         for acc in discovered {
             let outcome = match acc {
-                DiscoveredAccount::Claude { id, name, credentials_path } => {
+                DiscoveredAccount::Claude { id, name, credentials_path, .. } => {
                     fetch_claude_quota(&client, id, name, &credentials_path).await
                 }
-                DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
+                DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini, .. } => {
                     fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
                 }
-                DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
                     providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
                 }
-                DiscoveredAccount::Codex { id, name, auth_path } => {
+                DiscoveredAccount::Codex { id, name, auth_path, .. } => {
                     fetch_codex_quota(&client, id, name, &auth_path).await
                 }
             };
@@ -3489,22 +3509,22 @@ mod live_probe_tests {
                 }
 
                 let outcome = match acc {
-                    DiscoveredAccount::Claude { id, name, credentials_path } => {
+                    DiscoveredAccount::Claude { id, name, credentials_path, .. } => {
                         if tick_claude_http > 0 {
                             tokio::time::sleep(Duration::from_millis(2000)).await;
                         }
                         fetch_claude_quota(&client, id, name, &credentials_path).await
                     }
-                    DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini } => {
+                    DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini, .. } => {
                         if tick_ag_http > 0 {
                             tokio::time::sleep(Duration::from_millis(200)).await;
                         }
                         fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
                     }
-                    DiscoveredAccount::AntigravityCli { id, name, exe } => {
+                    DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
                         providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
                     }
-                    DiscoveredAccount::Codex { id, name, auth_path } => {
+                    DiscoveredAccount::Codex { id, name, auth_path, .. } => {
                         fetch_codex_quota(&client, id, name, &auth_path).await
                     }
                 };

@@ -611,9 +611,16 @@ pub(crate) fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWin
                 .map(|dt| dt.timestamp());
 
             let win_tag = if is_weekly { "Wk" } else { "5h" };
+            let span_slug = if is_weekly { "weekly" } else { "5h" };
+            let raw_id = field(bucket, "bucketId", "id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
 
             if group_name.contains("argon") || bucket_id.contains("argon") {
                 extras.push(QuotaWindow {
+                    id: Some(raw_id.unwrap_or_else(|| format!("gemini-argon-{span_slug}"))),
                     label: format!("Argon {win_tag}"),
                     remaining_percent: remaining,
                     reset_at,
@@ -623,12 +630,14 @@ pub(crate) fn parse_quota_groups(raw: &Value) -> (Vec<QuotaWindow>, Vec<QuotaWin
                 || bucket_id.starts_with("3p")
             {
                 extras.push(QuotaWindow {
+                    id: Some(raw_id.unwrap_or_else(|| format!("3p-{span_slug}"))),
                     label: format!("3P {win_tag}"),
                     remaining_percent: remaining,
                     reset_at,
                 });
             } else if group_name.contains("gemini") || bucket_id.starts_with("gemini") {
                 let w = QuotaWindow {
+                    id: Some(raw_id.unwrap_or_else(|| format!("gemini-{span_slug}"))),
                     label: win_tag.to_string(),
                     remaining_percent: remaining,
                     reset_at,

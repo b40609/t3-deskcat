@@ -51,7 +51,7 @@ pub struct UsageToday {
 pub enum Source {
     Claude { account_id: String, config_dir: PathBuf },
     Codex { account_id: String, codex_home: PathBuf },
-    Antigravity { account_id: String, brain_dir: PathBuf },
+    Antigravity { account_id: String, brain_dirs: Vec<PathBuf> },
 }
 
 impl Source {
@@ -483,7 +483,11 @@ fn files_of(src: &Source, since: SystemTime) -> Vec<PathBuf> {
     match src {
         Source::Claude { config_dir, .. } => collect_jsonl(&config_dir.join("projects"), since, 6, &mut files),
         Source::Codex { codex_home, .. } => collect_jsonl(&codex_home.join("sessions"), since, 4, &mut files),
-        Source::Antigravity { brain_dir, .. } => collect_antigravity_transcripts(brain_dir, since, &mut files),
+        Source::Antigravity { brain_dirs, .. } => {
+            for brain_dir in brain_dirs {
+                collect_antigravity_transcripts(brain_dir, since, &mut files);
+            }
+        }
     }
     files
 }

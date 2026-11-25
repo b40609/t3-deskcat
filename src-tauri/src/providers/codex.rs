@@ -365,10 +365,19 @@ fn parse_local_window(block: Option<&Value>, fallback_label: &str, now: i64) -> 
     };
 
     Some(QuotaWindow {
+        id: Some(codex_window_id(&label)),
         label,
         remaining_percent: remaining,
         reset_at,
     })
+}
+
+fn codex_window_id(label: &str) -> String {
+    match label {
+        "Wk" => "weekly".to_string(),
+        "Mo" => "monthly".to_string(),
+        other => other.to_ascii_lowercase(),
+    }
 }
 
 /// Checks JWT `exp` claim locally when `token` is a standard 3-part JWT.
@@ -460,6 +469,7 @@ fn parse_window(block: Option<&Value>, fallback_label: &str, now: i64) -> Option
         });
 
     Some(QuotaWindow {
+        id: Some(codex_window_id(&label)),
         label,
         remaining_percent: remaining,
         reset_at,

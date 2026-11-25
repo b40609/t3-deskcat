@@ -186,7 +186,7 @@ mod tests {
                 name: "Main".into(),
                 plan: Some("Team".into()),
                 effective_remaining: 88,
-                primary_windows: vec![QuotaWindow { label: "5h".into(), remaining_percent: 88, reset_at: None }],
+                primary_windows: vec![QuotaWindow { id: None, label: "5h".into(), remaining_percent: 88, reset_at: None }],
                 extra_windows: vec![],
                 status: "ok".into(),
                 error: None,
