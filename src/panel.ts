@@ -585,16 +585,22 @@ function pickWindows(acc: AccountQuota, showExtra: boolean) {
   return wins;
 }
 
+function accountNameTitle(acc: AccountQuota): string {
+  const base = `${acc.name} · ${ageLabel(acc.updatedAt)}`;
+  return acc.status === "idle" && acc.error ? `${base}\n${acc.error}` : base;
+}
+
 function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
   const showExtra = snap.settings.showAntigravityExtra;
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  // Unused account (token lapsed): last-known numbers, shown neutrally.
+  // Unused account (token lapsed): quota doesn't move while unused (resets applied locally),
+  // so render cached numbers at full clarity without a stale/idle banner; sync time stays in tooltip.
   const isIdle = acc.status === "idle";
-  // Expired but with last-known numbers: show them, marked.
-  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
+  const hasIdleData = isIdle && acc.primaryWindows.length > 0;
+  const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip = dupNames.has(nameKey)
     ? `<span class="prov-chip ${acc.provider}">${providerBadgeLabel(acc.provider)}</span>`
@@ -604,8 +610,10 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
 
   let body: string;
   let note = "";
-  if (isExpired && !isLastKnown) {
+  if (isExpired && !isExpiredLastKnown) {
     body = `<span class="status expired">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
+  } else if (isIdle && !hasIdleData) {
+    body = `<span class="status stale">${escapeHtml(acc.error ?? t("閒置中，用一次即更新"))}</span>`;
   } else if (isErr) {
     body = `<span class="status error">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
   } else if (isCooldown) {
@@ -615,9 +623,7 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
     body = wins.length
       ? wins.map((w) => renderWindow(w, acc.provider, acc.id)).join("")
       : `<span class="status stale">${t("沒有用量資料")}</span>`;
-    if (isIdle && isLastKnown) {
-      note = `<span class="acc-note" title="${escapeHtml(acc.error ?? "")}">${t("閒置")} · ${ageLabel(acc.updatedAt)}</span>`;
-    } else if (isLastKnown) {
+    if (isExpiredLastKnown) {
       note = `<span class="acc-note warn" title="${escapeHtml(acc.error ?? "")}">${t("憑證過期")} · ${ageLabel(acc.updatedAt)}</span>`;
     } else if (isStale && acc.error) {
       const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -628,11 +634,11 @@ function renderAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: 
   }
 
   return `
-    <div class="row acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="row acc ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
       ${avatarHtml(acc.id, acc.provider)}
       <div class="row-main">
         <div class="row-title">
-          <span class="name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+          <span class="name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
           ${provChip}${plan}${note}
           <button type="button" class="row-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
         </div>
@@ -738,10 +744,10 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  // Unused account (token lapsed): last-known numbers, shown neutrally.
   const isIdle = acc.status === "idle";
-  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
+  const hasIdleData = isIdle && acc.primaryWindows.length > 0;
+  const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -749,21 +755,21 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
       : "";
 
   let badge = "";
-  if (isIdle && isLastKnown) {
-    badge = `<span class="d-badge" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></span>`;
-  } else if (isLastKnown) {
+  if (isExpiredLastKnown) {
     badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`;
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
     badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error)}"><i class="d-bdot"></i><span>${tag} · ${ageLabel(acc.updatedAt)}</span></span>`;
-  } else if (!isErr && !isCooldown) {
+  } else if (!isErr && !isCooldown && !(isIdle && !hasIdleData)) {
     badge = denseForecastBadge(snap.forecasts?.[acc.id], acc.provider);
   }
   const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
 
   let body: string;
-  if (isExpired && !isLastKnown) {
+  if (isExpired && !isExpiredLastKnown) {
     body = `<span class="status expired">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
+  } else if (isIdle && !hasIdleData) {
+    body = `<span class="status stale">${escapeHtml(acc.error ?? t("閒置中，用一次即更新"))}</span>`;
   } else if (isErr) {
     body = `<span class="status error">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
   } else if (isCooldown) {
@@ -776,10 +782,10 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   }
 
   return `
-    <div class="dense-acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="dense-acc ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="d-head">
         ${avatarHtml(acc.id, acc.provider)}
-        <span class="d-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+        <span class="d-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
         ${provChip}
         ${badge}
         <span class="d-spacer"></span>
@@ -831,13 +837,14 @@ function renderIosRing(
 
 function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
   const showExtra = snap.settings.showAntigravityExtra;
+  const showUsed = (cfg().usageDisplay ?? "used") === "used";
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  // Unused account (token lapsed): last-known numbers, shown neutrally.
   const isIdle = acc.status === "idle";
-  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
+  const hasIdleData = isIdle && acc.primaryWindows.length > 0;
+  const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -845,23 +852,27 @@ function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupName
       : "";
   const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
   const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
-  const wins = isErr || isCooldown || (isExpired && !isLastKnown) ? [] : pickWindows(acc, showExtra);
+  const wins = isErr || isCooldown || (isExpired && !isExpiredLastKnown) || (isIdle && !hasIdleData) ? [] : pickWindows(acc, showExtra);
   const primaryTone = getTone(acc.effectiveRemaining, acc.id);
   const iconTone = isErr || isCooldown || primaryTone === "bad" || fc?.urgent ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
 
   let subHtml = "";
-  if (isExpired && !isLastKnown) {
+  if (isExpired && !isExpiredLastKnown) {
     subHtml = `<span class="ios-sub bad">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</span>`;
+  } else if (isIdle && !hasIdleData) {
+    subHtml = `<span class="ios-sub">${escapeHtml(acc.error ?? t("閒置中，用一次即更新"))}</span>`;
   } else if (isErr) {
     subHtml = `<span class="ios-sub bad">${escapeHtml(acc.error ?? t("讀取失敗"))}</span>`;
   } else if (isCooldown) {
     subHtml = `<span class="ios-sub warn">${escapeHtml(acc.error ?? t("查詢受限，稍後自動重試"))}</span>`;
   } else {
-    const resetShort = wins[0]?.resetAt ? formatResetShort(wins[0].resetAt) : "";
+    const resetShort = wins[0]?.resetAt
+      ? formatResetShort(wins[0].resetAt)
+      : wins[1]?.resetAt
+        ? `${windowName(wins[1].label, acc.provider, true)} · ${formatResetShort(wins[1].resetAt)}`
+        : "";
     const statusParts: string[] = [];
-    if (isIdle && isLastKnown) {
-      statusParts.push(`<span class="ios-fc" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></span>`);
-    } else if (isLastKnown) {
+    if (isExpiredLastKnown) {
       statusParts.push(`<span class="ios-fc warn urgent"><i class="d-bdot"></i><span>${t("憑證過期")}</span></span>`);
     } else if (isStale && acc.error) {
       const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -881,6 +892,8 @@ function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupName
       subHtml = `<div class="ios-sub-row">${statusParts[0]}</div>`;
     } else if (resetSpan) {
       subHtml = `<div class="ios-sub-row">${resetSpan}</div>`;
+    } else if (wins.length > 0) {
+      subHtml = `<div class="ios-sub-row"><span class="ios-reset">${escapeHtml(showUsed ? t("已使用") : t("剩餘"))}</span></div>`;
     } else {
       subHtml = `<span class="ios-sub">${t("沒有用量資料")}</span>`;
     }
@@ -896,12 +909,12 @@ function renderIosAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupName
     : "";
 
   return `
-    <div class="ios-acc ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="ios-acc ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="ios-acc-main">
         ${avatarHtml(acc.id, acc.provider)}
         <div class="ios-info">
           <div class="ios-title-line">
-            <span class="ios-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+            <span class="ios-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
             ${provChip}
             ${costChip}
           </div>
@@ -925,10 +938,10 @@ function renderGlassAccountCard(
   const isStale = acc.status === "stale";
   const isCooldown = acc.status === "cooldown";
   const isExpired = acc.status === "expired";
-  // Unused account (token lapsed): last-known numbers, shown neutrally.
   const isIdle = acc.status === "idle";
-  const isLastKnown = (isExpired || isIdle) && acc.primaryWindows.length > 0;
-  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isLastKnown && !isIdle;
+  const hasIdleData = isIdle && acc.primaryWindows.length > 0;
+  const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
+  const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -936,15 +949,13 @@ function renderGlassAccountCard(
       : "";
   const costChip = denseUsageChip(snap.usageToday?.[acc.id]);
   const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
-  const wins = isErr || isCooldown || (isExpired && !isLastKnown) ? [] : pickWindows(acc, showExtra);
+  const wins = isErr || isCooldown || (isExpired && !isExpiredLastKnown) || (isIdle && !hasIdleData) ? [] : pickWindows(acc, showExtra);
   const primaryTone = getTone(acc.effectiveRemaining, acc.id);
   const isAlert = isErr || primaryTone === "bad" || fc?.urgent === true;
   const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
 
   let statusHtml = "";
-  if (isIdle && isLastKnown) {
-    statusHtml = `<div class="g-fc" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("閒置")} · ${ageLabel(acc.updatedAt)}</span></div>`;
-  } else if (isLastKnown) {
+  if (isExpiredLastKnown) {
     statusHtml = `<div class="g-fc warn urgent" title="${escapeHtml(acc.error ?? "")}"><i class="d-bdot"></i><span>${t("憑證過期")}</span></div>`;
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
@@ -954,8 +965,10 @@ function renderGlassAccountCard(
   }
 
   let bodyHtml = "";
-  if (isExpired && !isLastKnown) {
+  if (isExpired && !isExpiredLastKnown) {
     bodyHtml = `<div class="status expired g-status">${escapeHtml(acc.error ?? t("授權已過期，請重新登入這個帳號"))}</div>`;
+  } else if (isIdle && !hasIdleData) {
+    bodyHtml = `<div class="status stale g-status">${escapeHtml(acc.error ?? t("閒置中，用一次即更新"))}</div>`;
   } else if (isErr) {
     bodyHtml = `<div class="status error g-status">${escapeHtml(acc.error ?? t("讀取失敗"))}</div>`;
   } else if (isCooldown) {
@@ -976,6 +989,10 @@ function renderGlassAccountCard(
         ? ""
         : `<i class="pace" style="left:${mainPacePos}%" title="${t("時間已過 {p}%：{hint}", { p: mainElapsed, hint: showUsed ? t("填色超過刻度代表用得比時間快") : t("填色短於刻度代表用得比時間快") })}"></i>`;
     const mainTitle = showUsed ? t("用 {p}%", { p: mainVal }) : t("剩 {p}%", { p: mainVal });
+    const mainWinLabel = windowName(mainW.label, acc.provider, true);
+    const mainWinText = showUsed
+      ? t("{win}已用", { win: mainWinLabel })
+      : t("{win}剩餘", { win: mainWinLabel });
 
     const subRows = wins
       .slice(1)
@@ -1000,7 +1017,7 @@ function renderGlassAccountCard(
       <div class="g-main-metric">
         <span class="g-big-pct ${mainTone}" title="${escapeHtml(mainTitle)}">${mainVal}<small>%</small></span>
         <span class="g-main-meta">
-          <span class="g-main-win">${escapeHtml(windowName(mainW.label, acc.provider, true))}</span>
+          <span class="g-main-win">${escapeHtml(mainWinText)}</span>
           ${mainReset ? `<span class="g-main-reset${mainTone === "bad" ? " bad" : ""}">${escapeHtml(mainReset)}</span>` : ""}
         </span>
       </div>
@@ -1009,10 +1026,10 @@ function renderGlassAccountCard(
   }
 
   return `
-    <div class="glass-tile ${wide ? "wide" : ""} ${isAlert ? "is-alert" : ""} ${isErr ? "dim" : ""} ${isLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="glass-tile ${wide ? "wide" : ""} ${isAlert ? "is-alert" : ""} ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="g-head">
         ${avatarHtml(acc.id, acc.provider)}
-        <span class="g-name" title="${escapeHtml(`${acc.name} · ${ageLabel(acc.updatedAt)}`)}">${escapeHtml(displayName(acc))}</span>
+        <span class="g-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
         ${provChip}
         <span class="d-spacer"></span>
         ${costChip}
