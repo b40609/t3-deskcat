@@ -55,9 +55,10 @@
   --good-bar: linear-gradient(90deg, #059669 0%, #10b981 100%);
   --warn-ink: #b86e00;
   --warn-bar: linear-gradient(90deg, #d97706 0%, #f59e0b 100%);
-  --bad: #dc2626;
-  --bad-ink: #dc2626;
-  --bad-bar: linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
+  /* 用完／快用完不用紅色：沿用琥珀色系，比 warn 深一階 */
+  --bad: #a35400;
+  --bad-ink: #a35400;
+  --bad-bar: linear-gradient(90deg, #c26a00 0%, #d98200 100%);
 
   /* Provider identity */
   --claude: #cf6a46;
@@ -108,9 +109,9 @@
     --good-bar: linear-gradient(90deg, #10b981 0%, #34d399 100%);
     --warn-ink: #efb443;
     --warn-bar: linear-gradient(90deg, #d98f18 0%, #f3c14b 100%);
-    --bad: #f87171;
-    --bad-ink: #f87171;
-    --bad-bar: linear-gradient(90deg, #dc4352 0%, #f87171 100%);
+    --bad: #f0a030;
+    --bad-ink: #f0a030;
+    --bad-bar: linear-gradient(90deg, #c87a14 0%, #e8a032 100%);
 
     --claude: #e48a66;
     --ag: #74a2ff;
@@ -161,9 +162,9 @@
   --good-bar: linear-gradient(90deg, #10b981 0%, #34d399 100%);
   --warn-ink: #efb443;
   --warn-bar: linear-gradient(90deg, #d98f18 0%, #f3c14b 100%);
-  --bad: #f87171;
-  --bad-ink: #f87171;
-  --bad-bar: linear-gradient(90deg, #dc4352 0%, #f87171 100%);
+  --bad: #f0a030;
+  --bad-ink: #f0a030;
+  --bad-bar: linear-gradient(90deg, #c87a14 0%, #e8a032 100%);
 
   --claude: #e48a66;
   --ag: #74a2ff;

@@ -3217,9 +3217,9 @@ html.remote .scroll {
   --good-bar: linear-gradient(90deg, #28cd41 0%, var(--ios-green) 100%);
   --warn-ink: var(--ios-amber);
   --warn-bar: linear-gradient(90deg, #ff9500 0%, #ffb340 100%);
-  --bad: var(--ios-red);
-  --bad-ink: var(--ios-red);
-  --bad-bar: linear-gradient(90deg, #ff3b30 0%, #ff6961 100%);
+  --bad: var(--ios-amber);
+  --bad-ink: var(--ios-amber);
+  --bad-bar: linear-gradient(90deg, #e08600 0%, var(--ios-amber) 100%);
 }
 
 .shell[data-ui-theme="glass"] .nav-top,
@@ -3313,14 +3313,6 @@ html.remote .scroll {
     0 3px 8px rgba(16, 163, 127, 0.3);
 }
 
-.shell[data-ui-theme="glass"] .tone-bad .p-icon:not(.has-img),
-.shell[data-ui-theme="ios"] .tone-bad .p-icon:not(.has-img) {
-  background: linear-gradient(145deg, #ff6961 0%, #ff3b30 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.38),
-    0 3px 8px rgba(255, 59, 48, 0.34);
-}
-
 /* iOS green switches & rounded settings polish in glass/ios themes */
 .shell[data-ui-theme="glass"] .switch,
 .shell[data-ui-theme="ios"] .switch {
@@ -3400,7 +3392,6 @@ html.remote .scroll {
     --glass-shell-bg: rgba(12, 14, 20, calc(var(--panel-alpha, 0.45) * 0.72));
     --glass-tile-bg: rgba(255, 255, 255, 0.058);
     --glass-tile-hover: rgba(255, 255, 255, 0.098);
-    --glass-tile-alert: rgba(255, 59, 48, 0.14);
     --glass-tile-border: rgba(255, 255, 255, 0.12);
     --glass-tile-spec: rgba(255, 255, 255, 0.2);
     --glass-ctrl-bg: rgba(255, 255, 255, 0.075);
@@ -3415,7 +3406,6 @@ html.remote .scroll {
     --glass-shell-bg: #10131a;
     --glass-tile-bg: #181c26;
     --glass-tile-hover: #1f2432;
-    --glass-tile-alert: #2c191f;
   }
 }
 
@@ -3423,7 +3413,6 @@ html.remote .scroll {
   --glass-shell-bg: rgba(12, 14, 20, calc(var(--panel-alpha, 0.45) * 0.72));
   --glass-tile-bg: rgba(255, 255, 255, 0.058);
   --glass-tile-hover: rgba(255, 255, 255, 0.098);
-  --glass-tile-alert: rgba(255, 59, 48, 0.14);
   --glass-tile-border: rgba(255, 255, 255, 0.12);
   --glass-tile-spec: rgba(255, 255, 255, 0.2);
   --glass-ctrl-bg: rgba(255, 255, 255, 0.075);
@@ -3439,7 +3428,6 @@ html.remote .scroll {
   --glass-shell-bg: #10131a;
   --glass-tile-bg: #181c26;
   --glass-tile-hover: #1f2432;
-  --glass-tile-alert: #2c191f;
 }
 
 /* Light (default & explicit) */
@@ -3447,7 +3435,6 @@ html.remote .scroll {
   --glass-shell-bg: rgba(248, 250, 255, calc(var(--panel-alpha, 0.45) * 0.72));
   --glass-tile-bg: rgba(255, 255, 255, 0.5);
   --glass-tile-hover: rgba(255, 255, 255, 0.68);
-  --glass-tile-alert: rgba(255, 59, 48, 0.11);
   --glass-tile-border: rgba(255, 255, 255, 0.72);
   --glass-tile-spec: rgba(255, 255, 255, 0.92);
   --glass-ctrl-bg: rgba(255, 255, 255, 0.44);
@@ -3463,7 +3450,6 @@ html.remote .scroll {
   --glass-shell-bg: #eef1f6;
   --glass-tile-bg: #ffffff;
   --glass-tile-hover: #f8fafd;
-  --glass-tile-alert: #fff1f1;
 }
 
 .shell[data-ui-theme="glass"] .circle-btn {
@@ -3603,14 +3589,6 @@ html.remote .scroll {
   grid-column: 1 / -1;
 }
 
-.glass-tile.is-alert {
-  background: var(--glass-tile-alert);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--ios-red) 36%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--ios-red) 24%, rgba(255, 255, 255, 0.25)),
-    0 8px 20px rgba(255, 59, 48, 0.12);
-}
-
 .glass-tile.last-known {
   opacity: 0.74;
 }
@@ -3711,7 +3689,7 @@ html.remote .scroll {
 }
 
 .g-big-pct.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 .g-main-meta {
@@ -3740,7 +3718,7 @@ html.remote .scroll {
 }
 
 .g-main-reset.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
   font-weight: 600;
 }
 
@@ -3789,7 +3767,7 @@ html.remote .scroll {
 }
 
 .g-sub-val.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 .g-sub-bar {
@@ -3821,7 +3799,7 @@ html.remote .scroll {
 }
 
 .g-fc.bad .d-bdot {
-  background: var(--ios-red);
+  background: var(--bad-ink);
 }
 
 .g-fc.urgent {
@@ -3833,7 +3811,7 @@ html.remote .scroll {
 }
 
 .g-fc.bad.urgent {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 .g-status {
@@ -4166,7 +4144,7 @@ html.remote .scroll {
 }
 
 .ios-reset.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
   font-weight: 600;
 }
 
@@ -4194,7 +4172,7 @@ html.remote .scroll {
 }
 
 .ios-fc.bad .d-bdot {
-  background: var(--ios-red);
+  background: var(--bad-ink);
 }
 
 .ios-fc.urgent {
@@ -4206,7 +4184,7 @@ html.remote .scroll {
 }
 
 .ios-fc.bad.urgent {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 .ios-sub {
@@ -4222,7 +4200,7 @@ html.remote .scroll {
 }
 
 .ios-sub.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 /* Dual Apple Battery Progress Rings */
@@ -4282,7 +4260,7 @@ html.remote .scroll {
 }
 
 .ios-ring .rv.bad {
-  stroke: var(--ios-red);
+  stroke: var(--bad-ink);
 }
 
 .ios-rtxt {
@@ -4312,7 +4290,7 @@ html.remote .scroll {
 }
 
 .ios-rnum.bad {
-  color: var(--ios-red);
+  color: var(--bad-ink);
 }
 
 .ios-rlbl {
