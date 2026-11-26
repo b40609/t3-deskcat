@@ -24,6 +24,9 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const shell = $("app");
 const picksSection = $("picks-section");
 const accountsSection = $("accounts-section");
+// Freeze the list order while the pointer is over it (see displayOrder).
+accountsSection.addEventListener("pointerenter", () => (accountListHovered = true));
+accountsSection.addEventListener("pointerleave", () => (accountListHovered = false));
 const accountsAlert = $("accounts-alert");
 const dashTabs = $("dash-tabs");
 const dashQuota = $("dash-quota");
@@ -202,6 +205,66 @@ function orderedAccounts(accounts: AccountQuota[]): AccountQuota[] {
 
 function visibleAccounts(accounts: AccountQuota[]): AccountQuota[] {
   return orderedAccounts(accounts).filter((a) => !prefOf(a.id).hidden);
+}
+
+/**
+ * Display order for the quota list (settings keep the pure manual order).
+ * 1. Providers stay together (Claude and Antigravity are not interchangeable), in the
+ *    order their first account appears in the manual order.
+ * 2. Within a provider: usable -> low -> out of quota -> error.
+ *    - usable / low: tightest remaining %, in 10% steps so small changes don't reshuffle;
+ *      ties keep the manual order.
+ *    - out of quota: the one that comes back first goes first.
+ * While the pointer is over the list the previous order is kept, so rows don't move under it.
+ */
+let lastDisplayOrder: string[] = [];
+let accountListHovered = false;
+
+function accountTier(a: AccountQuota, snap: DashboardSnapshot): number {
+  if (a.status === "error" || a.status === "expired") return 3;
+  if (a.status === "cooldown" || a.effectiveRemaining <= 0) return 2;
+  const s = cfg();
+  const danger = s.accountPrefs?.[a.id]?.notifyThreshold || s.sleepingThreshold;
+  const fc = snap.forecasts?.[a.id];
+  const runsOutSoon = !!fc && fc.exhaustAt - Date.now() / 1000 < 2 * 3600;
+  if (a.effectiveRemaining < danger || runsOutSoon) return 1;
+  return 0;
+}
+
+function recoverAt(a: AccountQuota): number {
+  const empty = a.primaryWindows.filter((w) => w.remainingPercent <= 0 && w.resetAt);
+  if (empty.length) return Math.max(...empty.map((w) => w.resetAt as number));
+  const resets = a.primaryWindows.map((w) => w.resetAt).filter((r): r is number => !!r);
+  return resets.length ? Math.min(...resets) : Number.MAX_SAFE_INTEGER;
+}
+
+function displayOrder(list: AccountQuota[], snap: DashboardSnapshot): AccountQuota[] {
+  if (accountListHovered && lastDisplayOrder.length) {
+    const pos = new Map(lastDisplayOrder.map((id, i) => [id, i]));
+    return [...list].sort((x, y) => (pos.get(x.id) ?? 1e9) - (pos.get(y.id) ?? 1e9));
+  }
+  const manual = new Map(list.map((a, i) => [a.id, i]));
+  const provRank = new Map<string, number>();
+  list.forEach((a) => {
+    if (!provRank.has(a.provider)) provRank.set(a.provider, provRank.size);
+  });
+  const sorted = [...list].sort((x, y) => {
+    const p = (provRank.get(x.provider) ?? 0) - (provRank.get(y.provider) ?? 0);
+    if (p) return p;
+    const tx = accountTier(x, snap);
+    const ty = accountTier(y, snap);
+    if (tx !== ty) return tx - ty;
+    if (tx === 2) {
+      const r = recoverAt(x) - recoverAt(y);
+      if (r) return r;
+    } else if (tx < 2) {
+      const b = Math.floor(y.effectiveRemaining / 10) - Math.floor(x.effectiveRemaining / 10);
+      if (b) return b;
+    }
+    return (manual.get(x.id) ?? 0) - (manual.get(y.id) ?? 0);
+  });
+  lastDisplayOrder = sorted.map((a) => a.id);
+  return sorted;
 }
 
 // ------------------------------------------------------------------ helpers
@@ -995,7 +1058,7 @@ function renderDenseToolbar(visible: AccountQuota[]) {
 }
 
 function renderAccounts(snap: DashboardSnapshot) {
-  const visible = visibleAccounts(snap.accounts);
+  const visible = displayOrder(visibleAccounts(snap.accounts), snap);
   // Idle expired tokens already show per-row badges and the bottom expired group;
   // reserve the top red alert banner for real fetch / connection failures and name them.
   const badAccounts = visible.filter(
@@ -1278,7 +1341,7 @@ function syncSettingsForm(s: AppSettings) {
   valWorkTh.textContent = `${s.workingThreshold}%`;
   setRangeIfIdle(inpSleepTh, s.sleepingThreshold);
   valSleepTh.textContent = `${s.sleepingThreshold}%`;
-  valSweatRange.textContent = t("剩餘低於 {warn}% 轉為琥珀色；低於 {bad}% 轉為紅色並發送通知", { warn: s.workingThreshold, bad: s.sleepingThreshold });
+  valSweatRange.textContent = t("剩餘低於 {warn}% 轉為琥珀色；低於 {bad}% 轉為深琥珀色並發送通知", { warn: s.workingThreshold, bad: s.sleepingThreshold });
   const th = $("th-preview");
   th.style.setProperty("--bad", `${s.sleepingThreshold}%`);
   th.style.setProperty("--warn", `${s.workingThreshold - s.sleepingThreshold}%`);

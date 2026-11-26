@@ -456,7 +456,7 @@
   "目前剩餘 {rem}%（低於危險線 {low}%）。": "Remaining {rem}% (below danger line {low}%).",
   "重設浮動卡片位置": "Reset floating card position",
   "憑證已過期：開啟 Antigravity（或 T3 Code）會自動更新": "Credentials expired: open Antigravity (or T3 Code) to refresh automatically",
-  "剩餘低於 {warn}% 轉為琥珀色；低於 {bad}% 轉為紅色並發送通知": "Turns amber below {warn}%; turns red and notifies below {bad}%",
+  "剩餘低於 {warn}% 轉為琥珀色；低於 {bad}% 轉為深琥珀色並發送通知": "Turns amber below {warn}%; turns deep amber and notifies below {bad}%",
   "目前：列表畫面（點此切回卡片）": "View: List (click for Cards)",
   "目前：卡片畫面（點此切換列表）": "View: Cards (click for List)",
   "將重設": "Resetting",
