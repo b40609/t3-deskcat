@@ -65,10 +65,23 @@ try {
     $destExe = Join-Path $destDir "t3-deskcat.exe"
     Copy-Item -Path $srcExe -Destination $destExe -Force
 
+    if (-not (Test-Path -LiteralPath $destExe -PathType Leaf)) {
+        throw "Installed binary is not a file at $destExe."
+    }
     $srcHash = Get-Sha256Hex $srcExe
     $destHash = Get-Sha256Hex $destExe
     if ($srcHash -ne $destHash) {
         throw "SHA256 mismatch after copy ($srcHash vs $destHash)."
+    }
+
+    Write-Host "[5/5] Re-checking installed binary after 5 seconds (antivirus quarantine check)..."
+    Start-Sleep -Seconds 5
+    if (-not (Test-Path -LiteralPath $destExe -PathType Leaf)) {
+        throw "Installed binary disappeared from $destExe within 5 seconds (quarantined by antivirus?)."
+    }
+    $recheckHash = Get-Sha256Hex $destExe
+    if ($recheckHash -ne $srcHash) {
+        throw "Installed binary changed within 5 seconds ($recheckHash vs $srcHash)."
     }
 
     # Do NOT auto-relaunch from scripts or Task Scheduler:
@@ -76,13 +89,21 @@ try {
     # - Registering a Scheduled Task to launch a freshly compiled unsigned exe in %LOCALAPPDATA%
     #   triggers Trend Micro Apex One Behavior Monitoring (TSC_GENCLEAN, observed 2026-11-27),
     #   which kills the process, deletes the task, and quarantines the installed binary.
-    Write-Host "[5/5] Deployed and verified successfully."
+    # Only reached when every step above passed; any failure throws into the catch below and exits 1.
+    Write-Host "Deployed and verified successfully."
     Write-Host "  Path    : $destExe"
     Write-Host "  Size    : $($exeItem.Length) bytes"
     Write-Host "  Updated : $($exeItem.LastWriteTime)"
     Write-Host "  Bundles : assets/$($panelBundle.Name), assets/$($petBundle.Name)"
     Write-Host "  SHA256  : $destHash"
     Write-Host "  Next    : Open T3 DeskCat from the desktop shortcut."
+    $exitCode = 0
+} catch {
+    Write-Host ""
+    Write-Host "DEPLOY FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Nothing was reported as deployed. Fix the error above and rerun npm run deploy:local."
+    $exitCode = 1
 } finally {
     Pop-Location
 }
+exit $exitCode
