@@ -226,6 +226,16 @@ mod tests {
     }
 
     #[test]
+    fn no_level_is_red() {
+        // Red alerts were dropped (2026-11-26): every level keeps green at least half of red.
+        for lv in [Level::Good, Level::Warn, Level::Bad, Level::Offline] {
+            let (r, g, _) = lv.rgb();
+            assert!(u32::from(g) * 2 >= u32::from(r), "{lv:?} looks red: {:?}", lv.rgb());
+        }
+        assert_ne!(Level::Bad.rgb(), Level::Warn.rgb());
+    }
+
+    #[test]
     fn icon_style_uses_app_icon() {
         assert!(render("icon", Some(50), Level::Good).is_none());
     }
