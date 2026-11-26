@@ -9,7 +9,8 @@
     "build": "tsc && vite build",
     "tauri": "tauri",
     "build:exe": "tauri build --no-bundle",
-    "deploy:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-local.ps1"
+    "deploy:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-local.ps1",
+    "shot": "node scripts/shot-panel.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.2.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.0"
   }
