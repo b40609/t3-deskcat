@@ -15,7 +15,7 @@ function Get-Sha256Hex([string]$Path) {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
-    Write-Host "[1/5] Stopping any running t3-deskcat process..."
+    Write-Host "[1/6] Stopping any running t3-deskcat process..."
     Get-Process -Name "t3-deskcat" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     for ($i = 0; $i -lt 20; $i++) {
         if (-not (Get-Process -Name "t3-deskcat" -ErrorAction SilentlyContinue)) { break }
@@ -25,7 +25,7 @@ try {
         throw "t3-deskcat.exe is still running; close it manually before deploying."
     }
 
-    Write-Host "[2/5] Building frontend + release binary with Tauri custom-protocol..."
+    Write-Host "[2/6] Building frontend + release binary with Tauri custom-protocol..."
     $buildStart = Get-Date
     & npm run build:exe
     if ($LASTEXITCODE -ne 0) {
@@ -41,7 +41,7 @@ try {
         throw "Release binary timestamp ($($exeItem.LastWriteTime)) is older than build start ($buildStart)."
     }
 
-    Write-Host "[3/5] Verifying built frontend assets are actually embedded in exe..."
+    Write-Host "[3/6] Verifying built frontend assets are actually embedded in exe..."
     foreach ($asset in @("dist\pet.html", "dist\panel.html", "dist\bubble.html")) {
         if (-not (Test-Path (Join-Path $repoRoot $asset))) {
             throw "Missing built frontend asset: $asset"
@@ -59,7 +59,7 @@ try {
         }
     }
 
-    Write-Host "[4/5] Installing to %LOCALAPPDATA%\T3 DeskCat\t3-deskcat.exe..."
+    Write-Host "[4/6] Installing to %LOCALAPPDATA%\T3 DeskCat\t3-deskcat.exe..."
     $destDir = Join-Path $env:LOCALAPPDATA "T3 DeskCat"
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
     $destExe = Join-Path $destDir "t3-deskcat.exe"
@@ -71,14 +71,55 @@ try {
         throw "SHA256 mismatch after copy ($srcHash vs $destHash)."
     }
 
+    # Relaunch in the user's interactive session through Task Scheduler. Launching
+    # directly (Start-Process / explorer.exe) from an agent terminal is unreliable:
+    # sandboxes deny it, or the process inherits the sandbox job, cannot write its
+    # log or bind the phone port, holds the single-instance lock, and dies with the
+    # terminal. A scheduled task runs outside the terminal entirely.
+    Write-Host "[5/6] Relaunching via Task Scheduler (user's interactive session)..."
+    $taskName = "T3 DeskCat Relaunch"
+    $logPath = Join-Path $env:APPDATA "t3-deskcat\deskcat.log"
+    $launchedAfter = Get-Date
+    $relaunched = $false
+    $relaunchNote = ""
+    # ScheduledTasks cmdlets instead of schtasks.exe: Windows PowerShell 5.1 mangles the
+    # quoted /TR path (spaces in "T3 DeskCat"), giving 0x80070002 file-not-found.
+    $taskOk = $true
+    try {
+        $action = New-ScheduledTaskAction -Execute $destExe -WorkingDirectory $destDir
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    } catch {
+        $taskOk = $false
+        $relaunchNote = "scheduled task failed: $($_.Exception.Message)"
+    }
+    if ($taskOk) {
+        for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Milliseconds 500
+            $proc = Get-Process -Name "t3-deskcat" -ErrorAction SilentlyContinue
+            $logFresh = (Test-Path $logPath) -and ((Get-Item $logPath).LastWriteTime -ge $launchedAfter)
+            if ($proc -and $logFresh) { $relaunched = $true; break }
+        }
+        if ($relaunched) {
+            Start-Sleep -Seconds 3   # make sure it stays up
+            $relaunched = [bool](Get-Process -Name "t3-deskcat" -ErrorAction SilentlyContinue)
+        }
+        if (-not $relaunched) { $relaunchNote = "process did not start or exited right away" }
+    }
+
     $running = @(Get-Process -Name "t3-deskcat" -ErrorAction SilentlyContinue).Count
-    Write-Host "[5/5] Deployed and verified successfully."
+    Write-Host "[6/6] Deployed and verified successfully."
     Write-Host "  Path    : $destExe"
     Write-Host "  Size    : $($exeItem.Length) bytes"
     Write-Host "  Updated : $($exeItem.LastWriteTime)"
     Write-Host "  Bundles : assets/$($panelBundle.Name), assets/$($petBundle.Name)"
     Write-Host "  SHA256  : $destHash"
-    Write-Host "  Running : $running (must be 0; launch from physical desktop shortcut)"
+    if ($relaunched) {
+        Write-Host "  Running : $running (relaunched via Task Scheduler)"
+    } else {
+        Write-Warning "Relaunch failed: $relaunchNote. Ask the user to open DeskCat from the desktop shortcut."
+    }
 } finally {
     Pop-Location
 }

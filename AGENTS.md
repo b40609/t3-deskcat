@@ -8,6 +8,7 @@
    - **一律改用 `npm run deploy:local`**（會先清乾淨舊進程、執行 `npm run build:exe` = `tauri build --no-bundle` 重建前端 `dist/` 並以 `custom-protocol` 編譯嵌入資源、覆蓋 `%LOCALAPPDATA%\T3 DeskCat\t3-deskcat.exe` 並驗證 SHA256）。
    - 只想建置不安裝時跑 `npm run build:exe`。
 
-2. **禁止在 agent 終端內直接啟動 `t3-deskcat.exe`**
-   - 沙盒終端跑在隱藏桌面（`WinSta0\exebox-*`），從終端啟動 GUI 程式會畫在實體螢幕看不到的桌面，且會佔住 `tauri-plugin-single-instance` 鎖，導致使用者雙擊桌面捷徑完全沒反應。
-   - 部署完成後確認 `Get-Process -Name t3-deskcat` 為 0，交由使用者從實體桌面捷徑開啟。
+2. **部署完由 `deploy:local` 自動重開，不要自己從終端啟動 `t3-deskcat.exe`**
+   - `npm run deploy:local` 最後一步會透過 Windows 工作排程器（`T3 DeskCat Relaunch`，`/IT` 互動工作階段）重開 DeskCat，並確認行程存活、`deskcat.log` 有新的 `start` 紀錄。
+   - 不要用 `Start-Process` 或 `explorer.exe <exe>` 啟動：2026-11-26 實測，前者被沙盒擋（存取被拒）；後者會另生一個留在終端 job 裡的 explorer，DeskCat 寫不了日誌、開不了手機連接埠，終端指令結束就被一起關掉，還可能佔住 `tauri-plugin-single-instance` 鎖讓使用者雙擊捷徑沒反應。
+   - 腳本印出 `Relaunch failed` 時，才請使用者從桌面捷徑開啟。
