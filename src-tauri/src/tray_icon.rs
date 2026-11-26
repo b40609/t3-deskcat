@@ -22,7 +22,8 @@ impl Level {
         match self {
             Level::Good => (48, 176, 88),
             Level::Warn => (232, 146, 12),
-            Level::Bad => (224, 58, 52),
+            // Deep burnt amber, not red (red alerts were dropped on 2026-11-26).
+            Level::Bad => (176, 88, 0),
             Level::Offline => (128, 128, 134),
         }
     }

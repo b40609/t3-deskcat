@@ -656,7 +656,8 @@ function renderDenseWindow(
   const showUsed = (cfg().usageDisplay ?? "used") === "used";
   const remaining = Math.max(0, Math.min(100, w.remainingPercent));
   const value = showUsed ? 100 - remaining : remaining;
-  const tone = getTone(remaining, accId);
+  // Used up: grey instead of a second amber, so "out" reads apart from "low" at a glance.
+  const tone = remaining <= 0 ? "out" : getTone(remaining, accId);
   const reset = formatResetShort(w.resetAt);
   const elapsed = elapsedPercent(w.label, w.resetAt);
   const ahead = elapsed != null && remaining > 0 && remaining < 100 && 100 - remaining > elapsed;
@@ -748,6 +749,8 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   const hasIdleData = isIdle && acc.primaryWindows.length > 0;
   const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
   const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
+  // Out of quota (same rule as the "out of quota" sort tier): the whole row is greyed and faded.
+  const isExhausted = !isErr && !isCooldown && acc.primaryWindows.length > 0 && acc.effectiveRemaining <= 0;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
     dupNames.has(nameKey) && providerFilter === "all"
@@ -782,7 +785,7 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   }
 
   return `
-    <div class="dense-acc ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="dense-acc ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""} ${isExhausted ? "exhausted" : ""}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="d-head">
         ${avatarHtml(acc.id, acc.provider)}
         <span class="d-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
@@ -951,8 +954,10 @@ function renderGlassAccountCard(
   const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
   const wins = isErr || isCooldown || (isExpired && !isExpiredLastKnown) || (isIdle && !hasIdleData) ? [] : pickWindows(acc, showExtra);
   const primaryTone = getTone(acc.effectiveRemaining, acc.id);
-  const isAlert = isErr || primaryTone === "bad" || fc?.urgent === true;
-  const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" ? "tone-warn" : "";
+  // Out of quota: grey and faded instead of the amber alert, so it reads apart from "low".
+  const isExhausted = wins.length > 0 && acc.effectiveRemaining <= 0;
+  const isAlert = !isExhausted && (isErr || primaryTone === "bad" || fc?.urgent === true);
+  const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" && !isExhausted ? "tone-warn" : "";
 
   let statusHtml = "";
   if (isExpiredLastKnown) {
@@ -979,7 +984,7 @@ function renderGlassAccountCard(
     const mainW = wins[0];
     const mainRem = Math.max(0, Math.min(100, mainW.remainingPercent));
     const mainVal = showUsed ? 100 - mainRem : mainRem;
-    const mainTone = getTone(mainRem, acc.id);
+    const mainTone = mainRem <= 0 ? "out" : getTone(mainRem, acc.id);
     const mainReset = formatResetShort(mainW.resetAt);
     const mainElapsed = elapsedPercent(mainW.label, mainW.resetAt);
     const mainAhead = mainElapsed != null && mainRem > 0 && mainRem < 100 && 100 - mainRem > mainElapsed;
@@ -999,7 +1004,7 @@ function renderGlassAccountCard(
       .map((w) => {
         const rem = Math.max(0, Math.min(100, w.remainingPercent));
         const val = showUsed ? 100 - rem : rem;
-        const tone = getTone(rem, acc.id);
+        const tone = rem <= 0 ? "out" : getTone(rem, acc.id);
         const rst = formatResetShort(w.resetAt);
         const wTitle = showUsed ? t("用 {p}%", { p: val }) : t("剩 {p}%", { p: val });
         return `
@@ -1026,7 +1031,7 @@ function renderGlassAccountCard(
   }
 
   return `
-    <div class="glass-tile ${wide ? "wide" : ""} ${isAlert ? "is-alert" : ""} ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
+    <div class="glass-tile ${wide ? "wide" : ""} ${isAlert ? "is-alert" : ""} ${isExhausted ? "exhausted" : ""} ${isErr ? "dim" : ""} ${isExpiredLastKnown ? "last-known" : ""} ${iconTone}" data-acc-id="${escapeHtml(acc.id)}">
       <div class="g-head">
         ${avatarHtml(acc.id, acc.provider)}
         <span class="g-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>

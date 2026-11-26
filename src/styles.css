@@ -4353,3 +4353,26 @@ html.remote .scroll {
     -webkit-backdrop-filter: none;
   }
 }
+
+/* ---------------------------------------------------------------- out of quota (dense list and glass tiles)
+   Used-up limits are grey, not a second amber, and the whole account row is faded,
+   so "out" reads apart from "low" at a glance (replaces the deeper-amber attempt of ba7f99c). */
+.bar .out {
+  background: var(--label-3);
+}
+
+.d-wval.out,
+.g-big-pct.out,
+.g-sub-val.out {
+  color: var(--label-3);
+}
+
+.dense-acc.exhausted,
+.glass-tile.exhausted {
+  opacity: 0.55;
+}
+
+.dense-acc.exhausted:hover,
+.glass-tile.exhausted:hover {
+  opacity: 1;
+}
