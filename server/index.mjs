@@ -2,10 +2,12 @@
 // Serves the exact built panel/analytics frontend (dist/) on loopback (127.0.0.1)
 // and this PC's Tailscale IPv4 (100.64.0.0/10), sharing %APPDATA%\t3-deskcat\ state.
 
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir, networkInterfaces } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { arch, homedir, networkInterfaces, platform } from "node:os";
 import { extname, join, resolve } from "node:path";
+import QRCode from "qrcode";
 
 import { credStamp, discoverAccounts, recentActivityTs } from "./discovery.mjs";
 import {
@@ -575,13 +577,53 @@ function buildPick(acc, strategy, forecasts, now) {
   };
 }
 
-function computePicks(accounts, settings, forecasts, now) {
+function detectActiveAccountId(discovered, now) {
+  let bestId = null;
+  let bestTs = 0;
+  for (const acc of discovered) {
+    const ts = recentActivityTs(acc);
+    if (ts > bestTs && now - ts <= ACTIVE_WINDOW_SECS) {
+      bestTs = ts;
+      bestId = acc.id;
+    }
+  }
+  return bestId;
+}
+
+function computeRankedPicks(accounts, settings, forecasts, now, opts) {
   const visible = accounts.filter((a) => !isHidden(settings, a.id));
-  const strategy = settings.picksStrategy ?? "use_before_reset_weekly";
-  const scope = settings.picksScope ?? "per_provider";
-  const limit = Math.max(1, Math.min(6, Number(settings.picksCount ?? 1)));
+  const strategy = opts.strategy ?? "use_before_reset_weekly";
+  const scope = opts.scope ?? "per_provider";
+  const limit = Math.max(1, Math.min(6, Number(opts.count ?? 1)));
+  const pinActive = Boolean(opts.pinActive);
+  const pinnedIds = Array.isArray(opts.pinnedIds) ? opts.pinnedIds : [];
+  const activeId = opts.activeId ?? null;
   const out = [];
   const taken = new Set();
+
+  if (strategy === "pinned") {
+    const byId = new Map(visible.map((a) => [a.id, a]));
+    for (const id of pinnedIds) {
+      if (out.length >= limit) break;
+      const acc = byId.get(id);
+      if (!acc || taken.has(acc.id)) continue;
+      const pk = buildPick({ ...acc, name: displayName(settings, acc) }, "most_left", forecasts, now);
+      pk.tag = "已釘選";
+      out.push(pk);
+      taken.add(acc.id);
+    }
+    return out;
+  }
+
+  if (pinActive && activeId) {
+    const activeAcc = visible.find((a) => a.id === activeId);
+    if (activeAcc && isUsable(activeAcc)) {
+      const pk = buildPick({ ...activeAcc, name: displayName(settings, activeAcc) }, strategy, forecasts, now);
+      pk.tag = "使用中";
+      out.push(pk);
+      taken.add(activeAcc.id);
+    }
+  }
 
   const rankList = (pool) => {
     const s = strategy === "use_before_reset" ? "use_before_reset_weekly" : strategy;
@@ -621,14 +663,65 @@ function computePicks(accounts, settings, forecasts, now) {
 
   if (scope === "per_provider") {
     for (const prov of ["claude", "antigravity", "codex"]) {
+      const alreadyForProv = out.filter((p) => p.provider === prov).length;
+      const need = Math.max(0, limit - alreadyForProv);
+      if (need <= 0) continue;
       const pool = visible.filter((a) => a.provider === prov && !taken.has(a.id) && eligible(a));
-      if (pool.length) pickFrom(pool, limit);
+      if (pool.length) pickFrom(pool, need);
     }
   } else {
-    const pool = visible.filter((a) => !taken.has(a.id) && eligible(a));
-    if (pool.length) pickFrom(pool, limit);
+    const need = Math.max(0, limit - out.length);
+    if (need > 0) {
+      const pool = visible.filter((a) => !taken.has(a.id) && eligible(a));
+      if (pool.length) pickFrom(pool, need);
+    }
   }
   return out;
+}
+
+function computePicks(accounts, settings, forecasts, now) {
+  return computeRankedPicks(accounts, settings, forecasts, now, {
+    strategy: settings.picksStrategy ?? "use_before_reset_weekly",
+    scope: settings.picksScope ?? "per_provider",
+    count: settings.picksCount ?? 1,
+    pinActive: settings.picksPinActive === true,
+    pinnedIds: settings.picksPinnedIds ?? [],
+    activeId: state.activeAccountId,
+  });
+}
+
+function computeHudPicks(accounts, settings, forecasts, now) {
+  const hudCount = Math.max(1, Math.min(4, Number(settings.hudCount ?? 2)));
+  const hudScope = hudCount < 2 ? "global" : (settings.hudScope ?? "per_provider");
+  const countArg = hudScope === "per_provider" ? 1 : hudCount;
+  const picks = computeRankedPicks(accounts, settings, forecasts, now, {
+    strategy: settings.hudStrategy ?? "use_before_reset_weekly",
+    scope: hudScope,
+    count: countArg,
+    pinActive: settings.hudPinActive !== false,
+    pinnedIds: settings.hudPinnedIds ?? [],
+    activeId: state.activeAccountId,
+  });
+  if (hudScope === "per_provider" && picks.length < hudCount) {
+    // Top up remaining slots across all providers if fewer providers than hudCount
+    const taken = new Set(picks.map((p) => p.accountId));
+    const extra = computeRankedPicks(accounts, settings, forecasts, now, {
+      strategy: settings.hudStrategy ?? "use_before_reset_weekly",
+      scope: "global",
+      count: hudCount,
+      pinActive: false,
+      pinnedIds: settings.hudPinnedIds ?? [],
+      activeId: null,
+    });
+    for (const pk of extra) {
+      if (picks.length >= hudCount) break;
+      if (!taken.has(pk.accountId)) {
+        picks.push(pk);
+        taken.add(pk.accountId);
+      }
+    }
+  }
+  return picks.slice(0, hudCount);
 }
 
 function computeOverallScore(accounts, settings) {
@@ -749,12 +842,255 @@ const state = {
   ledger: new UsageLedger(LEDGER_PATH),
   credStamps: new Map(),
   discovered: [],
+  activeAccountId: null,
+  hotkeyError: null,
+  lowAlerted: new Set(),
+  lowWindows: new Set(),
   snapshot: null,
   usageToday: {},
   lastUsageScan: 0,
   refreshPromise: null,
   loggedIds: "",
 };
+
+// ============================================================================
+// Desktop support helpers (loopback-only: notifications, autostart, Tailscale,
+// folder picker, diagnostics, add-account terminal launcher)
+// ============================================================================
+
+function shortenHome(p) {
+  const h = homedir();
+  if (h && p.toLowerCase().startsWith(h.toLowerCase())) {
+    return `~${p.slice(h.length)}`;
+  }
+  return p;
+}
+
+function findTailscaleGui() {
+  for (const envVar of ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]) {
+    const base = process.env[envVar];
+    if (!base) continue;
+    const candidate = join(base, "Tailscale", "tailscale-ipn.exe");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function getTailscaleState() {
+  const connected = Boolean(getTailscaleIp());
+  return { installed: connected || Boolean(findTailscaleGui()), connected };
+}
+
+function inQuietHours(s) {
+  if (!s.quietHoursEnabled) return false;
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const start = Number(s.quietStartMin ?? 23 * 60);
+  const end = Number(s.quietEndMin ?? 9 * 60);
+  if (start === end) return false;
+  if (start < end) return cur >= start && cur < end;
+  return cur >= start || cur < end;
+}
+
+function sendDesktopNotification(title, body) {
+  if (platform() !== "win32") return;
+  const esc = (str) => String(str ?? "").replace(/'/g, "''");
+  const ps = [
+    "Add-Type -AssemblyName System.Windows.Forms, System.Drawing",
+    "$ni = New-Object System.Windows.Forms.NotifyIcon",
+    `$ico = '${esc(join(REPO_ROOT, "src-tauri", "icons", "icon.ico"))}'`,
+    "if (Test-Path $ico) { $ni.Icon = New-Object System.Drawing.Icon($ico) } else { $ni.Icon = [System.Drawing.SystemIcons]::Information }",
+    "$ni.Visible = $true",
+    `$ni.ShowBalloonTip(5000, '${esc(title)}', '${esc(body)}', [System.Windows.Forms.ToolTipIcon]::Info)`,
+    "Start-Sleep -Seconds 6",
+    "$ni.Visible = $false; $ni.Dispose()",
+  ].join("; ");
+  try {
+    const conhost = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "conhost.exe");
+    const child = spawn(conhost, ["--headless", "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (err) {
+    logLine(`notification error: ${err.message}`);
+  }
+}
+
+function evaluateNotifications(accounts) {
+  const s = state.settings;
+  if (inQuietHours(s)) return;
+  for (const acc of accounts) {
+    if (isHidden(s, acc.id) || acc.status !== "ok") continue;
+    const name = displayName(s, acc);
+    const danger = Number(s.accountPrefs?.[acc.id]?.notifyThreshold ?? s.sleepingThreshold ?? 20);
+    if (s.notifyEnabled !== false) {
+      if (acc.effectiveRemaining < danger) {
+        if (!state.lowAlerted.has(acc.id)) {
+          state.lowAlerted.add(acc.id);
+          sendDesktopNotification("T3 DeskCat 額度偏低", `${name} 剩餘 ${acc.effectiveRemaining}%（低於危險線 ${danger}%）`);
+        }
+      } else if (acc.effectiveRemaining >= danger + 5) {
+        state.lowAlerted.delete(acc.id);
+      }
+    }
+    if (s.notifyOnReset === true) {
+      for (const w of acc.primaryWindows ?? []) {
+        if (w.label.includes(" ")) continue;
+        const key = `${acc.id}|${w.label}`;
+        if (w.remainingPercent < 50) {
+          state.lowWindows.add(key);
+        } else if (w.remainingPercent >= 95 && state.lowWindows.has(key)) {
+          state.lowWindows.delete(key);
+          const lbl = w.label === "Wk" ? "每週" : w.label;
+          sendDesktopNotification("T3 DeskCat 額度已重設", `${name} 的 ${lbl} 額度已恢復至 ${w.remainingPercent}%`);
+        }
+      }
+    }
+  }
+}
+
+function syncAutostartShortcut(enabled) {
+  if (platform() !== "win32") return;
+  const startupDir = join(process.env.APPDATA ?? "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
+  const lnkPath = join(startupDir, "T3 DeskCat.lnk");
+  try {
+    if (!enabled) {
+      if (existsSync(lnkPath)) unlinkSync(lnkPath);
+      return;
+    }
+    mkdirSync(startupDir, { recursive: true });
+    const conhost = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "conhost.exe");
+    const hudScript = join(REPO_ROOT, "scripts", "deskcat-hud.ps1");
+    const icon = join(REPO_ROOT, "src-tauri", "icons", "icon.ico");
+    const esc = (v) => v.replace(/'/g, "''");
+    const ps = [
+      "$wsh = New-Object -ComObject WScript.Shell",
+      `$sc = $wsh.CreateShortcut('${esc(lnkPath)}')`,
+      `$sc.TargetPath = '${esc(conhost)}'`,
+      `$sc.Arguments = '--headless powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File "${esc(hudScript)}"'`,
+      `$sc.WorkingDirectory = '${esc(REPO_ROOT)}'`,
+      `if (Test-Path '${esc(icon)}') { $sc.IconLocation = '${esc(icon)},0' }`,
+      "$sc.Description = 'T3 DeskCat Floating HUD'",
+      "$sc.Save()",
+    ].join("; ");
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", ps], { windowsHide: true, timeout: 8000 });
+  } catch (err) {
+    logLine(`autostart sync error: ${err.message}`);
+  }
+}
+
+function openDesktopTarget(target) {
+  if (target === "logs") {
+    mkdirSync(CONFIG_DIR, { recursive: true });
+    spawn("explorer.exe", [CONFIG_DIR], { detached: true, stdio: "ignore" }).unref();
+    return null;
+  }
+  if (target === "tailscale-download") {
+    spawn("explorer.exe", ["https://tailscale.com/download/windows"], { detached: true, stdio: "ignore" }).unref();
+    return null;
+  }
+  if (target === "tailscale-app") {
+    const gui = findTailscaleGui();
+    if (!gui) throw Object.assign(new Error("找不到 Tailscale"), { code: 400 });
+    spawn(gui, [], { detached: true, stdio: "ignore" }).unref();
+    return null;
+  }
+  throw Object.assign(new Error("unknown target"), { code: 400 });
+}
+
+function pickLocalFolder() {
+  const ps = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$d = New-Object System.Windows.Forms.FolderBrowserDialog",
+    "$d.Description = '選擇帳號設定資料夾'",
+    "$d.ShowNewFolderButton = $false",
+    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Write-Output $d.SelectedPath }",
+  ].join("; ");
+  const out = execFileSync("powershell.exe", ["-STA", "-NoProfile", "-Command", ps], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+  }).trim();
+  return out || null;
+}
+
+function launchAddAccountLogin(provider, name) {
+  const home = homedir();
+  const slug = String(name ?? "").trim().toLowerCase();
+  const valid = slug.length > 0 && slug.length <= 24 && /^[a-z0-9_-]+$/.test(slug);
+  let envVar = "";
+  let dir = null;
+  let cmd = "";
+  let marker = "";
+  if (provider === "claude") {
+    envVar = "CLAUDE_CONFIG_DIR";
+    dir = join(home, `.claude-${slug}`);
+    cmd = "claude auth login";
+    marker = ".credentials.json";
+  } else if (provider === "codex") {
+    envVar = "CODEX_HOME";
+    dir = join(home, `.codex-${slug}`);
+    cmd = "codex login";
+    marker = "auth.json";
+  } else if (provider === "antigravity") {
+    cmd = "agy";
+  } else {
+    throw Object.assign(new Error("不支援的平台"), { code: 400 });
+  }
+  if (dir) {
+    if (!valid) throw Object.assign(new Error("名稱只能用英文字母、數字、- 或 _"), { code: 400 });
+    if (existsSync(join(dir, marker))) throw Object.assign(new Error("已經有叫這個名稱的帳號"), { code: 400 });
+    mkdirSync(dir, { recursive: true });
+  }
+  const childEnv = { ...process.env };
+  if (dir && envVar) childEnv[envVar] = dir;
+  spawn("cmd.exe", ["/C", "start", "", "cmd.exe", "/K", cmd], {
+    env: childEnv,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  }).unref();
+  return dir ?? home;
+}
+
+function buildDiagnosticsText() {
+  const ts = getTailscaleState();
+  const tsIp = getTailscaleIp();
+  const port = state.settings.mobilePort || 8765;
+  const mobileDesc = state.settings.mobileEnabled === false
+    ? "off"
+    : (tsIp ? `http://${tsIp}:${port}` : `http://127.0.0.1:${port} (no Tailscale)`);
+  const lines = [
+    `T3 DeskCat 0.2.0 (Web Edition · node ${process.version})`,
+    `OS: ${platform()} ${arch()}`,
+    `Phone page: ${mobileDesc}`,
+    `Tailscale: installed=${ts.installed} connected=${ts.connected}`,
+    "",
+  ];
+  const srcById = new Map(state.discovered.map((a) => [a.id, shortenHome(a.filePath)]));
+  if (state.snapshot) {
+    const now = nowSec();
+    lines.push(`Accounts (${state.snapshot.accounts.length}):`);
+    for (const a of state.snapshot.accounts) {
+      const age = a.updatedAt > 0 ? ` age=${Math.max(0, now - a.updatedAt)}s` : "";
+      const err = a.error ? ` (${a.error})` : "";
+      lines.push(`  ${a.id} [${a.plan ?? ""}] status=${a.status}${age}${err} <- ${srcById.get(a.id) ?? "?"}`);
+    }
+    const extra = state.settings.extraAccountDirs ?? [];
+    if (extra.length) lines.push(`Extra folders: ${extra.join("; ")}`);
+  } else {
+    lines.push("Accounts: no snapshot yet");
+  }
+  if (existsSync(LOG_PATH)) {
+    try {
+      const logLines = readFileSync(LOG_PATH, "utf8").split(/\r?\n/).filter(Boolean);
+      lines.push("", "Log (last 40 lines):", ...logLines.slice(-40));
+    } catch {}
+  }
+  return lines.join("\n");
+}
 
 setPriceOverrides(state.settings.modelPrices);
 
@@ -1002,6 +1338,8 @@ async function _doRefresh(reason) {
   state.cache.save();
   state.history.save();
   writeQuotaContract(accounts, discoveredById, state.cache, doneTs);
+  state.activeAccountId = detectActiveAccountId(discovered, doneTs);
+  evaluateNotifications(accounts);
 
   state.snapshot = buildSnapshot(accounts, doneTs);
   return state.snapshot;
@@ -1082,7 +1420,12 @@ function readBody(req) {
   });
 }
 
-async function handleInvoke(cmd, args) {
+async function handleInvoke(cmd, args, ctx = {}) {
+  const isLoopback = Boolean(ctx.isLoopback);
+  const requireLoopback = () => {
+    if (!isLoopback) throw Object.assign(new Error("desktop only"), { code: 403 });
+  };
+
   if (cmd === "get_snapshot") {
     return state.snapshot ?? (await runRefresh("startup"));
   }
@@ -1101,34 +1444,148 @@ async function handleInvoke(cmd, args) {
   }
   if (cmd === "account_sources") {
     const out = {};
-    for (const a of state.discovered) out[a.id] = a.filePath;
+    for (const a of state.discovered) out[a.id] = shortenHome(a.filePath);
     return out;
   }
   if (cmd === "mobile_status") {
+    if (state.settings.mobileEnabled === false) {
+      return { url: null, error: null };
+    }
     const ts = getTailscaleIp();
     const port = state.settings.mobilePort || 8765;
     return {
-      url: ts ? `http://${ts}:${port}` : `http://127.0.0.1:${port}`,
-      error: ts ? null : "找不到 Tailscale：僅本機可連線",
+      url: ts ? `http://${ts}:${port}` : null,
+      error: ts ? null : "找不到 Tailscale：請確認已安裝並登入 Tailscale",
     };
   }
   if (cmd === "tailscale_ip") {
     return getTailscaleIp();
+  }
+  if (cmd === "tailscale_state") {
+    requireLoopback();
+    return getTailscaleState();
+  }
+  if (cmd === "qr_svg") {
+    requireLoopback();
+    const text = String(args?.text ?? "").trim();
+    if (!text) throw Object.assign(new Error("missing text"), { code: 400 });
+    return await QRCode.toString(text, {
+      type: "svg",
+      margin: 2,
+      width: 168,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+  }
+  if (cmd === "diagnostics") {
+    requireLoopback();
+    return buildDiagnosticsText();
+  }
+  if (cmd === "open_target") {
+    requireLoopback();
+    return openDesktopTarget(String(args?.target ?? ""));
+  }
+  if (cmd === "pick_folder") {
+    requireLoopback();
+    return pickLocalFolder();
+  }
+  if (cmd === "add_account_login") {
+    requireLoopback();
+    return launchAddAccountLogin(String(args?.provider ?? ""), String(args?.name ?? ""));
+  }
+  if (cmd === "test_notification") {
+    requireLoopback();
+    sendDesktopNotification("T3 DeskCat 測試通知", "通知功能正常運作，達到門檻時會在這裡提醒你。");
+    return null;
+  }
+  if (cmd === "hotkey_status") {
+    requireLoopback();
+    return state.hotkeyError;
+  }
+  if (cmd === "report_hotkey_status") {
+    requireLoopback();
+    state.hotkeyError = typeof args?.error === "string" && args.error.trim() ? args.error.trim() : null;
+    return null;
+  }
+  if (cmd === "set_panel_pinned") {
+    requireLoopback();
+    const pinned = Boolean(args?.pinned);
+    state.settings = { ...state.settings, panelPinned: pinned };
+    writeJsonAtomic(SETTINGS_PATH, state.settings, true);
+    if (state.snapshot) state.snapshot = buildSnapshot(state.snapshot.accounts, nowSec());
+    return null;
+  }
+  if (cmd === "hide_panel") {
+    requireLoopback();
+    return null;
+  }
+  if (cmd === "clear_custom_images") {
+    requireLoopback();
+    state.settings = {
+      ...state.settings,
+      customImageWorking: null,
+      customImageSweating: null,
+      customImageSleeping: null,
+    };
+    writeJsonAtomic(SETTINGS_PATH, state.settings, true);
+    if (state.snapshot) state.snapshot = buildSnapshot(state.snapshot.accounts, nowSec());
+    return state.snapshot ?? (await runRefresh("startup"));
+  }
+  if (cmd === "get_activity") {
+    requireLoopback();
+    return { activeAccountId: state.activeAccountId };
+  }
+  if (cmd === "get_hud_data") {
+    requireLoopback();
+    const snap = state.snapshot ?? (await runRefresh("startup"));
+    const now = nowSec();
+    const hudPicks = computeHudPicks(snap.accounts, state.settings, snap.forecasts ?? {}, now);
+    const byId = new Map(snap.accounts.map((a) => [a.id, a]));
+    const items = hudPicks.map((pk) => {
+      const acc = byId.get(pk.accountId);
+      const plainWins = (acc?.primaryWindows ?? []).filter((w) => !w.label.includes(" ")).slice(0, 2);
+      return {
+        accountId: pk.accountId,
+        provider: pk.provider,
+        name: pk.accountName,
+        effectiveRemaining: pk.effectiveRemaining,
+        tag: pk.tag,
+        windows: plainWins.map((w) => ({ label: w.label, remainingPercent: w.remainingPercent, resetAt: w.resetAt })),
+      };
+    });
+    return {
+      settings: state.settings,
+      overallScore: snap.overallScore,
+      mood: snap.mood,
+      activeAccountId: state.activeAccountId,
+      items,
+    };
   }
   if (cmd === "update_settings") {
     const next = args?.newSettings;
     if (!next || typeof next !== "object") {
       throw Object.assign(new Error("missing newSettings"), { code: 400 });
     }
+    const prevAutostart = Boolean(state.settings.launchAtStartup);
+    const prevMobile = state.settings.mobileEnabled !== false;
     const merged = { ...state.settings, ...next };
-    for (const k of DESKTOP_ONLY_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(state.settings, k)) {
-        merged[k] = state.settings[k];
+    if (!isLoopback) {
+      for (const k of DESKTOP_ONLY_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(state.settings, k)) {
+          merged[k] = state.settings[k];
+        }
       }
     }
     state.settings = merged;
     setPriceOverrides(merged.modelPrices);
     writeJsonAtomic(SETTINGS_PATH, merged, true);
+    if (isLoopback) {
+      if (Boolean(merged.launchAtStartup) !== prevAutostart) {
+        syncAutostartShortcut(Boolean(merged.launchAtStartup));
+      }
+      if ((merged.mobileEnabled !== false) !== prevMobile) {
+        syncTailscaleListener();
+      }
+    }
     if (state.snapshot) {
       state.snapshot = buildSnapshot(state.snapshot.accounts, nowSec());
     }
@@ -1163,7 +1620,7 @@ async function handleRequest(req, res) {
       args = {};
     }
     try {
-      const out = await handleInvoke(cmd, args);
+      const out = await handleInvoke(cmd, args, { isLoopback: isLoopbackIp(peer) });
       return send(res, 200, "application/json; charset=utf-8", JSON.stringify(out));
     } catch (err) {
       const code = [400, 403, 503].includes(err.code) ? err.code : 500;

@@ -1751,7 +1751,15 @@ html.remote .grip {
   display: block;
   width: 100%;
   height: 100%;
-  stroke: none;
+  stroke-width: 1;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  shape-rendering: crispEdges;
+}
+
+#add-acc-form .text-input {
+  width: 100%;
+  text-align: left;
 }
 
 .url-btn {
@@ -1898,15 +1906,25 @@ body.remote .desktop-only {
 }
 
 html.remote,
-html.remote body {
+html.remote body,
+html.web-host,
+html.web-host body {
   background: var(--bg);
 }
 
-html.remote .shell {
+html.remote .shell,
+html.web-host .shell {
   inset: 0;
   border-radius: 0;
   box-shadow: none;
   animation: none;
+}
+
+/* Local desktop browser tab: hide frameless window-only buttons (pin/close/resize), keep full desktop settings */
+html.web-browser #btn-pin,
+html.web-browser #btn-close,
+html.web-browser .resize-handles {
+  display: none !important;
 }
 
 html.remote .nav-large,

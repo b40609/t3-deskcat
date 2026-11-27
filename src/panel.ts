@@ -1,6 +1,6 @@
 import { mainWindows, normalizeStrategy } from "./focus";
 import { applyI18n, LANGUAGES, locale, setLang, t, weekday } from "./i18n";
-import { call as invoke, isRemote, subscribe } from "./bridge";
+import { call as invoke, hasWebViewHost, isRemote, isTauri, postHostMessage, subscribe } from "./bridge";
 import { createAnalyticsView } from "./analyticsView";
 import { providerBadgeLabel } from "./modelFormat";
 import { normalizePetTheme } from "./themeRenderer";
@@ -1792,8 +1792,8 @@ renameForm.addEventListener("submit", (e) => {
   setPref(id, { alias });
 });
 
-// ---- frameless desktop resize edges
-if (!isRemote) {
+// ---- frameless desktop resize edges & titlebar drag (Tauri IPC or WPF WebView2 host)
+if (isTauri) {
   type ResizeDir = Parameters<ReturnType<typeof getCurrentWindow>["startResizeDragging"]>[0];
   document.querySelectorAll<HTMLElement>(".resize-edge[data-resize]").forEach((el) => {
     el.addEventListener("pointerdown", (e) => {
@@ -1801,6 +1801,23 @@ if (!isRemote) {
       e.preventDefault();
       const dir = el.dataset.resize as ResizeDir;
       void getCurrentWindow().startResizeDragging(dir).catch(() => {});
+    });
+  });
+} else if (hasWebViewHost) {
+  document.querySelectorAll<HTMLElement>(".resize-edge[data-resize]").forEach((el) => {
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      postHostMessage({ type: "start_resize", dir: el.dataset.resize ?? "SouthEast" });
+    });
+  });
+  document.querySelectorAll<HTMLElement>("[data-tauri-drag-region]").forEach((el) => {
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest("button, input, select, a, .segmented")) return;
+      e.preventDefault();
+      postHostMessage({ type: "start_drag" });
     });
   });
 }
@@ -2109,7 +2126,7 @@ $("btn-diag").addEventListener("click", async () => {
   }
   window.setTimeout(() => (state.textContent = ""), 2500);
 });
-if (!isRemote) {
+if (isTauri) {
   getVersion()
     .then((v) => ($("app-version").textContent = `T3 DeskCat ${v}`))
     .catch(() => {});
@@ -2673,6 +2690,8 @@ async function init() {
   applyI18n();
   document.body.classList.toggle("remote", isRemote);
   document.documentElement.classList.toggle("remote", isRemote);
+  document.documentElement.classList.toggle("web-host", !isTauri && !isRemote);
+  document.documentElement.classList.toggle("web-browser", !isTauri && !isRemote && !hasWebViewHost);
   await subscribe<DashboardSnapshot>("snapshot-updated", (snap) => renderDashboard(snap), { cmd: "get_snapshot", everyMs: 30000 });
   await subscribe<string>("open-dash-tab", (tab) => {
     setSettingsVisible(false);
