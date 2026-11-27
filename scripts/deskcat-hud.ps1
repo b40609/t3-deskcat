@@ -1,32 +1,103 @@
-﻿# T3 DeskCat Web Edition — Always-on-top Frameless Floating HUD (Signed powershell.exe + .NET WPF)
-# Zero unsigned binaries, zero Task Scheduler. Talks to local node server/index.mjs on port 8765.
+﻿# T3 DeskCat Web Edition — Always-on-top Floating HUD + Adjacent Popup WebView2 Panel
+# 100% Microsoft/Node signed runtime (powershell.exe + .NET WPF + signed Microsoft.Web.WebView2 + node.exe).
+# Zero unsigned executables, zero Task Scheduler.
 param(
-    [string]$RenderPreviewPng = ""
+    [string]$RenderPreviewPng = "",
+    [switch]$SelfTestPanel
 )
 
 $ErrorActionPreference = "Stop"
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appDataDir = Join-Path $env:APPDATA "t3-deskcat"
 $settingsPath = Join-Path $appDataDir "settings.json"
 $posPath = Join-Path $appDataDir "web-hud-pos.json"
+$wv2UserDataDir = Join-Path $env:LOCALAPPDATA "T3 DeskCat\WebView2Hud"
 $port = 8765
 $baseUrl = "http://127.0.0.1:$port"
+$panelUrl = "$baseUrl/panel.html"
 
-# ---- Single-instance guard (skip when rendering a preview PNG)
+# ---- Win32 helper for Windows 11 native rounded corners + DLL search path for WebView2Loader.dll
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class DeskCatWin32 {
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool SetDllDirectory(string lpPathName);
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWCP_ROUND = 2;
+    public static void ApplyDarkRounded(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return;
+        int dark = 1;
+        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+        int round = DWMWCP_ROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
+    }
+}
+"@
+
+function Find-SignedWebView2Dir {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    # Teams Meeting Add-in (x64, Microsoft-signed)
+    $teamsBase = Join-Path $env:LOCALAPPDATA "Microsoft\TeamsMeetingAdd-in"
+    if (Test-Path $teamsBase) {
+        Get-ChildItem $teamsBase -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { $candidates.Add((Join-Path $_.FullName "x64")) }
+    }
+    # Visual Studio 2022 BuildTools / IDE PrivateAssemblies
+    foreach ($ed in @("BuildTools", "Community", "Professional", "Enterprise")) {
+        $candidates.Add("C:\Program Files (x86)\Microsoft Visual Studio\2022\$ed\Common7\IDE\PrivateAssemblies")
+        $candidates.Add("C:\Program Files\Microsoft Visual Studio\2022\$ed\Common7\IDE\PrivateAssemblies")
+    }
+    $candidates.Add("C:\Program Files\GIGABYTE\Control Center")
+
+    foreach ($dir in $candidates) {
+        if (-not (Test-Path $dir)) { continue }
+        $wpf = Join-Path $dir "Microsoft.Web.WebView2.Wpf.dll"
+        $core = Join-Path $dir "Microsoft.Web.WebView2.Core.dll"
+        if (-not ((Test-Path $wpf) -and (Test-Path $core))) { continue }
+        $loader = $null
+        foreach ($rel in @("runtimes\win-x64\native\WebView2Loader.dll", "WebView2Loader.dll")) {
+            $p = Join-Path $dir $rel
+            if (Test-Path $p) { $loader = Split-Path -Parent $p; break }
+        }
+        if ($loader) {
+            return @{ ManagedDir = $dir; NativeDir = $loader }
+        }
+    }
+    return $null
+}
+
+$script:wv2Loaded = $false
+$wv2Info = Find-SignedWebView2Dir
+if ($wv2Info) {
+    try {
+        [void][DeskCatWin32]::SetDllDirectory($wv2Info.NativeDir)
+        $env:PATH = "$($wv2Info.NativeDir);$env:PATH"
+        [System.Reflection.Assembly]::LoadFrom((Join-Path $wv2Info.ManagedDir "Microsoft.Web.WebView2.Core.dll")) | Out-Null
+        [System.Reflection.Assembly]::LoadFrom((Join-Path $wv2Info.ManagedDir "Microsoft.Web.WebView2.Wpf.dll")) | Out-Null
+        $script:wv2Loaded = $true
+    } catch {
+        $script:wv2Loaded = $false
+    }
+}
+
+# ---- Single-instance guard + toggle signal event (so double-clicking shortcut toggles the adjacent panel)
 $mutex = $null
-if (-not $RenderPreviewPng) {
+$toggleEvent = $null
+$isTestMode = [bool]$RenderPreviewPng -or [bool]$SelfTestPanel
+if (-not $isTestMode) {
     $createdNew = $false
     $mutex = New-Object System.Threading.Mutex($true, "Local\T3DeskCatWebHud", [ref]$createdNew)
+    $toggleEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, "Local\T3DeskCatWebHudToggle")
     if (-not $createdNew) {
-        # Already running: open the full web panel instead of spawning a duplicate HUD
-        $openScript = Join-Path $PSScriptRoot "open-web-app.ps1"
-        if (Test-Path $openScript) {
-            Start-Process -FilePath "powershell.exe" `
-                -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$openScript`"" `
-                -WindowStyle Hidden
-        }
+        try { [void]$toggleEvent.Set() } catch {}
+        $toggleEvent.Dispose()
         exit 0
     }
 }
@@ -57,7 +128,7 @@ function Ensure-WebServer {
     return $false
 }
 
-function Open-FullPanel {
+function Open-InBrowser {
     $openScript = Join-Path $PSScriptRoot "open-web-app.ps1"
     if (Test-Path $openScript) {
         Start-Process -FilePath "powershell.exe" `
@@ -91,6 +162,13 @@ function Invoke-DeskCatApi([string]$Cmd) {
     }
 }
 
+function Load-UserSettings {
+    if (Test-Path $settingsPath) {
+        try { return (Get-Content $settingsPath -Raw | ConvertFrom-Json) } catch {}
+    }
+    return $null
+}
+
 function Get-Brush([string]$Hex) {
     $bc = New-Object System.Windows.Media.BrushConverter
     $b = $bc.ConvertFromString($Hex)
@@ -98,8 +176,6 @@ function Get-Brush([string]$Hex) {
     return $b
 }
 
-$brushBg      = Get-Brush "#EB14171F"
-$brushBorder  = Get-Brush "#2EFFFFFF"
 $brushTrack   = Get-Brush "#24FFFFFF"
 $brushText    = Get-Brush "#F2F4F8"
 $brushMuted   = Get-Brush "#9BA2B1"
@@ -148,7 +224,6 @@ function Get-InitialPosition {
             }
         } catch {}
     }
-    # Clamp onto visible virtual screen
     $vl = [System.Windows.SystemParameters]::VirtualScreenLeft
     $vt = [System.Windows.SystemParameters]::VirtualScreenTop
     $vr = $vl + [System.Windows.SystemParameters]::VirtualScreenWidth
@@ -165,10 +240,10 @@ function Save-HudPosition([double]$X, [double]$Y) {
     } catch {}
 }
 
-# Ensure web backend is listening
+# Ensure local web backend is running
 [void](Ensure-WebServer)
 
-# ---- Build WPF Window
+# ---- Build Floating HUD Window
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -209,17 +284,248 @@ $window.Left = $pos.X
 $window.Top = $pos.Y
 
 $script:locked = $false
+$script:panelPinned = $false
 $script:dragStart = $null
 $script:dragOrigin = $null
 $script:didDrag = $false
+$script:lastPanelToggleUtc = [DateTime]::MinValue
+$script:panelWin = $null
+$script:webView = $null
+$script:wv2InitStarted = $false
+
+# ---- Build Adjacent Popup Panel Window (embedded signed WebView2 — NOT a new browser tab)
+$userSettings = Load-UserSettings
+$panelW = if ($userSettings -and $userSettings.panelWidth -ge 320 -and $userSettings.panelWidth -le 680) { [double]$userSettings.panelWidth } else { 390.0 }
+$panelH = if ($userSettings -and $userSettings.panelHeight -ge 420 -and $userSettings.panelHeight -le 1080) { [double]$userSettings.panelHeight } else { 666.0 }
+
+function Ensure-PopupPanel {
+    if ($null -ne $script:panelWin) { return $true }
+    if (-not $script:wv2Loaded) { return $false }
+
+    $pw = New-Object System.Windows.Window
+    $pw.Title = "T3 DeskCat Panel"
+    $pw.Width = $panelW
+    $pw.Height = $panelH
+    $pw.WindowStyle = [System.Windows.WindowStyle]::None
+    $pw.ResizeMode = [System.Windows.ResizeMode]::CanResize
+    $pw.Topmost = $true
+    $pw.ShowInTaskbar = $false
+    $pw.Background = Get-Brush "#FF111318"
+    $pw.BorderBrush = Get-Brush "#2EFFFFFF"
+    $pw.BorderThickness = New-Object System.Windows.Thickness(1)
+
+    $wv = New-Object Microsoft.Web.WebView2.Wpf.WebView2
+    $wv.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 17, 19, 24)
+    $pw.Content = $wv
+
+    $pw.Add_SourceInitialized({
+        param($s, $e)
+        $hwnd = (New-Object System.Windows.Interop.WindowInteropHelper($s)).Handle
+        [DeskCatWin32]::ApplyDarkRounded($hwnd)
+    })
+
+    $pw.Add_KeyDown({
+        param($s, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Escape) {
+            $s.Hide()
+        }
+    })
+
+    # Hide when clicking outside (with 300ms startup/toggle guard matching Rust fa86fa2)
+    $pw.Add_Deactivated({
+        param($s, $e)
+        if ($script:panelPinned) { return }
+        $elapsedMs = ([DateTime]::UtcNow - $script:lastPanelToggleUtc).TotalMilliseconds
+        if ($elapsedMs -lt 300) { return }
+        if ($s.IsVisible) { $s.Hide() }
+    })
+
+    # Never destroy on Alt+F4/close; hide so next click is instant
+    $pw.Add_Closing({
+        param($s, $e)
+        if (-not $script:appClosing) {
+            $e.Cancel = $true
+            $s.Hide()
+        }
+    })
+
+    $script:panelWin = $pw
+    $script:webView = $wv
+    return $true
+}
+
+function Start-WebView2Init([scriptblock]$OnReady) {
+    if ($script:wv2InitStarted -or -not $script:webView) { return }
+    $script:wv2InitStarted = $true
+    New-Item -ItemType Directory -Force -Path $wv2UserDataDir | Out-Null
+
+    $script:wv2Stage = "env"
+    $script:wv2EnvTask = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $wv2UserDataDir, $null)
+    $script:wv2InitTask = $null
+    $script:wv2OnReady = $OnReady
+
+    $script:wv2PollTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:wv2PollTimer.Interval = [TimeSpan]::FromMilliseconds(40)
+    $script:wv2PollTimer.Add_Tick({
+        if ($script:wv2Stage -eq "env") {
+            if (-not $script:wv2EnvTask.IsCompleted) { return }
+            if ($script:wv2EnvTask.IsFaulted -or -not $script:wv2EnvTask.Result) {
+                $script:wv2PollTimer.Stop()
+                $script:wv2InitError = if ($script:wv2EnvTask.Exception) { $script:wv2EnvTask.Exception.InnerException.Message } else { "env creation failed" }
+                if ($script:wv2OnReady) { & $script:wv2OnReady $false $script:wv2InitError }
+                return
+            }
+            $script:wv2Stage = "core"
+            $script:wv2InitTask = $script:webView.EnsureCoreWebView2Async($script:wv2EnvTask.Result)
+            return
+        }
+        if ($script:wv2Stage -eq "core") {
+            if (-not $script:wv2InitTask.IsCompleted) { return }
+            $script:wv2PollTimer.Stop()
+            if ($script:wv2InitTask.IsFaulted) {
+                $script:wv2InitError = if ($script:wv2InitTask.Exception) { $script:wv2InitTask.Exception.InnerException.Message } else { "EnsureCoreWebView2Async failed" }
+                if ($script:wv2OnReady) { & $script:wv2OnReady $false $script:wv2InitError }
+                return
+            }
+            try {
+                $script:webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = $false
+                $script:webView.CoreWebView2.Settings.AreStatusBarEnabled = $false
+                $script:webView.CoreWebView2.Settings.AreDevToolsEnabled = $false
+            } catch {}
+            $script:wv2Stage = "ready"
+            if ($script:wv2OnReady) { & $script:wv2OnReady $true $null }
+            $script:webView.Source = [Uri]$panelUrl
+        }
+    })
+    $script:wv2PollTimer.Start()
+}
+
+function Initialize-WebViewIfNeeded {
+    Start-WebView2Init $null
+}
+
+function Position-PanelNearHud {
+    if (-not $script:panelWin) { return }
+    $wa = [System.Windows.SystemParameters]::WorkArea
+    $gap = 8.0
+    $hudLeft = $window.Left
+    $hudTop = $window.Top
+    $hudW = if ($window.ActualWidth -gt 0) { $window.ActualWidth } else { 192.0 }
+    $hudH = if ($window.ActualHeight -gt 0) { $window.ActualHeight } else { 112.0 }
+    $pw = $script:panelWin.Width
+    $ph = $script:panelWin.Height
+
+    # Match original panel_position_near_pet: prefer below HUD (aligned right/left), else beside HUD, clamped to work area
+    $x = $hudLeft + $hudW - $pw
+    if ($x -lt $wa.Left + 8) { $x = $hudLeft }
+    if ($x + $pw -gt $wa.Right - 8) { $x = $wa.Right - $pw - 8 }
+    if ($x -lt $wa.Left + 8) { $x = $wa.Left + 8 }
+
+    $spaceBelow = $wa.Bottom - ($hudTop + $hudH + $gap)
+    $spaceAbove = ($hudTop - $gap) - $wa.Top
+    if ($spaceBelow -ge $ph) {
+        $y = $hudTop + $hudH + $gap
+    } elseif ($spaceAbove -ge $ph) {
+        $y = $hudTop - $gap - $ph
+    } else {
+        # Try placing beside HUD so it never overlaps the HUD
+        $spaceLeft = ($hudLeft - $gap) - $wa.Left
+        $spaceRight = $wa.Right - ($hudLeft + $hudW + $gap)
+        if ($spaceLeft -ge $pw) {
+            $x = $hudLeft - $gap - $pw
+        } elseif ($spaceRight -ge $pw) {
+            $x = $hudLeft + $hudW + $gap
+        }
+        $y = [math]::Max($wa.Top + 8, [math]::Min($hudTop, $wa.Bottom - $ph - 8))
+    }
+
+    $script:panelWin.Left = [math]::Round($x)
+    $script:panelWin.Top = [math]::Round($y)
+}
+
+function Toggle-AdjacentPanel {
+    if (-not (Ensure-PopupPanel)) {
+        Open-InBrowser
+        return
+    }
+    $script:lastPanelToggleUtc = [DateTime]::UtcNow
+    if ($script:panelWin.IsVisible) {
+        $script:panelWin.Hide()
+        return
+    }
+    Position-PanelNearHud
+    $script:panelWin.Show()
+    [void]$script:panelWin.Activate()
+    Initialize-WebViewIfNeeded
+}
+
+# ---- Self-test mode: verify WebView2 loads http://127.0.0.1:8765/panel.html cleanly (exits immediately)
+if ($SelfTestPanel) {
+    if (-not $script:wv2Loaded) {
+        Write-Error "Signed Microsoft.Web.WebView2.Wpf.dll not found."
+        exit 1
+    }
+    [void](Ensure-PopupPanel)
+    $script:panelWin.Left = -32000
+    $script:panelWin.Top = -32000
+    $script:panelWin.ShowInTaskbar = $false
+    $script:panelWin.Opacity = 0
+    $script:testDone = $false
+    $script:testResult = "TIMEOUT"
+
+    $script:panelWin.Add_Loaded({
+        Start-WebView2Init {
+            param($ok, $err)
+            if (-not $ok) {
+                $script:testResult = "INIT_ERR: $err"
+                $script:appClosing = $true
+                $script:panelWin.Close()
+                return
+            }
+            $script:webView.CoreWebView2.Add_NavigationCompleted({
+                param($sender, $navArgs)
+                $script:testResult = "NAV_OK=$($navArgs.IsSuccess) STATUS=$($navArgs.WebErrorStatus) URL=$($sender.Source)"
+                $script:testDone = $true
+                $script:appClosing = $true
+                $script:panelWin.Close()
+            })
+        }
+    })
+
+    $timeoutTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $timeoutTimer.Interval = [TimeSpan]::FromSeconds(12)
+    $timeoutTimer.Add_Tick({
+        $timeoutTimer.Stop()
+        $script:appClosing = $true
+        $script:panelWin.Close()
+    })
+    $timeoutTimer.Start()
+    [void]$script:panelWin.ShowDialog()
+    Write-Host "SELFTEST_PANEL: $script:testResult"
+    if (-not $script:testDone -or -not $script:testResult.StartsWith("NAV_OK=True")) { exit 1 }
+    exit 0
+}
 
 # ---- Context Menu
 $ctx = New-Object System.Windows.Controls.ContextMenu
 
-$miOpen = New-Object System.Windows.Controls.MenuItem
-$miOpen.Header = "開啟完整面板"
-$miOpen.Add_Click({ Open-FullPanel })
-[void]$ctx.Items.Add($miOpen)
+$miToggle = New-Object System.Windows.Controls.MenuItem
+$miToggle.Header = "開啟 / 收合面板"
+$miToggle.Add_Click({ Toggle-AdjacentPanel })
+[void]$ctx.Items.Add($miToggle)
+
+$miPin = New-Object System.Windows.Controls.MenuItem
+$miPin.Header = "釘選面板（點外面不收合）"
+$miPin.IsCheckable = $true
+$miPin.Add_Click({ $script:panelPinned = $miPin.IsChecked })
+[void]$ctx.Items.Add($miPin)
+
+$miBrowser = New-Object System.Windows.Controls.MenuItem
+$miBrowser.Header = "在瀏覽器開啟完整網頁"
+$miBrowser.Add_Click({ Open-InBrowser })
+[void]$ctx.Items.Add($miBrowser)
+
+[void]$ctx.Items.Add((New-Object System.Windows.Controls.Separator))
 
 $miRefresh = New-Object System.Windows.Controls.MenuItem
 $miRefresh.Header = "立即重新整理"
@@ -232,7 +538,7 @@ $miRefresh.Add_Click({
 [void]$ctx.Items.Add($miRefresh)
 
 $miLock = New-Object System.Windows.Controls.MenuItem
-$miLock.Header = "鎖定位置"
+$miLock.Header = "鎖定浮動位置"
 $miLock.IsCheckable = $true
 $miLock.Add_Click({ $script:locked = $miLock.IsChecked })
 [void]$ctx.Items.Add($miLock)
@@ -241,7 +547,11 @@ $miLock.Add_Click({ $script:locked = $miLock.IsChecked })
 
 $miQuit = New-Object System.Windows.Controls.MenuItem
 $miQuit.Header = "關閉浮動視窗"
-$miQuit.Add_Click({ $window.Close() })
+$miQuit.Add_Click({
+    $script:appClosing = $true
+    if ($script:panelWin) { try { $script:panelWin.Close() } catch {} }
+    $window.Close()
+})
 [void]$ctx.Items.Add($miQuit)
 
 $card.ContextMenu = $ctx
@@ -267,6 +577,9 @@ $card.Add_MouseMove({
         if ($script:didDrag) {
             $window.Left = $script:dragOrigin.X + $dx
             $window.Top = $script:dragOrigin.Y + $dy
+            if ($script:panelWin -and $script:panelWin.IsVisible) {
+                Position-PanelNearHud
+            }
         }
     }
 })
@@ -279,7 +592,7 @@ $card.Add_MouseLeftButtonUp({
     if ($script:didDrag) {
         Save-HudPosition $window.Left $window.Top
     } else {
-        Open-FullPanel
+        Toggle-AdjacentPanel
     }
     $script:dragStart = $null
     $script:didDrag = $false
@@ -329,7 +642,6 @@ function New-HudRow([string]$Provider, [string]$Name, [int]$Pct, [string]$SubTex
     [void]$top.Children.Add($leftStack)
     [void]$container.Children.Add($top)
 
-    # Progress bar
     $barBg = New-Object System.Windows.Controls.Border
     $barBg.Height = 4
     $barBg.CornerRadius = New-Object System.Windows.CornerRadius(2)
@@ -421,7 +733,7 @@ function Update-HudView($snap) {
         [void]$rowsPanel.Children.Add($row)
     }
 
-    $card.ToolTip = "T3 DeskCat（左鍵開啟面板 · 拖曳移動 · 右鍵選單）"
+    $card.ToolTip = "T3 DeskCat（左鍵彈出面板 · 拖曳移動 · 右鍵選單）"
 }
 
 function Refresh-Once {
@@ -436,7 +748,7 @@ function Refresh-Once {
 # Initial paint
 Refresh-Once
 
-# Preview render mode for headless visual verification (exits immediately without showing on desktop)
+# Preview render mode for headless verification
 if ($RenderPreviewPng) {
     $card.Measure((New-Object System.Windows.Size(192, [double]::PositiveInfinity)))
     $sz = $card.DesiredSize
@@ -464,8 +776,22 @@ $timer.Interval = [TimeSpan]::FromSeconds(15)
 $timer.Add_Tick({ Refresh-Once })
 $timer.Start()
 
+# Poll single-instance toggle signal every 250ms (so double-clicking desktop shortcut toggles the adjacent panel)
+$sigTimer = New-Object System.Windows.Threading.DispatcherTimer
+$sigTimer.Interval = [TimeSpan]::FromMilliseconds(250)
+$sigTimer.Add_Tick({
+    if ($toggleEvent -and $toggleEvent.WaitOne(0)) {
+        Toggle-AdjacentPanel
+    }
+})
+$sigTimer.Start()
+
 $window.Add_Closed({
+    $script:appClosing = $true
     $timer.Stop()
+    $sigTimer.Stop()
+    if ($script:panelWin) { try { $script:panelWin.Close() } catch {} }
+    if ($toggleEvent) { try { $toggleEvent.Dispose() } catch {} }
     if ($mutex) {
         try { $mutex.ReleaseMutex() } catch {}
         $mutex.Dispose()
