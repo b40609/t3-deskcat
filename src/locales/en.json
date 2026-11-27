@@ -518,5 +518,9 @@
   "agy CLI 未將 /usage 視為額度查詢，已停用背景輪詢以避免扣費": "agy CLI did not treat /usage as a quota command; polling disabled to avoid billing",
   "舊版憑證格式已停用直連查詢，請改用新版 T3 Code 或 agy CLI 登入": "Direct API polling for legacy credentials is disabled; please sign in via T3 Code or agy CLI",
   "無法建立隔離暫存目錄：{err}": "Unable to create isolated temp directory: {err}",
-  "無法寫入隔離暫存憑證：{err}": "Unable to stage isolated temporary credentials: {err}"
+  "無法寫入隔離暫存憑證：{err}": "Unable to stage isolated temporary credentials: {err}",
+  "憑證未過期但 agy 未接受暫存憑證（可能為格式或隔離變更）": "Credentials are not expired, but agy rejected the staged token (possible format or isolation change)",
+  "agy 隔離自檢失敗：可能讀到系統金鑰圈，已停用隔離探測": "agy isolation self-check failed (may have read the system keyring); isolated polling disabled",
+  "隔離憑證安全檢查失敗：偵測到殘留 refresh 欄位": "Isolated token safety check failed: unexpected refresh field detected",
+  "agy 隔離自檢未確認拒絕（可能逾時或無回應），稍後重試": "agy isolation self-check did not confirm rejection (timeout or empty output); will retry later"
 }

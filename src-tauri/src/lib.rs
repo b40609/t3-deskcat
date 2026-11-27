@@ -1054,7 +1054,10 @@ fn discovered_name(acc: &DiscoveredAccount) -> &str {
 }
 
 fn is_ag_cli(acc: &DiscoveredAccount) -> bool {
-    matches!(acc, DiscoveredAccount::AntigravityCli { .. })
+    matches!(
+        acc,
+        DiscoveredAccount::Antigravity { .. } | DiscoveredAccount::AntigravityCli { .. }
+    )
 }
 
 /// File `(mtime_secs, byte_len)` for an account's local credential file, so we detect
@@ -1520,44 +1523,81 @@ async fn run_refresh(
 
     let client = state.1.client.clone();
 
-    // Non-Claude (Antigravity / Codex): capped at max 2 concurrent requests + mild stagger
-    // to prevent simultaneous burst hits across multiple Google accounts.
-    let sem = Arc::new(tokio::sync::Semaphore::new(2));
-    let mut handles = Vec::with_capacity(non_claude_due.len());
-    for (idx, acc) in non_claude_due.into_iter().enumerate() {
-        let client = client.clone();
-        let sem = sem.clone();
+    // Split non-Claude into Antigravity (cold-start CLI probes: strictly sequential with
+    // 1.2-2.5s jitter only after real CLI hits to prevent simultaneous bursts) and Codex
+    // (lightweight HTTP: max 2 concurrent).
+    let (ag_due, codex_due): (Vec<_>, Vec<_>) = non_claude_due.into_iter().partition(|a| {
+        matches!(
+            a,
+            DiscoveredAccount::Antigravity { .. } | DiscoveredAccount::AntigravityCli { .. }
+        )
+    });
+
+    let mut handles: Vec<tokio::task::JoinHandle<Vec<AccountResult>>> = Vec::new();
+
+    if !ag_due.is_empty() {
         handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await;
-            if idx > 0 {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-            let outcome = match acc {
-                DiscoveredAccount::Antigravity {
-                    id,
-                    name,
-                    token_path,
-                    is_legacy_gemini,
-                    ..
-                } => {
-                    fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+            let mut out_list = Vec::with_capacity(ag_due.len());
+            let mut prev_network_hit = false;
+            for (idx, acc) in ag_due.into_iter().enumerate() {
+                if prev_network_hit {
+                    // Deterministic pseudo-random jitter in [1200, 2500] ms (zero extra crates).
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos() as u64)
+                        .unwrap_or(0);
+                    let jitter_ms = 1200 + ((nanos ^ ((idx as u64).wrapping_mul(397))) % 1301);
+                    tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                 }
-                DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
-                    providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
-                }
-                DiscoveredAccount::Codex {
-                    id,
-                    name,
-                    auth_path,
-                    ..
-                } => fetch_codex_quota(&client, id, name, &auth_path).await,
-                _ => unreachable!(),
-            };
-            AccountResult {
-                outcome,
-                freshly_observed: true,
+                let outcome = match acc {
+                    DiscoveredAccount::Antigravity {
+                        id,
+                        name,
+                        token_path,
+                        is_legacy_gemini,
+                        ..
+                    } => fetch_antigravity_quota(id, name, &token_path, is_legacy_gemini).await,
+                    DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
+                        providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe)
+                            .await
+                    }
+                    _ => unreachable!(),
+                };
+                prev_network_hit = outcome.network_hit;
+                out_list.push(AccountResult {
+                    outcome,
+                    freshly_observed: true,
+                });
             }
+            out_list
         }));
+    }
+
+    if !codex_due.is_empty() {
+        let sem = Arc::new(tokio::sync::Semaphore::new(2));
+        for (idx, acc) in codex_due.into_iter().enumerate() {
+            let client = client.clone();
+            let sem = sem.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire_owned().await;
+                if idx > 0 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                let outcome = match acc {
+                    DiscoveredAccount::Codex {
+                        id,
+                        name,
+                        auth_path,
+                        ..
+                    } => fetch_codex_quota(&client, id, name, &auth_path).await,
+                    _ => unreachable!(),
+                };
+                vec![AccountResult {
+                    outcome,
+                    freshly_observed: true,
+                }]
+            }));
+        }
     }
 
     // Claude: sequential, spaced out ONLY after actual network hits, never burning
@@ -1611,8 +1651,8 @@ async fn run_refresh(
     all_results.extend(skipped_results);
     all_results.extend(local_fresh_results);
     for handle in handles {
-        if let Ok(res) = handle.await {
-            all_results.push(res);
+        if let Ok(list) = handle.await {
+            all_results.extend(list);
         }
     }
     all_results.extend(claude_results);
@@ -3163,12 +3203,12 @@ mod tests {
             CLAUDE_IDLE_SECS
         );
         assert_eq!(
-            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Scheduled, true, false, false),
-            AG_ACTIVE_SECS
+            account_min_interval(ProviderKind::Antigravity, true, &RefreshReason::Scheduled, true, false, false),
+            AG_CLI_ACTIVE_SECS
         );
         assert_eq!(
-            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Scheduled, false, false, false),
-            AG_IDLE_SECS
+            account_min_interval(ProviderKind::Antigravity, true, &RefreshReason::Scheduled, false, false, false),
+            AG_CLI_IDLE_SECS
         );
 
         // Manual refresh uses short debounce (never trapped behind 180s auto interval)
@@ -3177,8 +3217,8 @@ mod tests {
             CLAUDE_MANUAL_SECS
         );
         assert_eq!(
-            account_min_interval(ProviderKind::Antigravity, false, &RefreshReason::Manual, false, false, false),
-            AG_MANUAL_SECS
+            account_min_interval(ProviderKind::Antigravity, true, &RefreshReason::Manual, false, false, false),
+            AG_CLI_MANUAL_SECS
         );
 
         // Turn finished / reset passed accelerate refreshes
@@ -3247,7 +3287,7 @@ mod live_probe_tests {
                     fetch_claude_quota(&client, id, name, &credentials_path).await
                 }
                 DiscoveredAccount::Antigravity { id, name, token_path, is_legacy_gemini, .. } => {
-                    fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                    fetch_antigravity_quota(id, name, &token_path, is_legacy_gemini).await
                 }
                 DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
                     providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await
@@ -3591,7 +3631,7 @@ mod live_probe_tests {
                         if tick_ag_http > 0 {
                             tokio::time::sleep(Duration::from_millis(200)).await;
                         }
-                        fetch_antigravity_quota(&client, id, name, &token_path, is_legacy_gemini).await
+                        fetch_antigravity_quota(id, name, &token_path, is_legacy_gemini).await
                     }
                     DiscoveredAccount::AntigravityCli { id, name, exe, .. } => {
                         providers::antigravity_cli::fetch_antigravity_cli_quota(id, name, &exe).await

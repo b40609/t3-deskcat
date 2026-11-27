@@ -44,9 +44,9 @@ const RECENT_MIN_SPAN = 15 * 60;
 const AVG_MIN_ELAPSED = 10 * 60;
 
 const INTERVALS = {
-  claude: { active: 300, idle: 900, manual: 45 },
-  antigravity: { active: 60, idle: 300, manual: 15 },
-  codex: { active: 120, idle: 600, manual: 15 },
+  claude: { active: 300, idle: 900, triggered: 120, manual: 45 },
+  antigravity: { active: 180, idle: 600, triggered: 90, manual: 45 },
+  codex: { active: 120, idle: 600, triggered: 45, manual: 15 },
 };
 
 const MIME = {
@@ -907,17 +907,25 @@ async function _doRefresh(reason) {
     }
 
     const active = now - recentActivityTs(acc) <= ACTIVE_WINDOW_SECS;
+    const resetPassed = state.cache.hasPassedReset(acc.id, now);
     const cfgInt = INTERVALS[acc.provider] ?? INTERVALS.codex;
-    let minInterval = reason === "manual" ? cfgInt.manual : (active ? cfgInt.active : cfgInt.idle);
-    if (acc.provider === "claude" && state.settings.claudeMinIntervalSecs) {
+    let minInterval;
+    if (isChanged) {
+      minInterval = 0;
+    } else if (reason === "manual") {
+      minInterval = cfgInt.manual;
+    } else if (resetPassed) {
+      minInterval = cfgInt.triggered ?? cfgInt.active;
+    } else {
+      minInterval = active ? cfgInt.active : cfgInt.idle;
+    }
+    if (!isChanged && acc.provider === "claude" && state.settings.claudeMinIntervalSecs) {
       minInterval = Math.max(minInterval, Number(state.settings.claudeMinIntervalSecs));
     }
-    const resetPassed = state.cache.hasPassedReset(acc.id, now);
-    const shouldFetch =
-      isChanged ||
-      resetPassed ||
-      reason === "startup" ||
-      state.cache.mayFetch(acc.id, now, minInterval, reason === "manual");
+    // Always route through mayFetch so rate-limit/error backoff and minInterval are respected
+    // (matches Rust account_min_interval + may_fetch).
+    const allowRetryErrors = reason === "manual" || reason === "startup" || isChanged;
+    const shouldFetch = state.cache.mayFetch(acc.id, now, minInterval, allowRetryErrors);
 
     if (!shouldFetch) {
       results.set(acc.id, state.cache.skipped(acc.id, placeholder, now));
@@ -941,22 +949,44 @@ async function _doRefresh(reason) {
     results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
   }
 
-  // Run Antigravity & Codex with max 2 concurrent workers + mild stagger (matches Rust Semaphore(2)).
-  let nextIdx = 0;
-  const workerCount = Math.min(2, otherDue.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async (_, workerIdx) => {
-      if (workerIdx > 0) await new Promise((r) => setTimeout(r, 200));
-      while (nextIdx < otherDue.length) {
-        const idx = nextIdx++;
-        const acc = otherDue[idx];
-        const ts = nowSec();
-        const out = acc.provider === "antigravity" ? await fetchAntigravityQuota(acc) : await fetchCodexQuota(acc);
-        if (out.networkHit) state.cache.noteAttempt(acc.id, ts);
-        results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
+  // Split non-Claude into Antigravity (cold-start CLI probes: strictly sequential with
+  // 1.2-2.5s jitter only after real CLI hits) and Codex (lightweight HTTP: max 2 concurrent).
+  const agDue = otherDue.filter((a) => a.provider === "antigravity");
+  const codexDue = otherDue.filter((a) => a.provider !== "antigravity");
+
+  const runAgSequential = async () => {
+    let prevNetworkHit = false;
+    for (const acc of agDue) {
+      if (prevNetworkHit) {
+        const jitterMs = 1200 + Math.floor(Math.random() * 1301);
+        await new Promise((r) => setTimeout(r, jitterMs));
       }
-    }),
-  );
+      const ts = nowSec();
+      const out = await fetchAntigravityQuota(acc);
+      if (out.networkHit) state.cache.noteAttempt(acc.id, ts);
+      prevNetworkHit = Boolean(out.networkHit);
+      results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
+    }
+  };
+
+  const runCodexPool = async () => {
+    let nextIdx = 0;
+    const workerCount = Math.min(2, codexDue.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async (_, workerIdx) => {
+        if (workerIdx > 0) await new Promise((r) => setTimeout(r, 200));
+        while (nextIdx < codexDue.length) {
+          const acc = codexDue[nextIdx++];
+          const ts = nowSec();
+          const out = await fetchCodexQuota(acc);
+          if (out.networkHit) state.cache.noteAttempt(acc.id, ts);
+          results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
+        }
+      }),
+    );
+  };
+
+  await Promise.all([runAgSequential(), runCodexPool()]);
 
   const accounts = discovered.map((acc) => results.get(acc.id)).filter(Boolean);
   const doneTs = nowSec();
