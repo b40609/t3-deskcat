@@ -12,6 +12,7 @@
    - `npm run deploy:local` 只負責停止舊進程、建置嵌入資源、覆蓋 `%LOCALAPPDATA%\T3 DeskCat\t3-deskcat.exe` 並驗證 SHA256；部署完成後一律請使用者從桌面捷徑手動開啟。
    - 不要用 `Start-Process` 或 `explorer.exe <exe>` 啟動：2026-11-26 實測，前者被沙盒擋（存取被拒）；後者會另生一個留在終端 job 裡的 explorer，DeskCat 寫不了日誌、開不了手機連接埠，終端指令結束就被一起關掉，還可能佔住 `tauri-plugin-single-instance` 鎖讓使用者雙擊捷徑沒反應。
    - 不要透過 Windows 工作排程器（`Register-ScheduledTask` / `schtasks`）自動啟動：2026-11-27 00:19:35 實測，新建排程啟動剛編譯的無簽章 exe 會在 15 秒內觸發 Trend Micro Apex One 行為監控清理（`TSC_GENCLEAN`），直接中止進程、刪除排程工作並隔離安裝檔。
+   - **受企業防毒管制電腦的合規替代方案（純 Node 網頁版）**：不編譯無簽章 `.exe`，直接以本機官方已簽章 `node.exe` 執行 `npm run web`（或 `npm run web:build`／`scripts/start-web.ps1`，主程式在 `server/index.mjs`），以同一套 `dist/` 前端與 `%APPDATA%\t3-deskcat\` 資料檔在 `http://127.0.0.1:8765` 與 Tailscale IP `8765` 埠提供服務，並持續更新 `quota_v1.json`。
 
 3. **完工定義：前端改動要附「使用者實際設定下」的截圖才算完成**
    - 動到面板、手機頁或系統匣外觀（`src/*.ts`、`src/*.css`、`*.html`、`tray_icon.rs` 等）時，完工回報必須附截圖路徑，截圖要用使用者實際的顯示設定（主題、版面、亮暗、數字顯示）。實際設定在 `%APPDATA%\t3-deskcat\settings.json`，每次現讀，不要沿用舊報告寫的組合（2026-11-27 實測，使用者用的是 `glass` + `classic` + `dark` + `remaining`，和前一晚報告寫的 `default` + `dense` 不同）。

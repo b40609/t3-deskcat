@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "build:exe": "tauri build --no-bundle",
     "deploy:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-local.ps1",
-    "shot": "node scripts/shot-panel.mjs"
+    "shot": "node scripts/shot-panel.mjs",
+    "web": "node server/index.mjs",
+    "web:build": "npm run build && node server/index.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
