@@ -117,8 +117,9 @@ function Test-PortOpen {
 
 function Ensure-WebServer {
     if (Test-PortOpen) { return $true }
-    Start-Process -FilePath "node" `
-        -ArgumentList "server/index.mjs" `
+    $conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
+    Start-Process -FilePath $conhost `
+        -ArgumentList "--headless node server/index.mjs" `
         -WorkingDirectory $repoRoot `
         -WindowStyle Hidden
     for ($i = 0; $i -lt 30; $i++) {
@@ -307,15 +308,25 @@ function Ensure-PopupPanel {
     $pw.Width = $panelW
     $pw.Height = $panelH
     $pw.WindowStyle = [System.Windows.WindowStyle]::None
-    $pw.ResizeMode = [System.Windows.ResizeMode]::CanResize
+    $pw.ResizeMode = [System.Windows.ResizeMode]::NoResize
     $pw.Topmost = $true
     $pw.ShowInTaskbar = $false
-    $pw.Background = Get-Brush "#FF111318"
-    $pw.BorderBrush = Get-Brush "#2EFFFFFF"
+    $pw.Background = Get-Brush "#FF0E1015"
+    $pw.BorderBrush = Get-Brush "#24FFFFFF"
     $pw.BorderThickness = New-Object System.Windows.Thickness(1)
+    $pw.UseLayoutRounding = $true
+    $pw.SnapsToDevicePixels = $true
+
+    # Zero-chrome: eliminates the ugly 6px Windows DWM top caption strip completely
+    $chrome = New-Object System.Windows.Shell.WindowChrome
+    $chrome.CaptionHeight = 0
+    $chrome.GlassFrameThickness = New-Object System.Windows.Thickness(0)
+    $chrome.ResizeBorderThickness = New-Object System.Windows.Thickness(0)
+    $chrome.CornerRadius = New-Object System.Windows.CornerRadius(12)
+    [System.Windows.Shell.WindowChrome]::SetWindowChrome($pw, $chrome)
 
     $wv = New-Object Microsoft.Web.WebView2.Wpf.WebView2
-    $wv.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 17, 19, 24)
+    $wv.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 14, 16, 21)
     $pw.Content = $wv
 
     $pw.Add_SourceInitialized({
