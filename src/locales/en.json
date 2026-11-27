@@ -509,5 +509,14 @@
   "閒置超過 1 小時：用這個帳號跑一次對話就會恢復即時額度": "Idle for over an hour: run one turn with this account to get live quota again",
   "最後已知額度（閒置中，用一次即更新）": "Last known quota (idle, updates on next use)",
   "{win}已用": "{win} used",
-  "{win}剩餘": "{win} left"
+  "{win}剩餘": "{win} left",
+  "{win}用完": "{win} out",
+  "已用完": "Out",
+  "找不到 agy CLI，無法透過官方 CLI 讀取 Antigravity 額度": "agy CLI not found; unable to read Antigravity quota via the official CLI",
+  "agy CLI 版本過舊（需要 {min} 以上），無法安全讀取額度": "agy CLI version is too old ({min}+ required) to read quota safely",
+  "無法確認 agy CLI 版本，請稍後重試": "Unable to verify agy CLI version; please retry later",
+  "agy CLI 未將 /usage 視為額度查詢，已停用背景輪詢以避免扣費": "agy CLI did not treat /usage as a quota command; polling disabled to avoid billing",
+  "舊版憑證格式已停用直連查詢，請改用新版 T3 Code 或 agy CLI 登入": "Direct API polling for legacy credentials is disabled; please sign in via T3 Code or agy CLI",
+  "無法建立隔離暫存目錄：{err}": "Unable to create isolated temp directory: {err}",
+  "無法寫入隔離暫存憑證：{err}": "Unable to stage isolated temporary credentials: {err}"
 }

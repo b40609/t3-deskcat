@@ -847,7 +847,10 @@ async function _doRefresh(reason) {
     if (stamp) {
       const prev = state.credStamps.get(acc.id);
       state.credStamps.set(acc.id, stamp);
-      if (prev && prev !== stamp) {
+      const credMtime = Number(stamp.split(":")[0]) || 0;
+      const lastAttempt = state.cache.last_attempt[acc.id] ?? 0;
+      const refreshedOffline = !prev && state.cache.isKnownExpired(acc.id) && credMtime > lastAttempt;
+      if ((prev && prev !== stamp) || refreshedOffline) {
         credChanged.add(acc.id);
         state.cache.clearExpired(acc.id);
       }
@@ -898,7 +901,7 @@ async function _doRefresh(reason) {
       continue;
     }
 
-    if (state.cache.isKnownExpired(acc.id) && !isChanged && reason !== "manual") {
+    if (state.cache.isKnownExpired(acc.id) && !isChanged && reason !== "manual" && reason !== "startup") {
       results.set(acc.id, state.cache.skipped(acc.id, placeholder, now));
       continue;
     }
@@ -938,13 +941,20 @@ async function _doRefresh(reason) {
     results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
   }
 
-  // Run Antigravity & Codex concurrently.
+  // Run Antigravity & Codex with max 2 concurrent workers + mild stagger (matches Rust Semaphore(2)).
+  let nextIdx = 0;
+  const workerCount = Math.min(2, otherDue.length);
   await Promise.all(
-    otherDue.map(async (acc) => {
-      const ts = nowSec();
-      const out = acc.provider === "antigravity" ? await fetchAntigravityQuota(acc) : await fetchCodexQuota(acc);
-      if (out.networkHit) state.cache.noteAttempt(acc.id, ts);
-      results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
+    Array.from({ length: workerCount }, async (_, workerIdx) => {
+      if (workerIdx > 0) await new Promise((r) => setTimeout(r, 200));
+      while (nextIdx < otherDue.length) {
+        const idx = nextIdx++;
+        const acc = otherDue[idx];
+        const ts = nowSec();
+        const out = acc.provider === "antigravity" ? await fetchAntigravityQuota(acc) : await fetchCodexQuota(acc);
+        if (out.networkHit) state.cache.noteAttempt(acc.id, ts);
+        results.set(acc.id, state.cache.reconcile(out.quota, out.retryAfterSecs, ts));
+      }
     }),
   );
 

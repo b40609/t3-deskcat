@@ -3571,6 +3571,7 @@ html.remote .scroll {
 }
 
 .glass-tile {
+  container-type: inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -4366,8 +4367,8 @@ html.remote .scroll {
 }
 
 /* ---------------------------------------------------------------- out of quota (dense list and glass tiles)
-   Used-up limits are grey, not a second amber, and the whole account row is faded,
-   so "out" reads apart from "low" at a glance (replaces the deeper-amber attempt of ba7f99c). */
+   Keep full card brightness so reset countdowns & non-zero windows stay legible;
+   only the 0% figure/bar itself is neutral grey, paired with an explicit header pill. */
 .bar .out {
   background: var(--label-3);
 }
@@ -4378,12 +4379,58 @@ html.remote .scroll {
   color: var(--label-3);
 }
 
-.dense-acc.exhausted,
-.glass-tile.exhausted {
-  opacity: 0.55;
+.exhausted-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--label-2);
+  background: color-mix(in srgb, var(--label) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--label) 14%, transparent);
+  transition: transform 0.16s var(--ease);
 }
 
-.dense-acc.exhausted:hover,
-.glass-tile.exhausted:hover {
-  opacity: 1;
+@media (hover: hover) {
+  .glass-tile:hover .exhausted-chip {
+    transform: translateX(-22px);
+  }
+}
+
+@container (max-width: 220px) {
+  .g-head:has(.exhausted-chip) {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-right: 22px;
+  }
+
+  .g-head:has(.exhausted-chip) .d-spacer {
+    flex: 0 0 100%;
+    height: 0;
+    order: 5;
+  }
+
+  .g-head:has(.exhausted-chip) .exhausted-chip {
+    order: 6;
+  }
+
+  .g-head:has(.exhausted-chip) .d-cost {
+    order: 7;
+  }
+
+  .g-head:has(.exhausted-chip) .g-more-btn {
+    position: absolute;
+    right: -2px;
+    top: 11px;
+    transform: translateY(-50%);
+  }
+
+  .glass-tile:hover .g-head:has(.exhausted-chip) .exhausted-chip {
+    transform: none;
+  }
 }

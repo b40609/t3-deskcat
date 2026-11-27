@@ -751,6 +751,27 @@ function denseUsageChip(u: UsageToday | undefined): string {
   return `<span class="d-cost" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
 }
 
+/** Neutral pill naming which quota window hit 0% (prioritizes longer bottleneck: Mo > Wk > 5h). */
+function exhaustedChip(acc: AccountQuota, wins: AccountQuota["primaryWindows"]): string {
+  const pool = wins.length ? wins : acc.primaryWindows;
+  const zeros = pool.filter((w) => w.remainingPercent <= 0);
+  const rank = (label: string) => {
+    const base = label.split(" ")[0];
+    if (base === "Mo") return 0;
+    if (base === "Wk" || base === "週") return 1;
+    if (base === "5h") return 2;
+    return 3;
+  };
+  zeros.sort((a, b) => rank(a.label) - rank(b.label));
+  const hit = zeros[0];
+  const label = hit
+    ? t("{win}用完", { win: windowName(hit.label, acc.provider, true) })
+    : t("已用完");
+  const reset = hit?.resetAt ? formatResetAt(hit.resetAt) : "";
+  const tip = reset ? `${label} · ${reset}` : label;
+  return `<span class="exhausted-chip" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
+}
+
 function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNames: Set<string>): string {
   const showExtra = snap.settings.showAntigravityExtra;
   const isStale = acc.status === "stale";
@@ -760,7 +781,7 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   const hasIdleData = isIdle && acc.primaryWindows.length > 0;
   const isExpiredLastKnown = isExpired && acc.primaryWindows.length > 0;
   const isErr = acc.status !== "ok" && !isStale && !isCooldown && !isExpiredLastKnown && !isIdle;
-  // Out of quota (same rule as the "out of quota" sort tier): the whole row is greyed and faded.
+  // Out of quota (same rule as the "out of quota" sort tier): keep full brightness and show an explicit pill.
   const isExhausted = !isErr && !isCooldown && acc.primaryWindows.length > 0 && acc.effectiveRemaining <= 0;
   const nameKey = displayName(acc).trim().toLowerCase();
   const provChip =
@@ -774,6 +795,8 @@ function renderDenseAccountRow(acc: AccountQuota, snap: DashboardSnapshot, dupNa
   } else if (isStale && acc.error) {
     const tag = /429|冷卻|受限/i.test(acc.error) ? t("冷卻中") : t("快取");
     badge = `<span class="d-badge warn urgent" title="${escapeHtml(acc.error)}"><i class="d-bdot"></i><span>${tag} · ${ageLabel(acc.updatedAt)}</span></span>`;
+  } else if (isExhausted) {
+    badge = exhaustedChip(acc, pickWindows(acc, showExtra));
   } else if (!isErr && !isCooldown && !(isIdle && !hasIdleData)) {
     badge = denseForecastBadge(snap.forecasts?.[acc.id], acc.provider);
   }
@@ -965,8 +988,9 @@ function renderGlassAccountCard(
   const fc = !isErr && !isCooldown ? denseForecastParts(snap.forecasts?.[acc.id], acc.provider) : null;
   const wins = isErr || isCooldown || (isExpired && !isExpiredLastKnown) || (isIdle && !hasIdleData) ? [] : pickWindows(acc, showExtra);
   const primaryTone = getTone(acc.effectiveRemaining, acc.id);
-  // Out of quota: grey and faded instead of the amber alert, so it reads apart from "low".
+  // Out of quota: keep full card legibility; show a neutral pill naming the depleted window and grey out 0% values.
   const isExhausted = wins.length > 0 && acc.effectiveRemaining <= 0;
+  const outChip = isExhausted ? exhaustedChip(acc, wins) : "";
   const isAlert = !isExhausted && (isErr || primaryTone === "bad" || fc?.urgent === true);
   const iconTone = isAlert ? "tone-bad" : primaryTone === "warn" && !isExhausted ? "tone-warn" : "";
 
@@ -1048,6 +1072,7 @@ function renderGlassAccountCard(
         <span class="g-name" title="${escapeHtml(accountNameTitle(acc))}">${escapeHtml(displayName(acc))}</span>
         ${provChip}
         <span class="d-spacer"></span>
+        ${outChip}
         ${costChip}
         <button type="button" class="row-more-btn g-more-btn" data-acc-more="${escapeHtml(acc.id)}" title="${t("更多操作")}"><svg><use href="#i-more" /></svg></button>
       </div>
