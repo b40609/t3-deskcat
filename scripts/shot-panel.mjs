@@ -147,7 +147,7 @@ let failed = false;
       themeButtons: btns("panelTheme"),
       layoutRowVisible: vis(document.getElementById("row-panel-layout")),
       layoutButtons: btns("panelLayout"),
-      frozenNoteVisible: !document.getElementById("note-frozen-look")?.classList.contains("hidden"),
+      frozenNoteVisible: vis(document.getElementById("note-frozen-look")),
       toolbarThemeButtonVisible: !document.getElementById("btn-layout")?.classList.contains("hidden"),
     };
   });

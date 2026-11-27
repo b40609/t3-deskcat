@@ -98,9 +98,7 @@ const inpPetOpacity = $<HTMLInputElement>("inp-pet-opacity");
 const valPetOpacity = $("val-pet-opacity");
 const inpPanelOpacity = $<HTMLInputElement>("inp-panel-opacity");
 const valPanelOpacity = $("val-panel-opacity");
-const rowPanelTheme = $("row-panel-theme");
 const rowPanelLayout = $("row-panel-layout");
-const noteFrozenLook = $("note-frozen-look");
 const inpPetIdleFade = $<HTMLInputElement>("inp-pet-idle-fade");
 const inpShowForecast = $<HTMLInputElement>("inp-show-forecast");
 const inpShowUsage = $<HTMLInputElement>("inp-show-usage");
@@ -408,15 +406,6 @@ function panelLayout(): PanelLayout {
 function panelTheme(): PanelTheme {
   const th = cfg().panelTheme;
   return th === "ios" || th === "default" ? th : "glass";
-}
-
-/**
- * iOS and default (including dense) themes are frozen: they still render for anyone
- * already on them, but are no longer maintained and are hidden from the menus once left.
- * New installs default to the maintained combination: glass + classic + dark.
- */
-function isFrozenLook(s: AppSettings): boolean {
-  return s.panelTheme === "ios" || s.panelTheme === "default";
 }
 
 function duplicateNameSet(accounts: AccountQuota[]): Set<string> {
@@ -1413,11 +1402,7 @@ function syncSettingsForm(s: AppSettings) {
   const pOpacity = Math.max(0, Math.min(100, s.panelOpacity ?? 45));
   setRangeIfIdle(inpPanelOpacity, pOpacity);
   valPanelOpacity.textContent = `${pOpacity}%`;
-  // Frozen themes only show in the menu while active (so they can be left); default's layout row stays hidden.
-  const frozen = isFrozenLook(s);
-  rowPanelTheme.classList.toggle("hidden", !frozen);
-  rowPanelLayout.classList.toggle("hidden", true);
-  noteFrozenLook.classList.toggle("hidden", !frozen);
+  rowPanelLayout.classList.toggle("hidden", (s.panelTheme ?? "glass") !== "default");
   inpPetIdleFade.checked = !!s.petIdleFade;
   const detailMode = s.compactAccounts ? "compact" : s.showAntigravityExtra ? "all" : "standard";
   const detailBtns = Array.from(segAccDetail.querySelectorAll<HTMLButtonElement>(".seg-btn"));
@@ -1474,10 +1459,8 @@ function syncSettingsForm(s: AppSettings) {
 
   segControls.forEach((seg) => {
     const key = seg.dataset.key as keyof AppSettings;
-    const allBtns = Array.from(seg.querySelectorAll<HTMLButtonElement>(".seg-btn"));
-    const value = String(s[key] ?? allBtns[0].dataset.value);
-    allBtns.forEach((b) => b.classList.toggle("hidden", b.dataset.frozen === "1" && b.dataset.value !== value));
-    const btns = allBtns.filter((b) => !b.classList.contains("hidden"));
+    const btns = Array.from(seg.querySelectorAll<HTMLButtonElement>(".seg-btn"));
+    const value = String(s[key] ?? btns[0].dataset.value);
     const idx = Math.max(0, btns.findIndex((b) => b.dataset.value === value));
     btns.forEach((b, i) => b.classList.toggle("active", i === idx));
     seg.style.setProperty("--n", String(btns.length));
@@ -1599,10 +1582,13 @@ function applyDisplay(s: AppSettings) {
             : "#i-layout-dense",
     );
   }
-  btnLayout.classList.remove("active");
-  // Only offered as a way back from a frozen theme; glass has nothing to switch to.
-  btnLayout.classList.toggle("hidden", !isFrozenLook(s));
-  btnLayout.title = t("目前樣式已凍結（點此切回玻璃磚）");
+  btnLayout.classList.remove("active", "hidden");
+  btnLayout.title =
+    uiTheme === "glass"
+      ? t("目前：玻璃磚主題（點此切換 iOS 雙環）")
+      : uiTheme === "ios"
+        ? t("目前：iOS 雙環主題（點此切換經典）")
+        : t("目前：經典主題（點此切換玻璃磚）");
 
   pinned = s.panelPinned === true;
   btnPin.classList.toggle("active", pinned);
@@ -1661,7 +1647,9 @@ document.querySelectorAll<HTMLInputElement>(".slider").forEach((inp) => {
 
 btnLayout.addEventListener("click", () => {
   closeCtxMenu();
-  commitSettings({ panelTheme: "glass", panelLayout: "classic" }, true);
+  const cur = panelTheme();
+  const next: PanelTheme = cur === "glass" ? "ios" : cur === "ios" ? "default" : "glass";
+  commitSettings({ panelTheme: next }, true);
 });
 
 inpPanelOpacity.addEventListener("input", () => {
