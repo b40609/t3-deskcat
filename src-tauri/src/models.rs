@@ -359,6 +359,8 @@ fn default_click_action() -> String {
 fn default_panel_position() -> String {
     "pet".to_string()
 }
+/// iOS and default (including dense) themes are frozen (kept working, no longer
+/// maintained); new installs start on glass + classic + dark.
 fn default_panel_layout() -> String {
     "classic".to_string()
 }
@@ -379,7 +381,7 @@ fn default_ui_scale() -> u32 {
     90
 }
 fn default_appearance() -> String {
-    "system".to_string()
+    "dark".to_string()
 }
 fn default_usage_display() -> String {
     "used".to_string()

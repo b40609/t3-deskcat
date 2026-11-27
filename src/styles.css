@@ -3215,11 +3215,12 @@ html.remote .scroll {
   --on-accent: #ffffff;
   --good-ink: var(--ios-green);
   --good-bar: linear-gradient(90deg, #28cd41 0%, var(--ios-green) 100%);
-  --warn-ink: var(--ios-amber);
-  --warn-bar: linear-gradient(90deg, #ff9500 0%, #ffb340 100%);
-  --bad: var(--ios-amber);
-  --bad-ink: var(--ios-amber);
-  --bad-bar: linear-gradient(90deg, #e08600 0%, var(--ios-amber) 100%);
+  /* Keep warn (warm gold) clearly apart from bad (deep burnt amber), without red. */
+  --warn-ink: #b07800;
+  --warn-bar: linear-gradient(90deg, #d49b00 0%, #f0b818 100%);
+  --bad: #c06200;
+  --bad-ink: #c06200;
+  --bad-bar: linear-gradient(90deg, #b85c00 0%, #e07600 100%);
 }
 
 .shell[data-ui-theme="glass"] .nav-top,
@@ -3401,6 +3402,11 @@ html.remote .scroll {
     --stroke: rgba(255, 255, 255, 0.12);
     --sep: rgba(255, 255, 255, 0.08);
     --track: rgba(255, 255, 255, 0.14);
+    --warn-ink: #ffd15c;
+    --warn-bar: linear-gradient(90deg, #e0a820 0%, #ffd15c 100%);
+    --bad: #ff851b;
+    --bad-ink: #ff851b;
+    --bad-bar: linear-gradient(90deg, #d66800 0%, #ff851b 100%);
   }
   :root:not([data-theme="light"]) .shell[data-ui-theme="glass"][data-panel-solid="1"] {
     --glass-shell-bg: #10131a;
@@ -3422,6 +3428,11 @@ html.remote .scroll {
   --stroke: rgba(255, 255, 255, 0.12);
   --sep: rgba(255, 255, 255, 0.08);
   --track: rgba(255, 255, 255, 0.14);
+  --warn-ink: #ffd15c;
+  --warn-bar: linear-gradient(90deg, #e0a820 0%, #ffd15c 100%);
+  --bad: #ff851b;
+  --bad-ink: #ff851b;
+  --bad-bar: linear-gradient(90deg, #d66800 0%, #ff851b 100%);
 }
 
 :root[data-theme="dark"] .shell[data-ui-theme="glass"][data-panel-solid="1"] {
@@ -3685,7 +3696,7 @@ html.remote .scroll {
 }
 
 .g-big-pct.warn {
-  color: var(--ios-amber);
+  color: var(--warn-ink);
 }
 
 .g-big-pct.bad {
@@ -3763,7 +3774,7 @@ html.remote .scroll {
 }
 
 .g-sub-val.warn {
-  color: var(--ios-amber);
+  color: var(--warn-ink);
 }
 
 .g-sub-val.bad {
@@ -3795,7 +3806,7 @@ html.remote .scroll {
 }
 
 .g-fc.warn .d-bdot {
-  background: var(--ios-amber);
+  background: var(--warn-ink);
 }
 
 .g-fc.bad .d-bdot {
@@ -3807,7 +3818,7 @@ html.remote .scroll {
 }
 
 .g-fc.warn.urgent {
-  color: var(--ios-amber);
+  color: var(--warn-ink);
 }
 
 .g-fc.bad.urgent {

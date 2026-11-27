@@ -43,7 +43,7 @@ pub fn sanitize(s: &mut AppSettings) {
     s.refresh_interval_secs = s.refresh_interval_secs.clamp(30, 3600);
     s.ui_scale = s.ui_scale.clamp(80, 125);
     if !matches!(s.appearance.as_str(), "system" | "light" | "dark") {
-        s.appearance = "system".to_string();
+        s.appearance = "dark".to_string();
     }
     if !matches!(s.usage_display.as_str(), "used" | "remaining") {
         s.usage_display = "used".to_string();
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(s.working_threshold, 91);
         assert_eq!(s.refresh_interval_secs, 30);
         assert_eq!(s.ui_scale, 125);
-        assert_eq!(s.appearance, "system");
+        assert_eq!(s.appearance, "dark");
         assert_eq!(s.usage_display, "used");
         assert_eq!(s.reset_format, "absolute");
         assert_eq!(s.language, "system");

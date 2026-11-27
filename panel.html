@@ -236,12 +236,12 @@
             <div class="pane hidden" data-pane="panel">
               <section class="group">
                 <div class="list">
-                  <div class="row">
+                  <div class="row" id="row-panel-theme">
                     <span data-i18n>面板主題</span>
                     <div class="segmented" data-key="panelTheme">
                       <button data-value="glass" class="seg-btn" data-i18n>玻璃磚</button>
-                      <button data-value="ios" class="seg-btn" data-i18n>iOS 雙環</button>
-                      <button data-value="default" class="seg-btn" data-i18n>經典</button>
+                      <button data-value="ios" data-frozen="1" class="seg-btn" data-i18n>iOS 雙環</button>
+                      <button data-value="default" data-frozen="1" class="seg-btn" data-i18n>經典</button>
                     </div>
                   </div>
                   <div class="row row-slider">
@@ -252,7 +252,7 @@
                     <span data-i18n>畫面樣式</span>
                     <div class="segmented" data-key="panelLayout">
                       <button data-value="classic" class="seg-btn" data-i18n>卡片</button>
-                      <button data-value="dense" class="seg-btn" data-i18n>列表</button>
+                      <button data-value="dense" data-frozen="1" class="seg-btn" data-i18n>列表</button>
                     </div>
                   </div>
                   <div class="row">
@@ -279,6 +279,7 @@
                   </div>
                 </div>
                 <div class="group-footer" id="acc-detail-hint"></div>
+                <div class="group-footer hidden" id="note-frozen-look" data-i18n>iOS 雙環與經典主題已凍結，不再維護；切回玻璃磚後這些選項會隱藏</div>
               </section>
 
               <section class="group">

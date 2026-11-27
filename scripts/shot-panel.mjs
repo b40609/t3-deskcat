@@ -111,7 +111,7 @@ async function rowChecks(page) {
   return page.evaluate(() => {
     const rows = Array.from(document.querySelectorAll("[data-acc-id]")).filter((e) => e.offsetParent !== null);
     return rows.map((r) => {
-      const vals = Array.from(r.querySelectorAll(".d-wval")).map((v) => ({
+      const vals = Array.from(r.querySelectorAll(".d-wval, .g-big-pct, .g-sub-val")).map((v) => ({
         text: v.textContent.trim(), cls: v.className, color: getComputedStyle(v).color,
       }));
       return { id: r.dataset.accId, cls: r.className.replace(/\s+/g, " ").trim(), opacity: getComputedStyle(r).opacity, vals };
