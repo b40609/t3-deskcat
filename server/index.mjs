@@ -159,6 +159,7 @@ const DEFAULT_SETTINGS = {
   showPicks: true,
   picksStrategy: "use_before_reset_weekly",
   picksScope: "per_provider",
+  picksProvider: "all",
   picksCount: 1,
   picksPinActive: false,
   picksPinnedIds: [],
@@ -657,9 +658,10 @@ function detectActiveAccountId(discovered, now) {
 }
 
 function computeRankedPicks(accounts, settings, forecasts, now, opts) {
-  const visible = accounts.filter((a) => !isHidden(settings, a.id));
+  const providerFilter = ["claude", "antigravity", "codex"].includes(opts.providerFilter) ? opts.providerFilter : null;
+  const visible = accounts.filter((a) => !isHidden(settings, a.id) && (!providerFilter || a.provider === providerFilter));
   const strategy = opts.strategy ?? "use_before_reset_weekly";
-  const scope = opts.scope ?? "per_provider";
+  const scope = providerFilter ? "global" : (opts.scope ?? "per_provider");
   const limit = Math.max(1, Math.min(6, Number(opts.count ?? 1)));
   const pinActive = Boolean(opts.pinActive);
   const pinnedIds = Array.isArray(opts.pinnedIds) ? opts.pinnedIds : [];
@@ -748,6 +750,7 @@ function computePicks(accounts, settings, forecasts, now) {
   return computeRankedPicks(accounts, settings, forecasts, now, {
     strategy: settings.picksStrategy ?? "use_before_reset_weekly",
     scope: settings.picksScope ?? "per_provider",
+    providerFilter: settings.picksProvider ?? "all",
     count: settings.picksCount ?? 1,
     pinActive: settings.picksPinActive === true,
     pinnedIds: settings.picksPinnedIds ?? [],

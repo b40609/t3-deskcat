@@ -72,6 +72,7 @@ const valSweatRange = $("val-sweat-range");
 const inpNotify = $<HTMLInputElement>("inp-notify");
 const inpAutostart = $<HTMLInputElement>("inp-autostart");
 const inpShowPicks = $<HTMLInputElement>("inp-show-picks");
+const btnPicksAg = $<HTMLButtonElement>("btn-picks-ag");
 const btnPicksStrategy = $<HTMLButtonElement>("btn-picks-strategy");
 const picksOptions = $("picks-options");
 const selPicksStrategy = $<HTMLSelectElement>("sel-picks-strategy");
@@ -151,6 +152,7 @@ const fallbackSettings: AppSettings = {
   resetFormat: "absolute",
   paceTick: "ahead",
   showPicks: true,
+  picksProvider: "all",
   petEffects: true,
   accountPrefs: {},
   accountOrder: [],
@@ -1238,9 +1240,17 @@ function pickTagToneClass(strategy: string, pick: { tag?: string; useBeforeReset
 function renderPicks(snap: DashboardSnapshot) {
   const secPicks = $("sec-picks");
   const strategy = snap.settings.picksStrategy ?? "most_left";
+  const agOnly = snap.settings.picksProvider === "antigravity";
   const isRisk = strategy === "risk_first";
   btnPicksStrategy.textContent = `${strategyShortLabel(strategy)} ▾`;
-  secPicks.classList.toggle("hidden", snap.picks.length === 0 || snap.settings.showPicks === false);
+  btnPicksAg.classList.toggle("active", agOnly);
+  btnPicksAg.setAttribute("aria-pressed", String(agOnly));
+  secPicks.classList.toggle("hidden", snap.settings.showPicks === false || (snap.picks.length === 0 && !agOnly));
+  if (snap.picks.length === 0 && agOnly) {
+    picksSection.className = "list";
+    picksSection.innerHTML = `<div class="picks-empty">${escapeHtml(t("目前沒有可用的 AG 推薦"))}</div>`;
+    return;
+  }
   const th = panelTheme();
   if (th === "ios") {
     picksSection.className = `ios-picks-grid${snap.picks.length === 1 ? " single" : ""}`;
@@ -1929,6 +1939,10 @@ segControls.forEach((seg) => {
 });
 
 inpShowPicks.addEventListener("change", () => commitSettings({ showPicks: inpShowPicks.checked }, true));
+btnPicksAg.addEventListener("click", () => {
+  const agOnly = cfg().picksProvider === "antigravity";
+  commitSettings({ picksProvider: agOnly ? "all" : "antigravity" }, true);
+});
 btnPicksStrategy.addEventListener("click", () => {
   const s = cfg();
   const hasPinned = (s.picksPinnedIds?.length ?? 0) > 0;

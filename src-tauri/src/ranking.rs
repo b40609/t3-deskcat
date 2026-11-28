@@ -45,6 +45,16 @@ pub struct RankConfig<'a> {
     pub pin_active: bool,
     pub active_id: Option<&'a str>,
     pub pinned_ids: &'a [String],
+    pub provider_filter: Option<&'a str>,
+}
+
+fn parse_provider_filter(raw: Option<&str>) -> Option<ProviderKind> {
+    match raw {
+        Some("claude") => Some(ProviderKind::Claude),
+        Some("antigravity") => Some(ProviderKind::Antigravity),
+        Some("codex") => Some(ProviderKind::Codex),
+        _ => None,
+    }
 }
 
 pub fn is_usable(a: &AccountQuota) -> bool {
@@ -445,16 +455,22 @@ pub fn compute_ranked_picks(
     now: i64,
 ) -> Vec<SmartPick> {
     let limit = cfg.count.clamp(1, 6);
+    let prov_filter = parse_provider_filter(cfg.provider_filter);
+    let scoped_accounts: Vec<&AccountQuota> = accounts
+        .iter()
+        .filter(|a| prov_filter.is_none_or(|p| a.provider == p))
+        .collect();
+    let effective_scope = if prov_filter.is_some() { "global" } else { cfg.scope };
     let mut out: Vec<SmartPick> = Vec::new();
     let mut taken: HashSet<String> = HashSet::new();
 
-    // Optional: pin active working account at slot 0.
+    // Optional: pin active working account at slot 0 (respecting provider filter).
     if cfg.pin_active {
         if let Some(aid) = cfg.active_id {
-            if let Some(acc) = accounts.iter().find(|a| a.id == aid) {
+            if let Some(&acc) = scoped_accounts.iter().find(|a| a.id == aid) {
                 out.push(build_pick(acc, cfg.strategy, true, forecasts, now));
                 taken.insert(acc.id.clone());
-                if cfg.scope == "global" && out.len() >= limit {
+                if effective_scope == "global" && out.len() >= limit {
                     return out;
                 }
             }
@@ -467,7 +483,7 @@ pub fn compute_ranked_picks(
             if taken.contains(pid) {
                 continue;
             }
-            if let Some(acc) = accounts.iter().find(|a| &a.id == pid) {
+            if let Some(&acc) = scoped_accounts.iter().find(|a| &a.id == pid) {
                 out.push(build_pick(acc, "pinned", false, forecasts, now));
                 taken.insert(acc.id.clone());
                 if out.len() >= limit {
@@ -486,10 +502,11 @@ pub fn compute_ranked_picks(
         if s == "pinned" { "most_left" } else { s }
     };
 
-    if cfg.scope == "per_provider" {
+    if effective_scope == "per_provider" {
         for provider in [ProviderKind::Claude, ProviderKind::Antigravity, ProviderKind::Codex] {
-            let all_elig: Vec<&AccountQuota> = accounts
+            let all_elig: Vec<&AccountQuota> = scoped_accounts
                 .iter()
+                .copied()
                 .filter(|a| {
                     a.provider == provider
                         && !taken.contains(&a.id)
@@ -521,9 +538,10 @@ pub fn compute_ranked_picks(
             }
         }
     } else {
-        // Global cross-provider ranking, capped at `limit`.
-        let all_elig: Vec<&AccountQuota> = accounts
+        // Global cross-provider ranking (or single filtered provider), capped at `limit`.
+        let all_elig: Vec<&AccountQuota> = scoped_accounts
             .iter()
+            .copied()
             .filter(|a| !taken.contains(&a.id) && eligible_for_strategy(a, eff_strategy))
             .collect();
         let pool = if matches!(
@@ -592,6 +610,7 @@ mod tests {
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
+            provider_filter: None,
         };
         let picks_wk = compute_ranked_picks(&[b.clone(), c.clone(), a.clone()], &HashMap::new(), &cfg_wk, now);
         assert_eq!(picks_wk[0].account_name, "A");
@@ -606,6 +625,7 @@ mod tests {
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
+            provider_filter: None,
         };
         let picks_5h = compute_ranked_picks(&[b, c, a], &HashMap::new(), &cfg_5h, now);
         assert_eq!(picks_5h[0].account_name, "C");
@@ -628,6 +648,7 @@ mod tests {
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
+            provider_filter: None,
         };
         let picks = compute_ranked_picks(&[ok_hi, ok_lo, cooled], &HashMap::new(), &cfg, now);
         assert_eq!(picks[0].account_name, "Cool");
@@ -650,6 +671,7 @@ mod tests {
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
+            provider_filter: None,
         };
         let picks = compute_ranked_picks(&[c1, c2, a1, x1], &HashMap::new(), &cfg, now);
         let names: Vec<&str> = picks.iter().map(|p| p.account_name.as_str()).collect();
@@ -671,6 +693,7 @@ mod tests {
             pin_active: true,
             active_id: Some("c:b"),
             pinned_ids: &pinned,
+            provider_filter: None,
         };
         let picks = compute_ranked_picks(&[a, b, c], &HashMap::new(), &cfg, now);
         assert_eq!(picks.len(), 2);
@@ -697,6 +720,7 @@ mod tests {
             pin_active: false,
             active_id: None,
             pinned_ids: &[],
+            provider_filter: None,
         };
         let picks = compute_ranked_picks(&[retis, itri, km, kai], &HashMap::new(), &cfg, now);
         let names: Vec<&str> = picks.iter().map(|p| p.account_name.as_str()).collect();
@@ -708,5 +732,29 @@ mod tests {
         }
         // retis reason must reflect its actual 98% weekly pool, not 5h 95%
         assert!(picks[3].reason.contains("98%"), "reason was: {}", picks[3].reason);
+    }
+
+    #[test]
+    fn provider_filter_limits_picks_and_active_pin_to_antigravity() {
+        let now = 1_000_000;
+        let claude_active = mk("c:kai", ProviderKind::Claude, "Kai", 95, Some(now + 4 * 3600), 90, Some(now + 90 * 3600));
+        let ag1 = mk("ag:1", ProviderKind::Antigravity, "km0529", 100, Some(now + 5 * 3600), 54, Some(now + 126 * 3600));
+        let ag2 = mk("ag:2", ProviderKind::Antigravity, "kanny163", 100, Some(now + 5 * 3600), 32, Some(now + 126 * 3600));
+        let ag3 = mk("ag:3", ProviderKind::Antigravity, "ava", 100, Some(now + 5 * 3600), 75, Some(now + 133 * 3600));
+
+        let cfg = RankConfig {
+            strategy: "use_before_reset_weekly",
+            scope: "global",
+            count: 3,
+            pin_active: true,
+            active_id: Some("c:kai"),
+            pinned_ids: &[],
+            provider_filter: Some("antigravity"),
+        };
+        let picks = compute_ranked_picks(&[claude_active, ag1, ag2, ag3], &HashMap::new(), &cfg, now);
+        assert_eq!(picks.len(), 3);
+        assert!(picks.iter().all(|p| p.provider == ProviderKind::Antigravity));
+        let names: Vec<&str> = picks.iter().map(|p| p.account_name.as_str()).collect();
+        assert_eq!(names, vec!["km0529", "kanny163", "ava"]);
     }
 }

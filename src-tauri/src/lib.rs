@@ -1934,6 +1934,7 @@ fn recompute_snapshot_metrics(snap: &mut DashboardSnapshot, settings: &AppSettin
         pin_active: settings.picks_pin_active,
         active_id,
         pinned_ids: &settings.picks_pinned_ids,
+        provider_filter: Some(&settings.picks_provider),
     };
     let picks = ranking::compute_ranked_picks(&visible, &snap.forecasts, &rank_cfg, Utc::now().timestamp());
     let mut tooltip = format_tooltip(&picks, &visible);
@@ -1984,6 +1985,7 @@ fn compute_picks(accounts: &[AccountQuota], now: i64) -> Vec<SmartPick> {
         pin_active: false,
         active_id: None,
         pinned_ids: &[],
+        provider_filter: None,
     };
     ranking::compute_ranked_picks(accounts, &HashMap::new(), &cfg, now)
 }

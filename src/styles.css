@@ -2467,6 +2467,13 @@ html.remote .scroll {
   gap: 8px;
 }
 
+.picks-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
 .picks-mode-btn {
   border: 1px solid var(--stroke);
   background: var(--fill);
@@ -2477,6 +2484,7 @@ html.remote .scroll {
   line-height: 1.2;
   padding: 2px 8px;
   border-radius: 99px;
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color 0.14s var(--ease), color 0.14s var(--ease), border-color 0.14s var(--ease);
 }
@@ -2485,6 +2493,26 @@ html.remote .scroll {
   background: var(--card-hover);
   color: var(--label);
   border-color: var(--stroke-strong);
+}
+
+.picks-mode-btn.active {
+  background: color-mix(in srgb, var(--ag) 18%, transparent);
+  color: var(--ag);
+  border-color: color-mix(in srgb, var(--ag) 48%, transparent);
+  font-weight: 600;
+}
+
+.picks-mode-btn.active:hover {
+  background: color-mix(in srgb, var(--ag) 25%, transparent);
+  color: var(--ag);
+  border-color: color-mix(in srgb, var(--ag) 62%, transparent);
+}
+
+.picks-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--label-3);
+  text-align: center;
 }
 
 .shell[data-layout="dense"] #sec-picks > .group-header {

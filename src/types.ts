@@ -29,6 +29,7 @@ export type RankStrategy =
   | "soonest_reset"
   | "pinned";
 export type RankScope = "per_provider" | "global";
+export type PicksProvider = "all" | "antigravity" | "claude" | "codex";
 export type HudLayout = "vertical" | "horizontal";
 
 export interface SmartPick {
@@ -112,6 +113,7 @@ export interface AppSettings {
   showPicks?: boolean;
   picksStrategy?: RankStrategy;
   picksScope?: RankScope;
+  picksProvider?: PicksProvider;
   picksCount?: number;
   picksPinActive?: boolean;
   picksPinnedIds?: string[];

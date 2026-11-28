@@ -93,6 +93,9 @@ pub fn sanitize(s: &mut AppSettings) {
     if !crate::ranking::SCOPES.contains(&s.picks_scope.as_str()) {
         s.picks_scope = "per_provider".to_string();
     }
+    if !matches!(s.picks_provider.as_str(), "all" | "antigravity" | "claude" | "codex") {
+        s.picks_provider = "all".to_string();
+    }
     s.picks_count = s.picks_count.clamp(1, 4);
     s.hud_count = s.hud_count.clamp(1, 4);
     if !matches!(s.hud_layout.as_str(), "vertical" | "horizontal") {

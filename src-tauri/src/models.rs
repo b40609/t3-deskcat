@@ -204,6 +204,9 @@ pub struct AppSettings {
     /// Panel recommendation scope: "per_provider" | "global"
     #[serde(default = "default_picks_scope")]
     pub picks_scope: String,
+    /// Panel recommendation provider filter: "all" | "antigravity" | "claude" | "codex"
+    #[serde(default = "default_picks_provider")]
+    pub picks_provider: String,
     /// Panel recommendation count (per provider when per_provider, total when global; 1..=4).
     #[serde(default = "default_picks_count")]
     pub picks_count: u32,
@@ -404,6 +407,9 @@ fn default_strategy() -> String {
 fn default_picks_scope() -> String {
     "per_provider".to_string()
 }
+fn default_picks_provider() -> String {
+    "all".to_string()
+}
 fn default_picks_count() -> u32 {
     1
 }
@@ -445,6 +451,7 @@ impl Default for AppSettings {
             show_picks: true,
             picks_strategy: default_strategy(),
             picks_scope: default_picks_scope(),
+            picks_provider: default_picks_provider(),
             picks_count: default_picks_count(),
             picks_pin_active: false,
             picks_pinned_ids: Vec::new(),
