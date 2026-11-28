@@ -492,6 +492,7 @@
   "5 小時即將重設": "5h quota resetting soon",
   "週將重設": "Wk reset",
   "5h 將重設": "5h reset",
+  "較早重設": "Resets earlier",
   "優先挑出每週額度快重設且剩餘較多的帳號，避免訂閱額度浪費": "Surface accounts with unspent weekly quota resetting soon so subscription allowance isn't wasted",
   "優先挑出 5 小時額度快重設且還有餘裕的帳號，順手用完再重設": "Surface accounts with spare 5h quota resetting soon so you can spend it before reset",
   "面板主題": "Panel theme",

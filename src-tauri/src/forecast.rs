@@ -13,7 +13,12 @@ use crate::models::{AccountQuota, Forecast};
 
 const RECENT_LOOKBACK: i64 = 90 * 60;
 const RECENT_MIN_SPAN: i64 = 15 * 60;
+const RECENT_MIN_DROP_PCT: i32 = 3;
 const AVG_MIN_ELAPSED: i64 = 10 * 60;
+const SHORT_AVG_MIN_USED_PCT: i32 = 5;
+const LONG_WINDOW_SECS: i64 = 2 * 86400;
+const LONG_MIN_ELAPSED: i64 = 12 * 3600;
+const LONG_MIN_USED_PCT: i32 = 15;
 
 /// Window length in seconds from its label ("5h", "Wk", "Mo", "3h", "2d").
 pub fn window_secs(label: &str) -> Option<i64> {
@@ -27,7 +32,8 @@ pub fn window_secs(label: &str) -> Option<i64> {
 }
 
 /// Percent per second over the most recent monotonically-falling stretch.
-fn recent_rate(history: &[(i64, i32)], now: i64, current: i32) -> Option<f64> {
+/// Returns `(rate_per_sec, dropped_pct)`.
+fn recent_rate_with_drop(history: &[(i64, i32)], now: i64, current: i32) -> Option<(f64, i32)> {
     let mut pts: Vec<(i64, i32)> = history
         .iter()
         .copied()
@@ -43,7 +49,12 @@ fn recent_rate(history: &[(i64, i32)], now: i64, current: i32) -> Option<f64> {
     if span < RECENT_MIN_SPAN {
         return None;
     }
-    Some((v0 - current).max(0) as f64 / span as f64)
+    let drop = (v0 - current).max(0);
+    Some((drop as f64 / span as f64, drop))
+}
+
+fn recent_rate(history: &[(i64, i32)], now: i64, current: i32) -> Option<f64> {
+    recent_rate_with_drop(history, now, current).map(|(r, _)| r)
 }
 
 /// History key of one limit window ("claude:x|5h"); the bare account id holds
@@ -94,13 +105,34 @@ pub fn forecast<'a>(
             continue;
         }
 
-        let recent = series(&w.label).and_then(|h| recent_rate(h, now, w.remaining_percent));
-        let rate = recent.or_else(|| {
-            let start = w.reset_at? - len;
-            let elapsed = now - start;
-            (elapsed >= AVG_MIN_ELAPSED && elapsed < len)
-                .then(|| (100 - w.remaining_percent).max(0) as f64 / elapsed as f64)
-        });
+        let is_long = len >= LONG_WINDOW_SECS;
+        let used_pct = (100 - w.remaining_percent).max(0);
+        let rate = if is_long {
+            // Long windows (weekly/monthly) must NOT extrapolate a 15-90m work burst
+            // across 7 days; require sufficient elapsed time and actual spend.
+            if used_pct < LONG_MIN_USED_PCT {
+                None
+            } else {
+                w.reset_at.and_then(|r| {
+                    let elapsed = now - (r - len);
+                    (elapsed >= LONG_MIN_ELAPSED && elapsed < len)
+                        .then(|| used_pct as f64 / elapsed as f64)
+                })
+            }
+        } else {
+            let recent = series(&w.label)
+                .and_then(|h| recent_rate_with_drop(h, now, w.remaining_percent))
+                .map(|(r, drop)| if drop >= RECENT_MIN_DROP_PCT { r } else { 0.0 });
+            recent.or_else(|| {
+                if used_pct < SHORT_AVG_MIN_USED_PCT {
+                    return None;
+                }
+                let start = w.reset_at? - len;
+                let elapsed = now - start;
+                (elapsed >= AVG_MIN_ELAPSED && elapsed < len)
+                    .then(|| used_pct as f64 / elapsed as f64)
+            })
+        };
         let Some(rate) = rate.filter(|r| *r > 0.0) else { continue };
 
         let exhaust_at = now + (w.remaining_percent as f64 / rate).round() as i64;
@@ -213,5 +245,21 @@ mod tests {
         let mut expired = a.clone();
         expired.status = "expired".into();
         assert!(forecast(&expired, |_| None, now).is_none());
+    }
+
+    #[test]
+    fn weekly_ignores_short_burst_and_early_window_noise() {
+        let now = 1000 * H;
+        // Freshly reset weekly window: 7.5h elapsed, 4% used (96% remaining),
+        // even with a 3% burst in the last 60m -> must NOT trigger a 7-day alarm.
+        let fresh = acc(&[("5h", 96, Some(now + 4 * H)), ("Wk", 96, Some(now + 160 * H + 30 * 60))]);
+        let wk_burst = [(now - 60 * 60, 99)];
+        assert!(forecast(&fresh, |l| if l == "Wk" { Some(&wk_burst[..]) } else { None }, now).is_none());
+
+        // Real heavy weekly burn: 77h elapsed, 71% used (29% remaining, resets in 91h) -> warns.
+        let heavy = acc(&[("5h", 91, Some(now + 4 * H)), ("Wk", 29, Some(now + 91 * H))]);
+        let f = forecast(&heavy, |_| None, now).unwrap();
+        assert_eq!(f.label, "Wk");
+        assert!(f.exhaust_at < now + 91 * H);
     }
 }

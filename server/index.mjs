@@ -43,7 +43,16 @@ const BUCKET_SECS = 300;
 const HISTORY_KEEP_SECS = 24 * 3600;
 const RECENT_LOOKBACK = 90 * 60;
 const RECENT_MIN_SPAN = 15 * 60;
+const RECENT_MIN_DROP_PCT = 3;
 const AVG_MIN_ELAPSED = 10 * 60;
+const SHORT_AVG_MIN_USED_PCT = 5;
+const LONG_WINDOW_SECS = 2 * 86400;
+const LONG_MIN_ELAPSED = 12 * 3600;
+const LONG_MIN_USED_PCT = 15;
+const WEEKLY_IMMINENT_SECS = 48 * 3600;
+const SHORT_IMMINENT_SECS = 90 * 60;
+const WEEKLY_TIME_BUCKET_SECS = 12 * 3600;
+const SHORT_TIME_BUCKET_SECS = 30 * 60;
 
 const INTERVALS = {
   claude: { active: 300, idle: 900, triggered: 120, manual: 45 },
@@ -431,7 +440,7 @@ function windowSecs(label) {
   return null;
 }
 
-function recentRate(series, now, current) {
+function recentRateWithDrop(series, now, current) {
   if (!Array.isArray(series)) return null;
   const pts = series.filter(([t]) => t >= now - RECENT_LOOKBACK && t < now);
   pts.push([now, current]);
@@ -440,7 +449,13 @@ function recentRate(series, now, current) {
   const [t0, v0] = pts[i];
   const span = now - t0;
   if (span < RECENT_MIN_SPAN) return null;
-  return Math.max(0, v0 - current) / span;
+  const drop = Math.max(0, v0 - current);
+  return { rate: drop / span, drop };
+}
+
+function recentRate(series, now, current) {
+  const res = recentRateWithDrop(series, now, current);
+  return res ? res.rate : null;
 }
 
 function computeForecast(acc, history, now) {
@@ -451,11 +466,26 @@ function computeForecast(acc, history, now) {
     const len = windowSecs(w.label);
     if (!len) continue;
     if (w.resetAt != null && w.resetAt <= now) continue;
-    let rate = recentRate(history.samples[`${acc.id}|${w.label}`], now, w.remainingPercent);
-    if (rate == null && w.resetAt != null) {
-      const elapsed = now - (w.resetAt - len);
-      if (elapsed >= AVG_MIN_ELAPSED && elapsed < len) {
-        rate = Math.max(0, 100 - w.remainingPercent) / elapsed;
+    const isLong = len >= LONG_WINDOW_SECS;
+    const usedPct = Math.max(0, 100 - w.remainingPercent);
+    let rate = null;
+    if (isLong) {
+      // Long windows (weekly/monthly) must NOT extrapolate a 15-90m burst across 7 days.
+      if (usedPct >= LONG_MIN_USED_PCT && w.resetAt != null) {
+        const elapsed = now - (w.resetAt - len);
+        if (elapsed >= LONG_MIN_ELAPSED && elapsed < len) {
+          rate = usedPct / elapsed;
+        }
+      }
+    } else {
+      const recent = recentRateWithDrop(history.samples[`${acc.id}|${w.label}`], now, w.remainingPercent);
+      if (recent) {
+        rate = recent.drop >= RECENT_MIN_DROP_PCT ? recent.rate : 0;
+      } else if (usedPct >= SHORT_AVG_MIN_USED_PCT && w.resetAt != null) {
+        const elapsed = now - (w.resetAt - len);
+        if (elapsed >= AVG_MIN_ELAPSED && elapsed < len) {
+          rate = usedPct / elapsed;
+        }
       }
     }
     if (!rate || rate <= 0) continue;
@@ -504,24 +534,49 @@ function formatCountdown(secs) {
   return `${Math.round(s / 86400)} 天後`;
 }
 
-function windowWastePressure(acc, isWeekly, now) {
+function evalResetWindow(acc, isWeekly, now) {
   const eff = Math.max(0, Math.min(100, acc.effectiveRemaining));
-  if (eff < 10) return { score: 0, resetAt: null, pct: eff };
   const w = (acc.primaryWindows ?? [])
     .filter((x) => !x.label.includes(" "))
     .find((x) => {
       const d = windowSecs(x.label);
       return d != null && (isWeekly ? d >= 2 * 86400 : d < 2 * 86400);
     });
-  if (!w || !w.resetAt || w.resetAt <= now) return { score: 0, resetAt: null, pct: eff };
-  const dur = windowSecs(w.label) ?? (isWeekly ? 7 * 86400 : 5 * 3600);
-  const ratio = Math.max(0.01, Math.min(1, (w.resetAt - now) / dur));
-  const spendable = Math.min(w.remainingPercent, eff);
-  if (spendable < 10) return { score: 0, resetAt: w.resetAt, pct: spendable };
-  return { score: (spendable / 100) / ratio, resetAt: w.resetAt, pct: spendable };
+  if (!w || !w.resetAt || w.resetAt <= now) {
+    return { hasWindow: false, imminent: false, urgency: 0, resetAt: null, leftSecs: Number.MAX_SAFE_INTEGER, windowPct: eff, spendablePct: 0 };
+  }
+  const leftSecs = w.resetAt - now;
+  const windowPct = Math.max(0, Math.min(100, w.remainingPercent));
+  const spendablePct = Math.min(windowPct, eff);
+  const imminentCap = isWeekly ? WEEKLY_IMMINENT_SECS : SHORT_IMMINENT_SECS;
+  const imminent = spendablePct >= 10 && leftSecs <= imminentCap;
+  const urgency = imminent ? spendablePct / Math.max(0.1, leftSecs / 3600) : 0;
+  return { hasWindow: true, imminent, urgency, resetAt: w.resetAt, leftSecs, windowPct, spendablePct };
 }
 
-function buildPick(acc, strategy, forecasts, now) {
+function compareResetStrategy(a, b, isWeekly, now) {
+  const ea = evalResetWindow(a, isWeekly, now);
+  const eb = evalResetWindow(b, isWeekly, now);
+  const aOk = ea.hasWindow && ea.spendablePct >= 10 ? 1 : 0;
+  const bOk = eb.hasWindow && eb.spendablePct >= 10 ? 1 : 0;
+  if (bOk !== aOk) return bOk - aOk;
+  const aImm = ea.imminent ? 1 : 0;
+  const bImm = eb.imminent ? 1 : 0;
+  if (bImm !== aImm) return bImm - aImm;
+  if (ea.imminent && eb.imminent) {
+    if (eb.urgency !== ea.urgency) return eb.urgency - ea.urgency;
+  } else if (aOk && bOk) {
+    const bucket = isWeekly ? WEEKLY_TIME_BUCKET_SECS : SHORT_TIME_BUCKET_SECS;
+    const ba = Math.floor(ea.leftSecs / bucket);
+    const bb = Math.floor(eb.leftSecs / bucket);
+    if (ba !== bb) return ba - bb;
+    if (eb.spendablePct !== ea.spendablePct) return eb.spendablePct - ea.spendablePct;
+    if (ea.leftSecs !== eb.leftSecs) return ea.leftSecs - eb.leftSecs;
+  }
+  return 0;
+}
+
+function buildPick(acc, strategy, forecasts, now, isActive = false) {
   let resetAt = bindingWindow(acc)?.resetAt ?? null;
   if (resetAt != null && resetAt <= now) resetAt = null;
   let useBeforeReset = false;
@@ -535,21 +590,32 @@ function buildPick(acc, strategy, forecasts, now) {
   let tag = "充裕";
   let reason = defaultReason();
   const s = strategy === "use_before_reset" ? "use_before_reset_weekly" : strategy;
-  if (s === "use_before_reset_weekly") {
-    const p = windowWastePressure(acc, true, now);
-    if (p.score > 0) {
-      useBeforeReset = true;
-      resetAt = p.resetAt;
-      tag = "週將重設";
-      reason = `週額度剩 ${p.pct}%，${formatCountdown(p.resetAt - now)}重設`;
+  if (isActive) {
+    tag = "使用中";
+    reason = defaultReason();
+  } else if (s === "use_before_reset_weekly") {
+    const ev = evalResetWindow(acc, true, now);
+    if (ev.hasWindow && ev.spendablePct >= 10) {
+      resetAt = ev.resetAt;
+      if (ev.imminent) {
+        useBeforeReset = true;
+        tag = "週將重設";
+      } else {
+        tag = "較早重設";
+      }
+      reason = `週額度剩 ${ev.windowPct}%，${formatCountdown(ev.resetAt - now)}重設`;
     }
   } else if (s === "use_before_reset_5h") {
-    const p = windowWastePressure(acc, false, now);
-    if (p.score > 0) {
-      useBeforeReset = true;
-      resetAt = p.resetAt;
-      tag = "5h 將重設";
-      reason = `5 小時剩 ${p.pct}%，${formatCountdown(p.resetAt - now)}重設`;
+    const ev = evalResetWindow(acc, false, now);
+    if (ev.hasWindow && ev.spendablePct >= 10) {
+      resetAt = ev.resetAt;
+      if (ev.imminent) {
+        useBeforeReset = true;
+        tag = "5h 將重設";
+      } else {
+        tag = "較早重設";
+      }
+      reason = `5 小時剩 ${ev.windowPct}%，${formatCountdown(ev.resetAt - now)}重設`;
     }
   } else if (s === "soonest_reset") {
     const resets = (acc.primaryWindows ?? []).filter((w) => !w.label.includes(" ") && w.resetAt > now).map((w) => w.resetAt);
@@ -618,8 +684,7 @@ function computeRankedPicks(accounts, settings, forecasts, now, opts) {
   if (pinActive && activeId) {
     const activeAcc = visible.find((a) => a.id === activeId);
     if (activeAcc && isUsable(activeAcc)) {
-      const pk = buildPick({ ...activeAcc, name: displayName(settings, activeAcc) }, strategy, forecasts, now);
-      pk.tag = "使用中";
+      const pk = buildPick({ ...activeAcc, name: displayName(settings, activeAcc) }, strategy, forecasts, now, true);
       out.push(pk);
       taken.add(activeAcc.id);
     }
@@ -630,11 +695,11 @@ function computeRankedPicks(accounts, settings, forecasts, now, opts) {
     const cmpMostLeft = (a, b) => b.effectiveRemaining - a.effectiveRemaining || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     return [...pool].sort((a, b) => {
       if (s === "use_before_reset_weekly") {
-        const d = windowWastePressure(b, true, now).score - windowWastePressure(a, true, now).score;
+        const d = compareResetStrategy(a, b, true, now);
         return d || cmpMostLeft(a, b);
       }
       if (s === "use_before_reset_5h") {
-        const d = windowWastePressure(b, false, now).score - windowWastePressure(a, false, now).score;
+        const d = compareResetStrategy(a, b, false, now);
         return d || cmpMostLeft(a, b);
       }
       if (s === "soonest_reset") {

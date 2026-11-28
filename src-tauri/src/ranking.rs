@@ -108,30 +108,97 @@ pub fn compare_most_left(a: &AccountQuota, b: &AccountQuota) -> Ordering {
         .then_with(|| b.name.to_lowercase().cmp(&a.name.to_lowercase()))
 }
 
-/// Anti-waste pressure for a specific window kind (`is_weekly = true` for weekly pool,
-/// `false` for 5h pool). Returns `(pressure_score, reset_at, spendable_pct)`.
-/// Higher score = more spendable quota likely to expire unused before reset.
-pub fn window_waste_pressure(acc: &AccountQuota, is_weekly: bool, now: i64) -> (f64, Option<i64>, i32) {
+const WEEKLY_IMMINENT_SECS: i64 = 48 * 3600;
+const SHORT_IMMINENT_SECS: i64 = 90 * 60;
+const WEEKLY_TIME_BUCKET_SECS: i64 = 12 * 3600;
+const SHORT_TIME_BUCKET_SECS: i64 = 30 * 60;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResetWindowEval {
+    pub has_window: bool,
+    pub imminent: bool,
+    pub urgency: f64,
+    pub reset_at: Option<i64>,
+    pub left_secs: i64,
+    pub window_pct: i32,
+    pub spendable_pct: i32,
+}
+
+/// Evaluates a specific window (`is_weekly = true` for weekly pool, `false` for 5h pool)
+/// for reset-aware recommendation.
+///
+/// Only accounts genuinely close to reset (`<= 48h` weekly, `<= 90m` for 5h) with at least
+/// 10% spendable quota are marked `imminent = true`. Otherwise they are ranked by soonest
+/// reset bucket first (so a 4-day-left account beats a freshly-reset 7-day-left account).
+pub fn eval_reset_window(acc: &AccountQuota, is_weekly: bool, now: i64) -> ResetWindowEval {
     let eff = acc.effective_remaining.clamp(0, 100);
-    if eff < 10 {
-        return (0.0, None, eff);
-    }
     let Some(w) = find_main_window(acc, is_weekly) else {
-        return (0.0, None, eff);
+        return ResetWindowEval {
+            has_window: false,
+            imminent: false,
+            urgency: 0.0,
+            reset_at: None,
+            left_secs: i64::MAX,
+            window_pct: eff,
+            spendable_pct: 0,
+        };
     };
     let Some(r) = w.reset_at.filter(|r| *r > now) else {
-        return (0.0, None, eff);
+        return ResetWindowEval {
+            has_window: false,
+            imminent: false,
+            urgency: 0.0,
+            reset_at: None,
+            left_secs: i64::MAX,
+            window_pct: w.remaining_percent.clamp(0, 100),
+            spendable_pct: 0,
+        };
     };
-    let default_dur = if is_weekly { 7 * 86400 } else { 5 * 3600 };
-    let dur = window_duration_secs(&w.label).unwrap_or(default_dur) as f64;
-    let left = (r - now) as f64;
-    let time_left_ratio = (left / dur).clamp(0.01, 1.0);
-    let spendable_pct = w.remaining_percent.min(eff);
-    if spendable_pct < 10 {
-        return (0.0, Some(r), spendable_pct);
+    let left_secs = r - now;
+    let window_pct = w.remaining_percent.clamp(0, 100);
+    let spendable_pct = window_pct.min(eff);
+    let imminent_cap = if is_weekly { WEEKLY_IMMINENT_SECS } else { SHORT_IMMINENT_SECS };
+    let imminent = spendable_pct >= 10 && left_secs <= imminent_cap;
+    let urgency = if imminent {
+        (spendable_pct as f64) / ((left_secs as f64) / 3600.0).max(0.1)
+    } else {
+        0.0
+    };
+    ResetWindowEval {
+        has_window: true,
+        imminent,
+        urgency,
+        reset_at: Some(r),
+        left_secs,
+        window_pct,
+        spendable_pct,
     }
-    let score = ((spendable_pct as f64) / 100.0) / time_left_ratio;
-    (score, Some(r), spendable_pct)
+}
+
+/// Compare two accounts for `use_before_reset_weekly` or `use_before_reset_5h`.
+/// Returns Ordering for descending sort (better candidate first).
+fn compare_reset_strategy(a: &AccountQuota, b: &AccountQuota, is_weekly: bool, now: i64) -> Ordering {
+    let ea = eval_reset_window(a, is_weekly, now);
+    let eb = eval_reset_window(b, is_weekly, now);
+    let a_ok = ea.has_window && ea.spendable_pct >= 10;
+    let b_ok = eb.has_window && eb.spendable_pct >= 10;
+    b_ok.cmp(&a_ok)
+        .then_with(|| eb.imminent.cmp(&ea.imminent))
+        .then_with(|| {
+            if ea.imminent && eb.imminent {
+                eb.urgency.partial_cmp(&ea.urgency).unwrap_or(Ordering::Equal)
+            } else if a_ok && b_ok {
+                let bucket = if is_weekly { WEEKLY_TIME_BUCKET_SECS } else { SHORT_TIME_BUCKET_SECS };
+                let ba = ea.left_secs / bucket;
+                let bb = eb.left_secs / bucket;
+                ba.cmp(&bb)
+                    .then_with(|| eb.spendable_pct.cmp(&ea.spendable_pct))
+                    .then_with(|| ea.left_secs.cmp(&eb.left_secs))
+            } else {
+                Ordering::Equal
+            }
+        })
+        .then_with(|| compare_most_left(b, a))
 }
 
 /// Risk severity tuple (higher = needs attention sooner):
@@ -199,29 +266,43 @@ fn build_pick(
     } else {
         match normalize_strategy(strategy) {
             "use_before_reset_weekly" => {
-                let (score, dom_reset, pct) = window_waste_pressure(acc, true, now);
-                if score > 0.0 {
-                    use_before_reset = true;
-                    reset_at = dom_reset;
-                    let when = dom_reset.map(|r| format_countdown(r - now)).unwrap_or_default();
-                    (
-                        crate::tr!("週將重設"),
-                        crate::tr!("週額度剩 {p}%，{when}重設", p = pct, when = when),
-                    )
+                let ev = eval_reset_window(acc, true, now);
+                if ev.has_window && ev.spendable_pct >= 10 {
+                    reset_at = ev.reset_at;
+                    let when = ev.reset_at.map(|r| format_countdown(r - now)).unwrap_or_default();
+                    if ev.imminent {
+                        use_before_reset = true;
+                        (
+                            crate::tr!("週將重設"),
+                            crate::tr!("週額度剩 {p}%，{when}重設", p = ev.window_pct, when = when),
+                        )
+                    } else {
+                        (
+                            crate::tr!("較早重設"),
+                            crate::tr!("週額度剩 {p}%，{when}重設", p = ev.window_pct, when = when),
+                        )
+                    }
                 } else {
                     (crate::tr!("充裕"), build_default_reason(acc))
                 }
             }
             "use_before_reset_5h" => {
-                let (score, dom_reset, pct) = window_waste_pressure(acc, false, now);
-                if score > 0.0 {
-                    use_before_reset = true;
-                    reset_at = dom_reset;
-                    let when = dom_reset.map(|r| format_countdown(r - now)).unwrap_or_default();
-                    (
-                        crate::tr!("5h 將重設"),
-                        crate::tr!("5 小時剩 {p}%，{when}重設", p = pct, when = when),
-                    )
+                let ev = eval_reset_window(acc, false, now);
+                if ev.has_window && ev.spendable_pct >= 10 {
+                    reset_at = ev.reset_at;
+                    let when = ev.reset_at.map(|r| format_countdown(r - now)).unwrap_or_default();
+                    if ev.imminent {
+                        use_before_reset = true;
+                        (
+                            crate::tr!("5h 將重設"),
+                            crate::tr!("5 小時剩 {p}%，{when}重設", p = ev.window_pct, when = when),
+                        )
+                    } else {
+                        (
+                            crate::tr!("較早重設"),
+                            crate::tr!("5 小時剩 {p}%，{when}重設", p = ev.window_pct, when = when),
+                        )
+                    }
                 } else {
                     (crate::tr!("充裕"), build_default_reason(acc))
                 }
@@ -313,22 +394,10 @@ fn rank_pool<'a>(
     let mut list = pool;
     match normalize_strategy(strategy) {
         "use_before_reset_weekly" => {
-            list.sort_by(|a, b| {
-                let (sa, _, _) = window_waste_pressure(a, true, now);
-                let (sb, _, _) = window_waste_pressure(b, true, now);
-                sb.partial_cmp(&sa)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| compare_most_left(b, a))
-            });
+            list.sort_by(|a, b| compare_reset_strategy(a, b, true, now));
         }
         "use_before_reset_5h" => {
-            list.sort_by(|a, b| {
-                let (sa, _, _) = window_waste_pressure(a, false, now);
-                let (sb, _, _) = window_waste_pressure(b, false, now);
-                sb.partial_cmp(&sa)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| compare_most_left(b, a))
-            });
+            list.sort_by(|a, b| compare_reset_strategy(a, b, false, now));
         }
         "risk_first" => {
             list.sort_by(|a, b| {
@@ -607,5 +676,37 @@ mod tests {
         assert_eq!(picks.len(), 2);
         assert_eq!(picks[0].account_name, "B");
         assert_eq!(picks[1].account_name, "C");
+    }
+
+    #[test]
+    fn weekly_strategy_prefers_sooner_reset_over_fresh_full_account_and_reports_true_weekly_pct() {
+        let now = 1_000_000;
+        // Kai: 29% weekly left, resets in 91h (~3.8d) -> earliest reset
+        let kai = mk("c:kai", ProviderKind::Claude, "Kai", 91, Some(now + 4 * 3600), 29, Some(now + 91 * 3600));
+        // km0529: 52% weekly left, resets in 126h (~5.3d)
+        let km = mk("ag:km", ProviderKind::Antigravity, "km0529", 100, Some(now + 5 * 3600), 52, Some(now + 126 * 3600));
+        // Itri: 88% weekly left, resets in 145h (~6d)
+        let itri = mk("ag:itri", ProviderKind::Antigravity, "Itri", 100, Some(now + 5 * 3600), 88, Some(now + 145 * 3600));
+        // retis: 5h=95%, weekly=98%, resets in 161h (~6.7d) -> freshly reset
+        let retis = mk("c:retis", ProviderKind::Claude, "retis", 95, Some(now + 4 * 3600), 98, Some(now + 161 * 3600));
+
+        let cfg = RankConfig {
+            strategy: "use_before_reset_weekly",
+            scope: "global",
+            count: 4,
+            pin_active: false,
+            active_id: None,
+            pinned_ids: &[],
+        };
+        let picks = compute_ranked_picks(&[retis, itri, km, kai], &HashMap::new(), &cfg, now);
+        let names: Vec<&str> = picks.iter().map(|p| p.account_name.as_str()).collect();
+        assert_eq!(names, vec!["Kai", "km0529", "Itri", "retis"]);
+        // None are within 48h -> must NOT be tagged "週將重設" or flagged use_before_reset
+        for p in &picks {
+            assert!(!p.use_before_reset);
+            assert_eq!(p.tag, "較早重設");
+        }
+        // retis reason must reflect its actual 98% weekly pool, not 5h 95%
+        assert!(picks[3].reason.contains("98%"), "reason was: {}", picks[3].reason);
     }
 }
