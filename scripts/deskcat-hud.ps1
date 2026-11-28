@@ -1094,11 +1094,26 @@ function Update-HudView($data) {
     $card.ToolTip = "T3 DeskCat（左鍵彈出面板 · 拖曳移動 · 右鍵選單）"
 }
 
+$script:lastServerRestart = [DateTime]::MinValue
+
 function Refresh-Once {
     try {
         $data = Invoke-DeskCatApi "get_hud_data"
         Update-HudView $data
     } catch {
+        if (-not (Test-PortOpen)) {
+            $now = [DateTime]::UtcNow
+            if (($now - $script:lastServerRestart).TotalSeconds -ge 30) {
+                $script:lastServerRestart = $now
+                if (Ensure-WebServer) {
+                    try {
+                        $data = Invoke-DeskCatApi "get_hud_data"
+                        Update-HudView $data
+                        return
+                    } catch {}
+                }
+            }
+        }
         Update-HudView $null
     }
 }
